@@ -78,9 +78,9 @@ export async function runAIProvider(
 
           body: JSON.stringify({
             model:
-              "claude-3-5-sonnet-latest",
+              "claude-haiku-4-5-20251001",
 
-            max_tokens: 300,
+            max_tokens: 500,
 
             messages: [
               {
@@ -114,7 +114,7 @@ export async function runAIProvider(
   ) {
     const response =
       await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
         {
           method: "POST",
 

@@ -32,6 +32,10 @@ import { useMarketStore } from "@/store/marketStore";
 
 import { useLiveMarketStore } from "@/store/liveMarketStore";
 
+import { useCapitalStore } from "@/store/capitalStore";
+
+import { useLeaderboardStore } from "@/store/leaderboardStore";
+
 import { startLiveAITrading } from "@/lib/agents/liveTradingAgent";
 
 import { startMarketWebSocket } from "@/lib/upstox/startMarketWebSocket";
@@ -63,8 +67,30 @@ export default function Home() {
     sensex,
   } = useLiveMarketStore();
 
-  const [capital, setCapital] =
-    useState(473790);
+  const { capitals } =
+    useCapitalStore();
+
+  const { leaderboard } =
+    useLeaderboardStore();
+
+  const totalCapital =
+    capitals.reduce(
+      (sum, bot) =>
+        sum + bot.allocatedCapital,
+      0
+    );
+
+  const bestBot =
+    [...leaderboard]
+      .sort(
+        (a, b) =>
+          b.totalPnL - a.totalPnL
+      )[0]?.bot || "--";
+
+  const [equityData, setEquityData] =
+    useState<
+      { day: string; value: number }[]
+    >([]);
 
   const [mounted, setMounted] =
     useState(false);
@@ -88,15 +114,25 @@ export default function Home() {
     const interval =
       setInterval(() => {
 
-        setCapital(
-          (prev) =>
-            prev +
-            Math.floor(
-              Math.random() *
-                2000 -
-                1000
-            )
-        );
+        const currentCapitals =
+          useCapitalStore.getState().capitals;
+
+        const currentTotal =
+          currentCapitals.reduce(
+            (sum, bot) =>
+              sum + bot.allocatedCapital,
+            0
+          );
+
+        if (currentTotal > 0) {
+          setEquityData((prev) => [
+            ...prev.slice(-29),
+            {
+              day: new Date().toLocaleTimeString(),
+              value: currentTotal,
+            },
+          ]);
+        }
 
         market.indices.forEach(
           (index) => {
@@ -128,37 +164,6 @@ export default function Home() {
     market.indices,
     updateIndexPrice,
   ]);
-
-  /*
-    Equity curve
-  */
-
-  const equityData = [
-    {
-      day: "Mon",
-      value: 100000,
-    },
-
-    {
-      day: "Tue",
-      value: 104000,
-    },
-
-    {
-      day: "Wed",
-      value: 102000,
-    },
-
-    {
-      day: "Thu",
-      value: 111000,
-    },
-
-    {
-      day: "Fri",
-      value: 135000,
-    },
-  ];
 
   if (!mounted) {
     return null;
@@ -235,7 +240,7 @@ export default function Home() {
 
           <h2 className="text-4xl font-bold">
             ₹
-            {capital.toLocaleString(
+            {totalCapital.toLocaleString(
               "en-US"
             )}
           </h2>
@@ -273,7 +278,7 @@ export default function Home() {
           </p>
 
           <h2 className="text-4xl font-bold text-green-400">
-            GPT Bot
+            {bestBot}
           </h2>
 
         </div>

@@ -48,7 +48,7 @@ export const useCapitalStore =
         }
 
         const initialCapital =
-          1000000;
+          100000;
 
         set({
           capitals:
