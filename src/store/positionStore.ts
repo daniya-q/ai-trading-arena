@@ -1,7 +1,11 @@
 import { create } from "zustand";
+import { supabase } from "@/lib/supabase/client";
 
 export type Position = {
   id: number;
+
+  /** UUID from Supabase — set async after insert */
+  supabaseId?: string;
 
   bot: string;
 
@@ -42,6 +46,8 @@ type PositionStore = {
   positions: Position[];
 
   exposure: Exposure;
+
+  loadFromSupabase: () => Promise<void>;
 
   addPosition: (
     position: Position
@@ -127,16 +133,55 @@ export const usePositionStore =
       positions: [],
 
       exposure: {
-        totalOpenPositions:
-          0,
+        totalOpenPositions: 0,
 
-        totalBuyExposure:
-          0,
+        totalBuyExposure: 0,
 
-        totalSellExposure:
-          0,
+        totalSellExposure: 0,
 
         netExposure: 0,
+      },
+
+      loadFromSupabase: async () => {
+        const { data, error } =
+          await supabase
+            .from("positions")
+            .select("*")
+            .eq("status", "OPEN");
+
+        if (error) {
+          console.error(
+            "[Position] Supabase load failed:",
+            error.message
+          );
+          return;
+        }
+
+        if (!data || data.length === 0) return;
+
+        const positions: Position[] = data.map(
+          (row, index) => ({
+            id: Date.now() + index,
+            supabaseId: row.id,
+            bot: row.bot_id,
+            symbol: row.symbol,
+            side: row.side,
+            quantity: Number(row.quantity),
+            entryPrice: Number(row.entry_price),
+            currentPrice: Number(row.current_price),
+            stopLoss: Number(row.stop_loss),
+            takeProfit: Number(row.take_profit),
+            pnl: Number(row.pnl),
+            status: row.status as "OPEN" | "CLOSED",
+            openedAt: row.opened_at,
+            closedAt: row.closed_at ?? undefined,
+          })
+        );
+
+        set({
+          positions,
+          exposure: calculateExposure(positions),
+        });
       },
 
       addPosition: (
@@ -219,6 +264,44 @@ export const usePositionStore =
           };
         });
 
+        // Insert to Supabase and store UUID (fire-and-forget)
+        supabase
+          .from("positions")
+          .insert({
+            bot_id: position.bot,
+            symbol: position.symbol,
+            side: position.side,
+            quantity: position.quantity,
+            entry_price: position.entryPrice,
+            current_price: position.currentPrice,
+            stop_loss: position.stopLoss,
+            take_profit: position.takeProfit,
+            pnl: position.pnl,
+            status: position.status,
+            opened_at: position.openedAt,
+          })
+          .select("id")
+          .single()
+          .then(({ data, error }) => {
+            if (error) {
+              console.error(
+                "[Position] Supabase insert failed:",
+                error.message
+              );
+              return;
+            }
+            if (data?.id) {
+              set((state) => ({
+                positions: state.positions.map(
+                  (p) =>
+                    p.id === position.id
+                      ? { ...p, supabaseId: data.id }
+                      : p
+                ),
+              }));
+            }
+          });
+
         return true;
       },
 
@@ -253,7 +336,12 @@ export const usePositionStore =
 
       closePosition: (
         id
-      ) =>
+      ) => {
+        const pos = get().positions.find(
+          (p) => p.id === id
+        );
+        const closedAt = new Date().toISOString();
+
         set((state) => {
           const updatedPositions: Position[] =
             state.positions.map(
@@ -266,8 +354,7 @@ export const usePositionStore =
                       status:
                         "CLOSED" as const,
 
-                      closedAt:
-                        new Date().toISOString(),
+                      closedAt,
                     }
                   : position
             );
@@ -281,7 +368,34 @@ export const usePositionStore =
                 updatedPositions
               ),
           };
-        }),
+        });
+
+        // Persist close to Supabase
+        if (pos?.supabaseId) {
+          const closedPos = get().positions.find(
+            (p) => p.id === id
+          );
+          supabase
+            .from("positions")
+            .update({
+              status: "CLOSED",
+              closed_at: closedAt,
+              pnl: closedPos?.pnl ?? pos.pnl,
+              current_price:
+                closedPos?.currentPrice ??
+                pos.currentPrice,
+            })
+            .eq("id", pos.supabaseId)
+            .then(({ error }) => {
+              if (error) {
+                console.error(
+                  "[Position] Supabase close failed:",
+                  error.message
+                );
+              }
+            });
+        }
+      },
 
       recomputeExposure:
         () => {

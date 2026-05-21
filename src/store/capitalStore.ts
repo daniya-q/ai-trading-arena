@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { supabase } from "@/lib/supabase/client";
 
 type BotCapital = {
   bot: string;
@@ -19,7 +20,7 @@ type CapitalStore = {
 
   initializeBots: (
     bots: string[]
-  ) => void;
+  ) => Promise<void>;
 
   updateBotCapital: (
     bot: string,
@@ -35,55 +36,78 @@ export const useCapitalStore =
     (set, get) => ({
       capitals: [],
 
-      initializeBots: (
+      initializeBots: async (
         bots
       ) => {
-        const existing =
-          get().capitals;
-
-        if (
-          existing.length > 0
-        ) {
+        if (get().capitals.length > 0) {
           return;
         }
 
-        const initialCapital =
-          100000;
+        // Load from Supabase
+        const { data, error } =
+          await supabase
+            .from("capital")
+            .select("*");
 
-        set({
-          capitals:
-            bots.map(
-              (bot) => ({
-                bot,
-
+        if (!error && data && data.length > 0) {
+          set({
+            capitals: data.map(
+              (row) => ({
+                bot: row.bot_id,
                 allocatedCapital:
-                  initialCapital,
-
+                  Number(row.allocated_capital),
                 peakCapital:
-                  initialCapital,
-
-                pnl: 0,
-
-                winRate: 0,
-
-                sharpeLike: 0,
+                  Number(row.peak_capital),
+                pnl: Number(row.pnl),
+                winRate: Number(row.win_rate),
+                sharpeLike:
+                  Number(row.sharpe_like),
               })
             ),
+          });
+          return;
+        }
+
+        // Fallback to defaults if Supabase unavailable
+        if (error) {
+          console.warn(
+            "[Capital] Supabase load failed, using defaults:",
+            error.message
+          );
+        }
+
+        const initialCapital = 100000;
+
+        set({
+          capitals: bots.map(
+            (bot) => ({
+              bot,
+
+              allocatedCapital:
+                initialCapital,
+
+              peakCapital:
+                initialCapital,
+
+              pnl: 0,
+
+              winRate: 0,
+
+              sharpeLike: 0,
+            })
+          ),
         });
       },
 
       updateBotCapital: (
         bot,
         updates
-      ) =>
+      ) => {
         set((state) => ({
           capitals:
             state.capitals.map(
-              (
-                capital
-              ) =>
-                capital.bot ===
-                bot
+              (capital) =>
+                capital.bot === bot
                   ? {
                       ...capital,
 
@@ -99,7 +123,35 @@ export const useCapitalStore =
                     }
                   : capital
             ),
-        })),
+        }));
+
+        // Persist to Supabase (fire-and-forget)
+        const updated = get().capitals.find(
+          (c) => c.bot === bot
+        );
+        if (updated) {
+          supabase
+            .from("capital")
+            .update({
+              allocated_capital:
+                updated.allocatedCapital,
+              peak_capital: updated.peakCapital,
+              pnl: updated.pnl,
+              win_rate: updated.winRate,
+              sharpe_like: updated.sharpeLike,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("bot_id", bot)
+            .then(({ error }) => {
+              if (error) {
+                console.error(
+                  "[Capital] Supabase update failed:",
+                  error.message
+                );
+              }
+            });
+        }
+      },
 
       rebalanceCapital:
         () => {

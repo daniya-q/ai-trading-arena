@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { supabase } from "@/lib/supabase/client";
 
 type AIMemory = {
   lessons: string[];
@@ -11,6 +12,8 @@ type AIMemoryStore = {
     string,
     AIMemory
   >;
+
+  loadFromSupabase: () => Promise<void>;
 
   addLesson: (
     bot: string,
@@ -33,20 +36,63 @@ type AIMemoryStore = {
 
 export const useAIMemoryStore =
   create<AIMemoryStore>(
-    (set) => ({
+    (set, get) => ({
       memories: {},
+
+      loadFromSupabase: async () => {
+        const { data, error } =
+          await supabase
+            .from("ai_memory")
+            .select("*")
+            .order("created_at", { ascending: false });
+
+        if (error) {
+          console.error(
+            "[AIMemory] Supabase load failed:",
+            error.message
+          );
+          return;
+        }
+
+        if (!data || data.length === 0) return;
+
+        const memories: Record<string, AIMemory> = {};
+
+        data.forEach((row) => {
+          if (!memories[row.bot_id]) {
+            memories[row.bot_id] = {
+              lessons: [],
+              confidenceScore: 50,
+            };
+          }
+          if (memories[row.bot_id].lessons.length < 20) {
+            memories[row.bot_id].lessons.push(row.lesson);
+          }
+          // Most recent row (ordered desc) sets the confidence
+          if (memories[row.bot_id].lessons.length === 1) {
+            memories[row.bot_id].confidenceScore = Number(
+              row.confidence_score
+            );
+          }
+        });
+
+        set({ memories });
+      },
 
       addLesson: (
         bot,
         lesson
-      ) =>
-        set((state) => {
-          const existing =
-            state.memories[
-              bot
-            ] || {
-              lessons: [],
+      ) => {
+        const existing =
+          get().memories[bot] || {
+            lessons: [],
+            confidenceScore: 50,
+          };
 
+        set((state) => {
+          const current =
+            state.memories[bot] || {
+              lessons: [],
               confidenceScore: 50,
             };
 
@@ -55,17 +101,35 @@ export const useAIMemoryStore =
               ...state.memories,
 
               [bot]: {
-                ...existing,
+                ...current,
 
                 lessons: [
                   lesson,
 
-                  ...existing.lessons,
+                  ...current.lessons,
                 ].slice(0, 20),
               },
             },
           };
-        }),
+        });
+
+        // Persist to Supabase (fire-and-forget)
+        supabase
+          .from("ai_memory")
+          .insert({
+            bot_id: bot,
+            lesson,
+            confidence_score: existing.confidenceScore,
+          })
+          .then(({ error }) => {
+            if (error) {
+              console.error(
+                "[AIMemory] Supabase insert failed:",
+                error.message
+              );
+            }
+          });
+      },
 
       updateConfidence: (
         bot,
