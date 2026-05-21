@@ -240,19 +240,24 @@ export async function startMarketWebSocket() {
   ws.onopen = () => {
     console.log("Upstox WS Connected");
 
-    ws.send(
-      JSON.stringify({
-        guid: "uid",
+    const subscribeMsg = {
+      guid: "uid",
 
-        method: "sub",
+      method: "sub",
 
-        data: {
-          instrumentKeys: INSTRUMENT_KEYS,
+      data: {
+        instrumentKeys: INSTRUMENT_KEYS,
 
-          mode: "full",
-        },
-      })
+        mode: "full",
+      },
+    };
+
+    console.log(
+      "Upstox subscribe →",
+      JSON.stringify(subscribeMsg)
     );
+
+    ws.send(JSON.stringify(subscribeMsg));
   };
 
   ws.onmessage = (
@@ -298,12 +303,18 @@ export async function startMarketWebSocket() {
       return;
     }
 
-    if (!decoded?.feeds) {
-      console.warn(
-        "Upstox frame decoded but no feeds:",
-        JSON.stringify(decoded)
-      );
+    console.log(
+      "Upstox decoded frame type:",
+      decoded?.type,
+      "| feed keys:",
+      decoded?.feeds
+        ? Object.keys(decoded.feeds)
+        : "none",
+      "| raw:",
+      JSON.stringify(decoded)
+    );
 
+    if (!decoded?.feeds) {
       return;
     }
 
