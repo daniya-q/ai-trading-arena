@@ -50,6 +50,10 @@ import { syncLeaderboard } from "@/lib/supabase/syncLeaderboard";
 
 import { supabase } from "@/lib/supabase/client";
 
+import { getUpcomingExpiries, getDTE } from "@/lib/market/expiryCalendar";
+
+import { fetchOptionChain } from "@/lib/market/optionChainFetcher";
+
 // ── Available Instruments type ────────────────────────────────
 
 export type StrikePreview = {
@@ -403,6 +407,92 @@ Rules:
 `;
 }
 
+// ── Option chain + stock fetcher ──────────────────────────────
+
+/**
+ * Fetches live option chains for NIFTY, SENSEX, BANKNIFTY (next 2 expiries each)
+ * plus top-10 stock LTPs. Any individual failure is logged and skipped — the
+ * rest of the cycle proceeds with whatever data is available.
+ */
+async function fetchAvailableInstruments(): Promise<AvailableInstruments> {
+  // ── 1. Get expiry dates (holiday-adjusted) ─────────────────
+  const [niftyExpiries, sensexExpiries, bankniftyExpiries] =
+    await Promise.all([
+      getUpcomingExpiries("NIFTY").catch(() => [] as Date[]),
+      getUpcomingExpiries("SENSEX").catch(() => [] as Date[]),
+      getUpcomingExpiries("BANKNIFTY").catch(() => [] as Date[]),
+    ]);
+
+  // Take next 2 for each instrument
+  const nExp = niftyExpiries.slice(0, 2);
+  const sExp = sensexExpiries.slice(0, 2);
+  const bExp = bankniftyExpiries.slice(0, 2);
+
+  // ── 2. Helper: fetch one ExpirySlice ──────────────────────
+  async function fetchSlice(
+    instrument: string,
+    expiry: Date | undefined
+  ): Promise<ExpirySlice | null> {
+    if (!expiry) return null;
+
+    const expiryStr = expiry.toISOString().split("T")[0];
+    const dte = getDTE(expiryStr);
+
+    try {
+      const chain = await fetchOptionChain(instrument, expiryStr);
+
+      if (!chain.strikes.length) return null;
+
+      // Route returns ATM ±10; slice down to ATM ±5 for the prompt
+      const atmIdx = chain.strikes.findIndex(
+        (s) => s.strike === chain.atmStrike
+      );
+      const lo = Math.max(0, atmIdx - 5);
+      const hi = Math.min(chain.strikes.length - 1, atmIdx + 5);
+
+      return {
+        expiry: expiryStr,
+        dte,
+        atm: chain.atmStrike,
+        strikes: chain.strikes.slice(lo, hi + 1).map((s) => ({
+          strike: s.strike,
+          cePremium: s.cePremium,
+          pePremium: s.pePremium,
+        })),
+      };
+    } catch (err) {
+      console.warn(
+        `[OptionChain] ${instrument} ${expiryStr} failed:`,
+        String(err)
+      );
+      return null;
+    }
+  }
+
+  // ── 3. Fetch all 6 option chains + stocks in parallel ─────
+  const [n0, n1, s0, s1, b0, b1, stocksResult] = await Promise.all([
+    fetchSlice("NIFTY", nExp[0]),
+    fetchSlice("NIFTY", nExp[1]),
+    fetchSlice("SENSEX", sExp[0]),
+    fetchSlice("SENSEX", sExp[1]),
+    fetchSlice("BANKNIFTY", bExp[0]),
+    fetchSlice("BANKNIFTY", bExp[1]),
+    fetch("/api/upstox/stocks-ltp")
+      .then((r) => (r.ok ? r.json() : { stocks: [] }))
+      .catch(() => ({ stocks: [] })),
+  ]);
+
+  const topStocks: StockQuote[] =
+    (stocksResult as { stocks?: StockQuote[] }).stocks ?? [];
+
+  return {
+    niftyOptions: [n0, n1].filter((x): x is ExpirySlice => x !== null),
+    sensexOptions: [s0, s1].filter((x): x is ExpirySlice => x !== null),
+    bankniftyOptions: [b0, b1].filter((x): x is ExpirySlice => x !== null),
+    topStocks,
+  };
+}
+
 // ── Strategy log write ────────────────────────────────────────
 
 async function writeStrategyLog(
@@ -495,6 +585,21 @@ export function startLiveAITrading(
 
       const assets = useMultiAssetStore.getState().assets;
 
+      // ── Fetch live option chains & stock prices ──────────────
+      // Runs before the bot loop so all bots share the same snapshot.
+      // Falls back to the startup param (or null) if the fetch fails.
+
+      let activeInstruments: AvailableInstruments | null = availableInstruments;
+
+      try {
+        activeInstruments = await fetchAvailableInstruments();
+      } catch (err) {
+        console.warn(
+          "[Instruments] Option chain fetch failed, using fallback:",
+          String(err)
+        );
+      }
+
       // ── Per-bot cycle ────────────────────────────────────────
 
       for (const bot of bots) {
@@ -578,7 +683,7 @@ export function startLiveAITrading(
             openPositions: botPositions,
             lessons,
             confidenceScore,
-            availableInstruments,
+            availableInstruments: activeInstruments,
           });
 
           const rawResponse = await runAIProvider(
@@ -643,7 +748,7 @@ export function startLiveAITrading(
           if (parsed.optionType && parsed.strike && parsed.expiry) {
             // Options trade — look up premium
             const premium = lookupOptionPremium(
-              availableInstruments,
+              activeInstruments,
               parsed.symbol,
               parsed.optionType,
               parsed.strike,
