@@ -181,6 +181,8 @@ const g = globalThis as typeof globalThis & {
   __upstoxSocketStarted?: boolean;
   __upstoxFrameCount?: number;
   __upstoxFrameInterval?: ReturnType<typeof setInterval> | null;
+  __upstoxPollingStarted?: boolean;
+  __upstoxPollInterval?: ReturnType<typeof setInterval> | null;
 };
 
 export async function startMarketWebSocket() {
@@ -496,4 +498,155 @@ export async function startMarketWebSocket() {
       5000
     );
   };
+}
+
+/*
+  REST polling fallback — runs every second during market hours.
+  Used because Upstox free API does not push live index prices
+  over WebSocket (only market_info frames arrive).
+*/
+
+export function startRestPolling() {
+  if (g.__upstoxPollingStarted) return;
+
+  g.__upstoxPollingStarted = true;
+
+  console.log(
+    "Upstox REST polling started (1s interval)"
+  );
+
+  const poll = async () => {
+    if (!isMarketOpen()) return;
+
+    let json: {
+      prices?: Partial<
+        Record<
+          "NIFTY" | "BANKNIFTY" | "SENSEX",
+          number
+        >
+      >;
+      error?: string;
+    };
+
+    try {
+      const res = await fetch(
+        "/api/upstox/ltp"
+      );
+
+      if (!res.ok) {
+        console.error(
+          "Upstox LTP poll error:",
+          res.status
+        );
+
+        return;
+      }
+
+      json = await res.json();
+    } catch (err) {
+      console.error(
+        "Upstox LTP fetch error:",
+        err
+      );
+
+      return;
+    }
+
+    const prices = json.prices;
+
+    if (!prices) return;
+
+    const nifty = prices.NIFTY;
+    const banknifty = prices.BANKNIFTY;
+    const sensex = prices.SENSEX;
+
+    /*
+      Update live market store
+    */
+
+    useLiveMarketStore
+      .getState()
+      .updateMarket({
+        ...(nifty != null && { nifty }),
+
+        ...(banknifty != null && {
+          banknifty,
+        }),
+
+        ...(sensex != null && { sensex }),
+      });
+
+    /*
+      Update multi-asset store
+    */
+
+    const multiAsset =
+      useMultiAssetStore.getState();
+
+    if (nifty != null) {
+      multiAsset.updateAsset("NIFTY", {
+        price: nifty,
+      });
+    }
+
+    if (banknifty != null) {
+      multiAsset.updateAsset("BANKNIFTY", {
+        price: banknifty,
+      });
+    }
+
+    if (sensex != null) {
+      multiAsset.updateAsset("SENSEX", {
+        price: sensex,
+      });
+    }
+
+    const ts = Date.now();
+
+    /*
+      Feed candle builder
+    */
+
+    if (nifty != null) {
+      processTick(
+        { price: nifty, timestamp: ts },
+        "NIFTY"
+      );
+    }
+
+    if (banknifty != null) {
+      processTick(
+        {
+          price: banknifty,
+          timestamp: ts,
+        },
+        "BANKNIFTY"
+      );
+    }
+
+    if (sensex != null) {
+      processTick(
+        { price: sensex, timestamp: ts },
+        "SENSEX"
+      );
+    }
+
+    /*
+      Update open positions
+    */
+
+    if (nifty != null) {
+      updateOpenPositions(nifty);
+    }
+
+    console.log(
+      "REST Poll Tick:",
+      prices
+    );
+  };
+
+  g.__upstoxPollInterval = setInterval(
+    poll,
+    1000
+  );
 }

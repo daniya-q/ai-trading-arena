@@ -38,7 +38,10 @@ import { useLeaderboardStore } from "@/store/leaderboardStore";
 
 import { startLiveAITrading } from "@/lib/agents/liveTradingAgent";
 
-import { startMarketWebSocket } from "@/lib/upstox/startMarketWebSocket";
+import {
+  startMarketWebSocket,
+  startRestPolling,
+} from "@/lib/upstox/startMarketWebSocket";
 
 import {
   ResponsiveContainer,
@@ -106,6 +109,8 @@ export default function Home() {
     startLiveAITrading();
 
     startMarketWebSocket();
+
+    startRestPolling();
 
     /*
       Simulated capital updates
