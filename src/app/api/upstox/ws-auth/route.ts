@@ -38,6 +38,11 @@ export async function GET() {
 
   const json = await res.json();
 
+  console.log(
+    "[ws-auth] Upstox authorize full response:",
+    JSON.stringify(json)
+  );
+
   const authorizedRedirectUri =
     json?.data?.authorizedRedirectUri;
 
@@ -51,6 +56,11 @@ export async function GET() {
       { status: 502 }
     );
   }
+
+  console.log(
+    "[ws-auth] authorized_redirect_uri:",
+    authorizedRedirectUri
+  );
 
   return NextResponse.json({
     authorized_redirect_uri:

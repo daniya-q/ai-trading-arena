@@ -173,6 +173,8 @@ function isMarketOpen(): boolean {
 }
 
 let socketStarted = false;
+let frameCount = 0;
+let frameCounterInterval: ReturnType<typeof setInterval> | null = null;
 
 export async function startMarketWebSocket() {
   if (socketStarted) return;
@@ -240,6 +242,23 @@ export async function startMarketWebSocket() {
   ws.onopen = () => {
     console.log("Upstox WS Connected");
 
+    frameCount = 0;
+
+    if (frameCounterInterval) {
+      clearInterval(frameCounterInterval);
+    }
+
+    frameCounterInterval = setInterval(
+      () => {
+        console.log(
+          `[Upstox WS] frames received in last 10s: ${frameCount}`
+        );
+
+        frameCount = 0;
+      },
+      10000
+    );
+
     const subscribeMsg = {
       guid: "uid",
 
@@ -268,6 +287,8 @@ export async function startMarketWebSocket() {
     ) {
       return;
     }
+
+    frameCount++;
 
     console.log(
       "Upstox binary frame:",
@@ -453,6 +474,11 @@ export async function startMarketWebSocket() {
     console.log(
       "Upstox WS Closed, reconnecting in 5s..."
     );
+
+    if (frameCounterInterval) {
+      clearInterval(frameCounterInterval);
+      frameCounterInterval = null;
+    }
 
     socketStarted = false;
 
