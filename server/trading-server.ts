@@ -16,6 +16,7 @@ dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
 
 import express from "express";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import ws from "ws";
 
 // ══════════════════════════════════════════════════════════════
 // Supabase admin client
@@ -23,7 +24,8 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 const supabase: SupabaseClient = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  { realtime: { transport: ws as unknown as typeof WebSocket } }
 );
 
 // ══════════════════════════════════════════════════════════════

@@ -51,10 +51,11 @@ const dotenv = __importStar(require("dotenv"));
 dotenv.config({ path: path_1.default.resolve(process.cwd(), ".env.local") });
 const express_1 = __importDefault(require("express"));
 const supabase_js_1 = require("@supabase/supabase-js");
+const ws_1 = __importDefault(require("ws"));
 // ══════════════════════════════════════════════════════════════
 // Supabase admin client
 // ══════════════════════════════════════════════════════════════
-const supabase = (0, supabase_js_1.createClient)(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+const supabase = (0, supabase_js_1.createClient)(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { realtime: { transport: ws_1.default } });
 // ══════════════════════════════════════════════════════════════
 // Bots
 // ══════════════════════════════════════════════════════════════
