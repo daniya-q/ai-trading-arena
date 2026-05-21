@@ -10,6 +10,9 @@
     "server": "ts-node --project server/tsconfig.json server/trading-server.ts",
     "server:start": "node server/trading-server.js"
   },
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.1",
     "axios": "^1.16.1",
