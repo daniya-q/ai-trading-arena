@@ -172,14 +172,23 @@ function isMarketOpen(): boolean {
   return mins >= 555 && mins <= 930;
 }
 
-let socketStarted = false;
-let frameCount = 0;
-let frameCounterInterval: ReturnType<typeof setInterval> | null = null;
+/*
+  Use globalThis to survive Turbopack HMR module re-evaluation.
+  A plain module-level variable resets to false on every hot reload,
+  causing dozens of concurrent WebSocket instances.
+*/
+const g = globalThis as typeof globalThis & {
+  __upstoxSocketStarted?: boolean;
+  __upstoxFrameCount?: number;
+  __upstoxFrameInterval?: ReturnType<typeof setInterval> | null;
+};
 
 export async function startMarketWebSocket() {
-  if (socketStarted) return;
+  if (g.__upstoxSocketStarted) return;
 
-  socketStarted = true;
+  g.__upstoxSocketStarted = true;
+  g.__upstoxFrameCount = 0;
+  g.__upstoxFrameInterval = null;
 
   /*
     Parse protobuf schema inline
@@ -226,7 +235,7 @@ export async function startMarketWebSocket() {
       err
     );
 
-    socketStarted = false;
+    g.__upstoxSocketStarted = false;
 
     return;
   }
@@ -242,19 +251,19 @@ export async function startMarketWebSocket() {
   ws.onopen = () => {
     console.log("Upstox WS Connected");
 
-    frameCount = 0;
+    g.__upstoxFrameCount = 0;
 
-    if (frameCounterInterval) {
-      clearInterval(frameCounterInterval);
+    if (g.__upstoxFrameInterval) {
+      clearInterval(g.__upstoxFrameInterval);
     }
 
-    frameCounterInterval = setInterval(
+    g.__upstoxFrameInterval = setInterval(
       () => {
         console.log(
-          `[Upstox WS] frames received in last 10s: ${frameCount}`
+          `[Upstox WS] frames received in last 10s: ${g.__upstoxFrameCount}`
         );
 
-        frameCount = 0;
+        g.__upstoxFrameCount = 0;
       },
       10000
     );
@@ -288,7 +297,7 @@ export async function startMarketWebSocket() {
       return;
     }
 
-    frameCount++;
+    g.__upstoxFrameCount = (g.__upstoxFrameCount ?? 0) + 1;
 
     console.log(
       "Upstox binary frame:",
@@ -475,12 +484,12 @@ export async function startMarketWebSocket() {
       "Upstox WS Closed, reconnecting in 5s..."
     );
 
-    if (frameCounterInterval) {
-      clearInterval(frameCounterInterval);
-      frameCounterInterval = null;
+    if (g.__upstoxFrameInterval) {
+      clearInterval(g.__upstoxFrameInterval);
+      g.__upstoxFrameInterval = null;
     }
 
-    socketStarted = false;
+    g.__upstoxSocketStarted = false;
 
     setTimeout(
       () => startMarketWebSocket(),
