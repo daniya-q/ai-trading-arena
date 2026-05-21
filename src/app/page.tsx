@@ -43,6 +43,10 @@ import {
   startRestPolling,
 } from "@/lib/upstox/startMarketWebSocket";
 
+import { usePositionStore } from "@/store/positionStore";
+
+import { useAIMemoryStore } from "@/store/aiMemoryStore";
+
 import {
   ResponsiveContainer,
   LineChart,
@@ -103,10 +107,34 @@ export default function Home() {
     setMounted(true);
 
     /*
-      Start live engines
+      Load persistent state from Supabase before starting engines.
+      Runs in parallel: capitals, open positions, AI memory for all bots.
     */
 
-    startLiveAITrading();
+    Promise.all([
+      useCapitalStore
+        .getState()
+        .initializeBots(
+          bots.map((b) => b.id)
+        ),
+      usePositionStore
+        .getState()
+        .loadFromSupabase(),
+      useAIMemoryStore
+        .getState()
+        .loadFromSupabase(),
+    ]).then(() => {
+      /*
+        Start AI trading after stores are hydrated
+      */
+
+      startLiveAITrading();
+    });
+
+    /*
+      WebSocket and REST polling start immediately —
+      they don't depend on store hydration
+    */
 
     startMarketWebSocket();
 

@@ -8,6 +8,33 @@ import { processTick } from "@/lib/market/liveCandleBuilder";
 
 import { updateOpenPositions } from "@/lib/trading/updateOpenPositions";
 
+import { supabase } from "@/lib/supabase/client";
+
+// ── NSE holiday cache (refreshed once per calendar date) ──────
+
+let _holidayCacheDate = "";
+let _todayIsHoliday = false;
+
+async function refreshHolidayCache(): Promise<void> {
+  const todayStr = new Date()
+    .toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // YYYY-MM-DD in IST
+
+  if (_holidayCacheDate === todayStr) return; // already cached
+
+  const { data } = await supabase
+    .from("nse_holidays")
+    .select("date")
+    .eq("date", todayStr)
+    .maybeSingle();
+
+  _todayIsHoliday = data !== null;
+  _holidayCacheDate = todayStr;
+
+  if (_todayIsHoliday) {
+    console.log(`[MarketHours] Today (${todayStr}) is an NSE holiday — market closed`);
+  }
+}
+
 /*
   Upstox v3 MarketDataFeed proto schema (inline)
 */
@@ -149,7 +176,8 @@ const KEY_TO_SYMBOL: Record<
 };
 
 /*
-  IST market hours guard: Mon–Fri 9:15–15:30
+  IST market hours guard: Mon–Fri 9:15–15:30, non-holiday.
+  _todayIsHoliday is populated by refreshHolidayCache() at startup.
 */
 
 function isMarketOpen(): boolean {
@@ -164,6 +192,8 @@ function isMarketOpen(): boolean {
   const day = ist.getDay();
 
   if (day === 0 || day === 6) return false;
+
+  if (_todayIsHoliday) return false;
 
   const mins =
     ist.getHours() * 60 +
@@ -191,6 +221,9 @@ export async function startMarketWebSocket() {
   g.__upstoxSocketStarted = true;
   g.__upstoxFrameCount = 0;
   g.__upstoxFrameInterval = null;
+
+  // Populate holiday cache before any isMarketOpen() call
+  await refreshHolidayCache();
 
   /*
     Parse protobuf schema inline

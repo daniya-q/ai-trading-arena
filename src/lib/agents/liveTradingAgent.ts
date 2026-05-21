@@ -78,9 +78,11 @@ export type AvailableInstruments = {
   topStocks: StockQuote[];
 };
 
-// ── Helpers ───────────────────────────────────────────────────
+// ── Module state ──────────────────────────────────────────────
 
 let tradingStarted = false;
+
+// ── Helpers ───────────────────────────────────────────────────
 
 function fmt(n: number): string {
   return n.toLocaleString("en-IN", {
@@ -95,18 +97,10 @@ function fmtPnl(n: number): string {
 function getHigherTimeframeTrend(
   candles: { close: number }[]
 ) {
-  if (candles.length < 50) {
-    return "NEUTRAL";
-  }
+  if (candles.length < 50) return "NEUTRAL";
 
-  const recent = candles
-    .slice(-50)
-    .map((candle) => candle.close);
-
-  const avg =
-    recent.reduce((sum, value) => sum + value, 0) /
-    recent.length;
-
+  const recent = candles.slice(-50).map((c) => c.close);
+  const avg = recent.reduce((s, v) => s + v, 0) / recent.length;
   const latest = recent[recent.length - 1];
 
   if (latest > avg) return "BULLISH";
@@ -127,22 +121,10 @@ function detectMarketRegime({
   signal: number;
   trend: string;
 }) {
-  if (atr > 180 && Math.abs(macd - signal) > 20) {
-    return "BREAKOUT";
-  }
-
-  if (trend === "BULLISH" && rsi > 55) {
-    return "TRENDING_BULLISH";
-  }
-
-  if (trend === "BEARISH" && rsi < 45) {
-    return "TRENDING_BEARISH";
-  }
-
-  if (rsi > 75 || rsi < 25) {
-    return "REVERSAL";
-  }
-
+  if (atr > 180 && Math.abs(macd - signal) > 20) return "BREAKOUT";
+  if (trend === "BULLISH" && rsi > 55) return "TRENDING_BULLISH";
+  if (trend === "BEARISH" && rsi < 45) return "TRENDING_BEARISH";
+  if (rsi > 75 || rsi < 25) return "REVERSAL";
   return "RANGING";
 }
 
@@ -165,34 +147,32 @@ function lookupOptionPremium(
   const expirySlice = slices.find((s) => s.expiry === expiry);
   if (!expirySlice) return null;
 
-  const strikeRow = expirySlice.strikes.find(
-    (s) => s.strike === strike
-  );
-  if (!strikeRow) return null;
+  const row = expirySlice.strikes.find((s) => s.strike === strike);
+  if (!row) return null;
 
-  return optionType === "CE"
-    ? strikeRow.cePremium
-    : strikeRow.pePremium;
+  return optionType === "CE" ? row.cePremium : row.pePremium;
 }
 
 // ── Prompt builder ────────────────────────────────────────────
 
-function buildStrikesTable(strikes: StrikePreview[], atm: number): string {
+function buildStrikesTable(
+  strikes: StrikePreview[],
+  atm: number
+): string {
   return strikes
     .map((s) => {
       const tag = s.strike === atm ? " ◀ATM" : "";
-      return `      ${String(s.strike).padStart(6)}   CE ₹${fmt(s.cePremium).padStart(8)}   PE ₹${fmt(s.pePremium).padStart(8)}${tag}`;
+      return (
+        `      ${String(s.strike).padStart(6)}` +
+        `   CE ₹${fmt(s.cePremium).padStart(8)}` +
+        `   PE ₹${fmt(s.pePremium).padStart(8)}${tag}`
+      );
     })
     .join("\n");
 }
 
-function buildExpirySection(
-  label: string,
-  slices: ExpirySlice[]
-): string {
-  if (!slices || slices.length === 0) {
-    return `  ${label}: no data`;
-  }
+function buildExpirySection(label: string, slices: ExpirySlice[]): string {
+  if (!slices || slices.length === 0) return `  ${label}: no data`;
 
   return slices
     .map(
@@ -217,10 +197,10 @@ function buildOpenPositionsSection(positions: Position[]): string {
       `     Entry: ₹${fmt(p.entryPrice)}  |  Now: ₹${fmt(p.currentPrice)}  |  PnL: ${fmtPnl(p.pnl)}`;
 
     if (p.optionType) {
-      const expiringSoon = p.isExpiringSoon ? "  ⚠ EXPIRING SOON" : "";
+      const warn = p.isExpiringSoon ? "  ⚠ EXPIRING SOON" : "";
       return (
         base +
-        `\n     DTE: ${p.dte ?? "?"}  |  θ: ₹${p.theta ?? 0}/day  |  ${p.itmStatus ?? "?"}  |  Expires: ${p.expiryDate ?? "?"}${expiringSoon}`
+        `\n     DTE: ${p.dte ?? "?"}  |  θ: ₹${p.theta ?? 0}/day  |  ${p.itmStatus ?? "?"}  |  Expires: ${p.expiryDate ?? "?"}${warn}`
       );
     }
 
@@ -231,7 +211,6 @@ function buildOpenPositionsSection(positions: Position[]): string {
     (sum, p) => sum + p.entryPrice * p.quantity,
     0
   );
-
   lines.push(`\n  Deployed: ₹${fmt(totalDeployed)}`);
 
   return lines.join("\n");
@@ -268,27 +247,10 @@ function buildTradingPrompt(params: {
   availableInstruments: AvailableInstruments | null;
 }): string {
   const {
-    botName,
-    botProvider,
-    marketRegime,
-    higherTimeframeTrend,
-    volatility,
-    rsi,
-    ema,
-    macd,
-    signal,
-    atr,
-    bb,
-    supertrend,
-    structure,
-    assets,
-    allocatedCapital,
-    todayPnL,
-    rank,
-    openPositions,
-    lessons,
-    confidenceScore,
-    availableInstruments,
+    botName, botProvider, marketRegime, higherTimeframeTrend, volatility,
+    rsi, ema, macd, signal, atr, bb, supertrend, structure,
+    assets, allocatedCapital, todayPnL, rank, openPositions,
+    lessons, confidenceScore, availableInstruments,
   } = params;
 
   const nifty = assets.find((a) => a.symbol === "NIFTY");
@@ -296,8 +258,6 @@ function buildTradingPrompt(params: {
   const sensex = assets.find((a) => a.symbol === "SENSEX");
 
   const todayDate = new Date().toISOString().split("T")[0];
-
-  // ── Instruments section ────────────────────────────────────
 
   const niftyOptionsSection = availableInstruments
     ? buildExpirySection("NIFTY WEEKLY", availableInstruments.niftyOptions)
@@ -321,21 +281,15 @@ function buildTradingPrompt(params: {
           .join("\n")
       : "  (stock data not loaded — trade index options or spot)";
 
-  // ── Open positions section ─────────────────────────────────
-
   const positionsSection = buildOpenPositionsSection(openPositions);
 
-  const openCount = openPositions.filter(
-    (p) => p.status === "OPEN"
-  ).length;
+  const openCount = openPositions.filter((p) => p.status === "OPEN").length;
 
   const freeCash =
     allocatedCapital -
     openPositions
       .filter((p) => p.status === "OPEN")
       .reduce((sum, p) => sum + p.entryPrice * p.quantity, 0);
-
-  // ── Memory section ─────────────────────────────────────────
 
   const memorySection =
     lessons.length > 0
@@ -344,8 +298,6 @@ function buildTradingPrompt(params: {
           .map((l, i) => `  ${i + 1}. ${l.trim()}`)
           .join("\n")
       : "  No lessons recorded yet — this is a fresh start.";
-
-  // ── Build prompt ───────────────────────────────────────────
 
   return `You are ${botName} (${botProvider}), an autonomous AI trader in a live competition.
 
@@ -472,24 +424,41 @@ async function writeStrategyLog(
   }
 }
 
+// ── Mark bot inactive in Supabase ─────────────────────────────
+
+function markBotInactive(botId: string): void {
+  supabase
+    .from("bots")
+    .update({ is_active: false })
+    .eq("id", botId)
+    .then(({ error }) => {
+      if (error) {
+        console.error(
+          `[Bot] is_active update failed for ${botId}:`,
+          error.message
+        );
+      }
+    });
+}
+
 // ── Main export ───────────────────────────────────────────────
 
 export function startLiveAITrading(
   availableInstruments: AvailableInstruments | null = null
 ) {
-  if (tradingStarted) {
-    return;
-  }
+  if (tradingStarted) return;
 
   tradingStarted = true;
 
   /*
-    Initialize bot capital
+    Initialize bot capital using bot.id as the store key.
+    loadFromSupabase() in page.tsx runs first; this is a safe
+    fallback that sets hardcoded defaults if Supabase had no data.
   */
 
   useCapitalStore
     .getState()
-    .initializeBots(bots.map((bot) => bot.name));
+    .initializeBots(bots.map((bot) => bot.id));
 
   async function executeTradingCycle() {
     try {
@@ -500,9 +469,7 @@ export function startLiveAITrading(
         return;
       }
 
-      /*
-        Indicators
-      */
+      // ── Indicators ──────────────────────────────────────────
 
       const rsi = calculateRSI(niftyCandles);
       const ema = calculateEMA(niftyCandles);
@@ -510,16 +477,7 @@ export function startLiveAITrading(
       const atr = calculateATR(niftyCandles);
       const bb = calculateBollingerBands(niftyCandles);
       const supertrend = calculateSupertrend(niftyCandles);
-
-      /*
-        Market structure
-      */
-
       const structure = analyzeMarketStructure(niftyCandles);
-
-      /*
-        Market regime
-      */
 
       const marketRegime = detectMarketRegime({
         rsi,
@@ -529,73 +487,78 @@ export function startLiveAITrading(
         trend: supertrend.trend,
       });
 
-      const higherTimeframeTrend = getHigherTimeframeTrend(niftyCandles);
+      const higherTimeframeTrend =
+        getHigherTimeframeTrend(niftyCandles);
 
       const volatility =
         atr > 200 ? "HIGH" : atr > 100 ? "MEDIUM" : "LOW";
 
-      /*
-        Assets
-      */
-
       const assets = useMultiAssetStore.getState().assets;
 
-      /*
-        Run all AI bots
-      */
+      // ── Per-bot cycle ────────────────────────────────────────
 
       for (const bot of bots) {
         try {
-          /*
-            AI memory
-          */
+          // ── Capital check (uses bot.id as store key) ────────
+
+          const capitalData = useCapitalStore
+            .getState()
+            .capitals.find((c) => c.bot === bot.id);
+
+          const allocatedCapital =
+            capitalData?.allocatedCapital ?? 100000;
+
+          // ── Bot sit-out: insufficient capital ────────────────
+
+          if (allocatedCapital < 5000) {
+            console.log(
+              `Bot eliminated — insufficient capital: ${bot.id} (₹${allocatedCapital})`
+            );
+
+            // Close all open positions for this bot
+            usePositionStore
+              .getState()
+              .positions.filter(
+                (p) => p.bot === bot.id && p.status === "OPEN"
+              )
+              .forEach((p) =>
+                usePositionStore.getState().closePosition(p.id)
+              );
+
+            // Persist inactive status to Supabase
+            markBotInactive(bot.id);
+
+            continue;
+          }
+
+          // ── Memory ───────────────────────────────────────────
 
           const memory =
-            useAIMemoryStore.getState().memories[bot.name];
+            useAIMemoryStore.getState().memories[bot.id];
 
           const lessons = memory?.lessons || [];
           const confidenceScore = memory?.confidenceScore || 50;
 
-          /*
-            Capital allocation
-          */
+          const todayPnL = capitalData?.pnl ?? 0;
 
-          const capitalData = useCapitalStore
-            .getState()
-            .capitals.find(
-              (capital) => capital.bot === bot.name
-            );
-
-          const allocatedCapital =
-            capitalData?.allocatedCapital || 100000;
-
-          const todayPnL = capitalData?.pnl || 0;
-
-          /*
-            Leaderboard rank
-          */
+          // ── Leaderboard rank ─────────────────────────────────
 
           const leaderboard =
             useLeaderboardStore.getState().leaderboard;
 
           const rank =
-            leaderboard.findIndex((entry) => entry.bot === bot.name) +
-            1 || 4;
+            leaderboard.findIndex((e) => e.bot === bot.id) + 1 || 4;
 
-          /*
-            Open positions for this bot
-          */
+          // ── Bot's positions ──────────────────────────────────
 
           const botPositions = usePositionStore
             .getState()
-            .positions.filter((p) => p.bot === bot.name);
+            .positions.filter((p) => p.bot === bot.id);
 
-          /*
-            Build prompt
-          */
+          // ── Build & send prompt ──────────────────────────────
 
           const prompt = buildTradingPrompt({
-            botName: bot.name,
+            botName: bot.name,      // display name for the AI
             botProvider: bot.provider,
             marketRegime,
             higherTimeframeTrend,
@@ -618,10 +581,6 @@ export function startLiveAITrading(
             availableInstruments,
           });
 
-          /*
-            Run AI
-          */
-
           const rawResponse = await runAIProvider(
             bot.provider,
             prompt
@@ -629,12 +588,10 @@ export function startLiveAITrading(
 
           const parsed = parseAIResponse(rawResponse);
 
-          /*
-            Save AI thought
-          */
+          // ── Save AI thought ──────────────────────────────────
 
           useAIThoughtStore.getState().addThought({
-            bot: bot.name,
+            bot: bot.id,
             thought: parsed.reasoning,
             confidence: parsed.confidence,
             marketRegime,
@@ -642,66 +599,49 @@ export function startLiveAITrading(
             timestamp: new Date().toISOString(),
           });
 
-          console.log(`${bot.name} Parsed:`, parsed);
+          console.log(`${bot.id} Parsed:`, parsed);
 
-          /*
-            Write strategy log to Supabase (every cycle, regardless of action)
-          */
+          // ── Write strategy log ───────────────────────────────
 
           writeStrategyLog(bot.id, parsed.strategyStatement);
 
-          /*
-            HOLD — nothing to do
-          */
+          // ── HOLD ─────────────────────────────────────────────
 
           if (parsed.action === "HOLD") {
             continue;
           }
 
-          /*
-            CLOSE — close an existing position
-          */
+          // ── CLOSE ────────────────────────────────────────────
 
           if (parsed.action === "CLOSE") {
             const toClose = usePositionStore
               .getState()
               .positions.find(
                 (p) =>
-                  p.bot === bot.name &&
+                  p.bot === bot.id &&
                   p.status === "OPEN" &&
-                  (!parsed.symbol ||
-                    p.symbol === parsed.symbol)
+                  (!parsed.symbol || p.symbol === parsed.symbol)
               );
 
             if (toClose) {
-              usePositionStore
-                .getState()
-                .closePosition(toClose.id);
-
-              console.log(
-                `${bot.name} CLOSED ${toClose.symbol}`
-              );
+              usePositionStore.getState().closePosition(toClose.id);
+              console.log(`${bot.id} CLOSED ${toClose.symbol}`);
             } else {
               console.warn(
-                `${bot.name} CLOSE: no open position matches "${parsed.symbol}"`
+                `${bot.id} CLOSE: no open position matches "${parsed.symbol}"`
               );
             }
 
             continue;
           }
 
-          /*
-            BUY / SELL — determine entry price
-          */
+          // ── BUY / SELL — resolve entry price ─────────────────
 
           let entryAssetPrice: number;
           let entrySymbol: string = parsed.symbol || "NIFTY";
 
           if (parsed.optionType && parsed.strike && parsed.expiry) {
-            /*
-              Options trade — look up premium from instrument data
-            */
-
+            // Options trade — look up premium
             const premium = lookupOptionPremium(
               availableInstruments,
               parsed.symbol,
@@ -712,7 +652,8 @@ export function startLiveAITrading(
 
             if (!premium) {
               console.warn(
-                `${bot.name}: premium not found for ${parsed.symbol} ${parsed.optionType} ${parsed.strike} ${parsed.expiry} — skipping`
+                `${bot.id}: premium not found for ${parsed.symbol} ` +
+                  `${parsed.optionType} ${parsed.strike} ${parsed.expiry} — skipping`
               );
               continue;
             }
@@ -720,17 +661,14 @@ export function startLiveAITrading(
             entryAssetPrice = premium;
             entrySymbol = `${parsed.symbol} ${parsed.optionType} ${parsed.strike} ${parsed.expiry}`;
           } else {
-            /*
-              Spot / futures trade — use index price
-            */
-
+            // Spot / futures trade
             const selectedAsset = assets.find(
-              (asset) => asset.symbol === parsed.symbol
+              (a) => a.symbol === parsed.symbol
             );
 
             if (!selectedAsset) {
               console.warn(
-                `${bot.name}: unknown symbol "${parsed.symbol}" — skipping`
+                `${bot.id}: unknown symbol "${parsed.symbol}" — skipping`
               );
               continue;
             }
@@ -738,26 +676,21 @@ export function startLiveAITrading(
             entryAssetPrice = selectedAsset.price;
           }
 
-          /*
-            Simulated execution (slippage + fees)
-          */
+          // ── Simulated execution ───────────────────────────────
 
-          const selectedAssetForExec = assets.find(
-            (a) => a.symbol === parsed.symbol
-          ) || assets[0];
+          const assetForExec =
+            assets.find((a) => a.symbol === parsed.symbol) ?? assets[0];
 
           const execution = simulateExecution({
             side: parsed.action as "BUY" | "SELL",
             marketPrice: entryAssetPrice,
             quantity: parsed.quantity,
-            volatility: selectedAssetForExec?.volatility ?? "LOW",
+            volatility: assetForExec?.volatility ?? "LOW",
           });
 
           const actualEntryPrice = execution.executedPrice;
 
-          /*
-            Stop loss / take profit (ATR-based)
-          */
+          // ── Stop loss / take profit ───────────────────────────
 
           const stopLoss =
             parsed.action === "BUY"
@@ -769,16 +702,13 @@ export function startLiveAITrading(
               ? actualEntryPrice + atr * 2
               : actualEntryPrice - atr * 2;
 
-          /*
-            REAL PAPER ORDER
-          */
+          // ── Real paper order ──────────────────────────────────
 
           const { paperTrading } = useBrokerStore.getState();
 
           if (paperTrading) {
             try {
               const broker = new UpstoxBroker();
-
               await broker.placeOrder({
                 symbol: parsed.symbol,
                 side: parsed.action as "BUY" | "SELL",
@@ -787,23 +717,17 @@ export function startLiveAITrading(
                 product: "D",
                 validity: "DAY",
               });
-
               console.log("REAL PAPER ORDER SENT");
             } catch (brokerError) {
-              console.error(
-                "Broker Execution Failed:",
-                brokerError
-              );
+              console.error("Broker Execution Failed:", brokerError);
             }
           }
 
-          /*
-            Open position in store
-          */
+          // ── Open position in store (bot keyed by bot.id) ─────
 
           const positionPayload: Position = {
             id: Date.now(),
-            bot: bot.name,
+            bot: bot.id,            // ← bot.id, not bot.name
             symbol: entrySymbol,
             side: parsed.action,
             quantity: parsed.quantity,
@@ -814,7 +738,6 @@ export function startLiveAITrading(
             pnl: 0,
             status: "OPEN",
             openedAt: new Date().toISOString(),
-            // Options metadata
             ...(parsed.optionType
               ? {
                   optionType: parsed.optionType,
@@ -828,16 +751,12 @@ export function startLiveAITrading(
             .getState()
             .addPosition(positionPayload);
 
-          if (!created) {
-            continue;
-          }
+          if (!created) continue;
 
-          /*
-            Save execution analytics
-          */
+          // ── Execution analytics ───────────────────────────────
 
           useExecutionStore.getState().addExecution({
-            bot: bot.name,
+            bot: bot.id,
             symbol: entrySymbol,
             side: parsed.action,
             requestedPrice: entryAssetPrice,
@@ -848,8 +767,7 @@ export function startLiveAITrading(
             timestamp: new Date().toISOString(),
           });
 
-          console.log(`${bot.name} OPENED ${entrySymbol}`);
-
+          console.log(`${bot.id} OPENED ${entrySymbol}`);
           console.log("Execution Details:", {
             executedPrice: execution.executedPrice,
             slippage: execution.slippage,
@@ -857,53 +775,39 @@ export function startLiveAITrading(
             latency: execution.latency,
           });
         } catch (botError) {
-          console.error(`${bot.name} Error:`, botError);
+          console.error(`${bot.id} Error:`, botError);
         }
       }
 
-      /*
-        Leaderboard analytics
-      */
+      // ── Leaderboard & capital sync ───────────────────────────
 
       const leaderboard = bots.map((bot) => {
         const botTrades = trades.filter(
-          (trade) => trade.bot === bot.name
+          (trade) => trade.bot === bot.id   // ← bot.id
         );
 
         const stats = calculateAdvancedStats(botTrades);
 
-        useCapitalStore.getState().updateBotCapital(bot.name, {
+        useCapitalStore.getState().updateBotCapital(bot.id, {  // ← bot.id
           pnl: stats.totalPnL,
           winRate: stats.winRate,
           sharpeLike: stats.sharpeLike,
         });
 
-        return {
-          bot: bot.name,
-          ...stats,
-        };
+        return { bot: bot.id, ...stats };                       // ← bot.id
       });
-
-      /*
-        Capital rebalance
-      */
 
       useCapitalStore.getState().rebalanceCapital();
 
-      leaderboard.sort((a, b) => {
-        if (b.sharpeLike !== a.sharpeLike) {
-          return b.sharpeLike - a.sharpeLike;
-        }
-
-        return b.totalPnL - a.totalPnL;
-      });
+      leaderboard.sort((a, b) =>
+        b.sharpeLike !== a.sharpeLike
+          ? b.sharpeLike - a.sharpeLike
+          : b.totalPnL - a.totalPnL
+      );
 
       useLeaderboardStore.getState().setLeaderboard(leaderboard);
 
-      /*
-        Sync leaderboard stats to Supabase capital table
-      */
-
+      // Persist stats to Supabase capital table
       syncLeaderboard(leaderboard);
     } catch (error) {
       console.error("AI Trading Error:", error);
