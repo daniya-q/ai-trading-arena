@@ -911,7 +911,7 @@ async function pollLTP() {
 // Express health endpoints
 // ══════════════════════════════════════════════════════════════
 const app = (0, express_1.default)();
-const PORT = Number(process.env.TRADING_SERVER_PORT ?? 4000);
+const PORT = Number(process.env.PORT ?? process.env.TRADING_SERVER_PORT ?? 4000);
 app.get("/ping", (_req, res) => {
     res.json({ status: "ok", time: new Date().toISOString() });
 });
