@@ -87,7 +87,7 @@ message FirstLevelWithGreeks {
 message Feed {
   oneof FeedUnion {
     LTPC ltpc = 1;
-    FullFeed fullFeed = 2;
+    FullFeed ff = 2;
     FirstLevelWithGreeks firstLevelWithGreeks = 3;
   }
   RequestMode requestMode = 4;

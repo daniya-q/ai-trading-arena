@@ -99,7 +99,7 @@ message FirstLevelWithGreeks {
 message Feed {
   oneof FeedUnion {
     LTPC ltpc = 1;
-    FullFeed fullFeed = 2;
+    FullFeed ff = 2;
     FirstLevelWithGreeks firstLevelWithGreeks = 3;
   }
   RequestMode requestMode = 4;
@@ -264,25 +264,48 @@ export async function startMarketWebSocket() {
       return;
     }
 
+    console.log(
+      "Upstox binary frame:",
+      event.data.byteLength,
+      "bytes"
+    );
+
     /*
-      Decode protobuf binary frame
+      Decode protobuf binary frame and
+      convert to plain JS object
     */
 
-    let decoded: protobuf.Message & {
-      feeds?: Record<string, unknown>;
-    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let decoded: any;
 
     try {
-      decoded = FeedResponse.decode(
+      const message = FeedResponse.decode(
         new Uint8Array(event.data)
-      ) as protobuf.Message & {
-        feeds?: Record<string, unknown>;
-      };
-    } catch {
+      );
+
+      decoded = FeedResponse.toObject(
+        message,
+        { longs: Number, enums: String, defaults: false }
+      );
+    } catch (err) {
+      console.error(
+        "Upstox protobuf decode error:",
+        err,
+        "bytes:",
+        event.data.byteLength
+      );
+
       return;
     }
 
-    if (!decoded.feeds) return;
+    if (!decoded?.feeds) {
+      console.warn(
+        "Upstox frame decoded but no feeds:",
+        JSON.stringify(decoded)
+      );
+
+      return;
+    }
 
     const prices: Partial<
       Record<
@@ -292,7 +315,7 @@ export async function startMarketWebSocket() {
     > = {};
 
     for (const [key, feedRaw] of Object.entries(
-      decoded.feeds
+      decoded.feeds as Record<string, unknown>
     )) {
       const symbol = KEY_TO_SYMBOL[key];
 
@@ -302,18 +325,21 @@ export async function startMarketWebSocket() {
       const feed = feedRaw as any;
 
       /*
-        Index instruments use indexFF;
-        equity instruments use marketFF
+        Index instruments: feeds → key → ff → indexFF → ltpc → ltp
+        Equity instruments: feeds → key → ff → marketFF → ltpc → ltp
       */
 
       const rawLtp: number | null =
-        feed?.fullFeed?.indexFF?.ltpc
-          ?.ltp ??
-        feed?.fullFeed?.marketFF?.ltpc
-          ?.ltp ??
+        feed?.ff?.indexFF?.ltpc?.ltp ??
+        feed?.ff?.marketFF?.ltpc?.ltp ??
         null;
 
       if (rawLtp == null || rawLtp === 0) {
+        console.warn(
+          `No LTP for ${key}:`,
+          JSON.stringify(feed)
+        );
+
         continue;
       }
 
