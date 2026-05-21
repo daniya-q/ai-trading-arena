@@ -1,3 +1,5 @@
+import protobuf from "protobufjs";
+
 import { useLiveMarketStore } from "@/store/liveMarketStore";
 
 import { useMultiAssetStore } from "@/store/multiAssetStore";
@@ -6,257 +8,420 @@ import { processTick } from "@/lib/market/liveCandleBuilder";
 
 import { updateOpenPositions } from "@/lib/trading/updateOpenPositions";
 
+/*
+  Upstox v3 MarketDataFeed proto schema (inline)
+*/
+
+const PROTO_DEF = `
+syntax = "proto3";
+package com.upstox.marketdatafeederv3udapi.rpc.proto;
+
+message LTPC {
+  double ltp = 1;
+  int64 ltt = 2;
+  int64 ltq = 3;
+  double cp = 4;
+}
+
+message MarketLevel {
+  repeated Quote bidAskQuote = 1;
+}
+
+message MarketOHLC {
+  repeated OHLC ohlc = 1;
+}
+
+message Quote {
+  int64 bidQ = 1;
+  double bidP = 2;
+  int64 askQ = 3;
+  double askP = 4;
+}
+
+message OptionGreeks {
+  double delta = 1;
+  double theta = 2;
+  double gamma = 3;
+  double vega = 4;
+  double rho = 5;
+}
+
+message OHLC {
+  string interval = 1;
+  double open = 2;
+  double high = 3;
+  double low = 4;
+  double close = 5;
+  int64 vol = 6;
+  int64 ts = 7;
+}
+
+enum Type {
+  initial_feed = 0;
+  live_feed = 1;
+  market_info = 2;
+}
+
+message MarketFullFeed {
+  LTPC ltpc = 1;
+  MarketLevel marketLevel = 2;
+  OptionGreeks optionGreeks = 3;
+  MarketOHLC marketOHLC = 4;
+  double atp = 5;
+  int64 vtt = 6;
+  double oi = 7;
+  double iv = 8;
+  double tbq = 9;
+  double tsq = 10;
+}
+
+message IndexFullFeed {
+  LTPC ltpc = 1;
+  MarketOHLC marketOHLC = 2;
+}
+
+message FullFeed {
+  oneof FullFeedUnion {
+    MarketFullFeed marketFF = 1;
+    IndexFullFeed indexFF = 2;
+  }
+}
+
+message FirstLevelWithGreeks {
+  LTPC ltpc = 1;
+  Quote firstDepth = 2;
+  OptionGreeks optionGreeks = 3;
+  int64 vtt = 4;
+  double oi = 5;
+  double iv = 6;
+}
+
+message Feed {
+  oneof FeedUnion {
+    LTPC ltpc = 1;
+    FullFeed fullFeed = 2;
+    FirstLevelWithGreeks firstLevelWithGreeks = 3;
+  }
+  RequestMode requestMode = 4;
+}
+
+enum RequestMode {
+  ltpc = 0;
+  full_d5 = 1;
+  option_greeks = 2;
+  full_d30 = 3;
+}
+
+enum MarketStatus {
+  PRE_OPEN_START = 0;
+  PRE_OPEN_END = 1;
+  NORMAL_OPEN = 2;
+  NORMAL_CLOSE = 3;
+  CLOSING_START = 4;
+  CLOSING_END = 5;
+}
+
+message MarketInfo {
+  map<string, MarketStatus> segmentStatus = 1;
+}
+
+message FeedResponse {
+  Type type = 1;
+  map<string, Feed> feeds = 2;
+  int64 currentTs = 3;
+  MarketInfo marketInfo = 4;
+}
+`;
+
+const INSTRUMENT_KEYS = [
+  "NSE_INDEX|Nifty 50",
+  "NSE_INDEX|Nifty Bank",
+  "BSE_INDEX|SENSEX",
+];
+
+const KEY_TO_SYMBOL: Record<
+  string,
+  "NIFTY" | "BANKNIFTY" | "SENSEX"
+> = {
+  "NSE_INDEX|Nifty 50": "NIFTY",
+  "NSE_INDEX|Nifty Bank": "BANKNIFTY",
+  "BSE_INDEX|SENSEX": "SENSEX",
+};
+
+/*
+  IST market hours guard: Mon–Fri 9:15–15:30
+*/
+
+function isMarketOpen(): boolean {
+  const now = new Date();
+
+  const ist = new Date(
+    now.toLocaleString("en-US", {
+      timeZone: "Asia/Kolkata",
+    })
+  );
+
+  const day = ist.getDay();
+
+  if (day === 0 || day === 6) return false;
+
+  const mins =
+    ist.getHours() * 60 +
+    ist.getMinutes();
+
+  return mins >= 555 && mins <= 930;
+}
+
 let socketStarted = false;
 
-export function startMarketWebSocket() {
-
-  if (socketStarted) {
-    return;
-  }
+export async function startMarketWebSocket() {
+  if (socketStarted) return;
 
   socketStarted = true;
 
-  console.log(
-    "Simulated Market Feed Started"
+  /*
+    Parse protobuf schema inline
+  */
+
+  const root = protobuf.parse(PROTO_DEF, {
+    keepCase: true,
+  }).root;
+
+  const FeedResponse = root.lookupType(
+    "com.upstox.marketdatafeederv3udapi.rpc.proto.FeedResponse"
   );
 
   /*
-    Pure local streaming engine
+    Fetch authorized WebSocket URI from Next.js API
   */
 
-  setInterval(() => {
+  let authorizedUri: string;
 
-    const nifty =
-      24500 +
-      Math.random() * 300;
+  try {
+    const res = await fetch(
+      "/api/upstox/ws-auth"
+    );
 
-    const banknifty =
-      54000 +
-      Math.random() * 500;
+    if (!res.ok) {
+      throw new Error(
+        `ws-auth returned ${res.status}`
+      );
+    }
 
-    const sensex =
-      80500 +
-      Math.random() * 500;
+    const data = await res.json();
 
-    const finnifty =
-      23500 +
-      Math.random() * 250;
+    authorizedUri =
+      data.authorized_redirect_uri;
+
+    if (!authorizedUri) {
+      throw new Error(
+        "No authorized_redirect_uri in response"
+      );
+    }
+  } catch (err) {
+    console.error(
+      "Upstox WS Auth Error:",
+      err
+    );
+
+    socketStarted = false;
+
+    return;
+  }
+
+  /*
+    Open WebSocket connection
+  */
+
+  const ws = new WebSocket(authorizedUri);
+
+  ws.binaryType = "arraybuffer";
+
+  ws.onopen = () => {
+    console.log("Upstox WS Connected");
+
+    ws.send(
+      JSON.stringify({
+        guid: "uid",
+
+        method: "sub",
+
+        data: {
+          instrumentKeys: INSTRUMENT_KEYS,
+
+          mode: "full",
+        },
+      })
+    );
+  };
+
+  ws.onmessage = (
+    event: MessageEvent
+  ) => {
+    if (
+      !(event.data instanceof ArrayBuffer)
+    ) {
+      return;
+    }
 
     /*
-      Live market updates
+      Decode protobuf binary frame
+    */
+
+    let decoded: protobuf.Message & {
+      feeds?: Record<string, unknown>;
+    };
+
+    try {
+      decoded = FeedResponse.decode(
+        new Uint8Array(event.data)
+      ) as protobuf.Message & {
+        feeds?: Record<string, unknown>;
+      };
+    } catch {
+      return;
+    }
+
+    if (!decoded.feeds) return;
+
+    const prices: Partial<
+      Record<
+        "NIFTY" | "BANKNIFTY" | "SENSEX",
+        number
+      >
+    > = {};
+
+    for (const [key, feedRaw] of Object.entries(
+      decoded.feeds
+    )) {
+      const symbol = KEY_TO_SYMBOL[key];
+
+      if (!symbol) continue;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const feed = feedRaw as any;
+
+      /*
+        Index instruments use indexFF;
+        equity instruments use marketFF
+      */
+
+      const rawLtp: number | null =
+        feed?.fullFeed?.indexFF?.ltpc
+          ?.ltp ??
+        feed?.fullFeed?.marketFF?.ltpc
+          ?.ltp ??
+        null;
+
+      if (rawLtp == null || rawLtp === 0) {
+        continue;
+      }
+
+      prices[symbol] = Number(
+        rawLtp.toFixed(2)
+      );
+    }
+
+    const nifty = prices.NIFTY;
+    const banknifty = prices.BANKNIFTY;
+    const sensex = prices.SENSEX;
+
+    /*
+      Update live market store
     */
 
     useLiveMarketStore
       .getState()
       .updateMarket({
-        nifty:
-          Number(
-            nifty.toFixed(2)
-          ),
+        ...(nifty != null && { nifty }),
 
-        banknifty:
-          Number(
-            banknifty.toFixed(
-              2
-            )
-          ),
+        ...(banknifty != null && {
+          banknifty,
+        }),
 
-        sensex:
-          Number(
-            sensex.toFixed(
-              2
-            )
-          ),
+        ...(sensex != null && { sensex }),
       });
 
     /*
-      Multi asset engine
+      Update multi-asset store (price only)
     */
 
-    const multiAssetStore =
+    const multiAsset =
       useMultiAssetStore.getState();
 
-    multiAssetStore.updateAsset(
-      "NIFTY",
+    if (nifty != null) {
+      multiAsset.updateAsset("NIFTY", {
+        price: nifty,
+      });
+    }
 
-      {
-        price:
-          Number(
-            nifty.toFixed(2)
-          ),
+    if (banknifty != null) {
+      multiAsset.updateAsset("BANKNIFTY", {
+        price: banknifty,
+      });
+    }
 
-        change:
-          Number(
-            (
-              Math.random() *
-                2 -
-              1
-            ).toFixed(2)
-          ),
+    if (sensex != null) {
+      multiAsset.updateAsset("SENSEX", {
+        price: sensex,
+      });
+    }
 
-        volume:
-          Math.floor(
-            Math.random() *
-              1000000
-          ),
-
-        trend:
-          Math.random() >
-          0.5
-            ? "BULLISH"
-            : "BEARISH",
-
-        volatility:
-          Math.random() >
-          0.5
-            ? "HIGH"
-            : "LOW",
-      }
-    );
-
-    multiAssetStore.updateAsset(
-      "BANKNIFTY",
-
-      {
-        price:
-          Number(
-            banknifty.toFixed(
-              2
-            )
-          ),
-
-        change:
-          Number(
-            (
-              Math.random() *
-                2 -
-              1
-            ).toFixed(2)
-          ),
-
-        volume:
-          Math.floor(
-            Math.random() *
-              1000000
-          ),
-
-        trend:
-          Math.random() >
-          0.5
-            ? "BULLISH"
-            : "BEARISH",
-
-        volatility:
-          Math.random() >
-          0.5
-            ? "HIGH"
-            : "LOW",
-      }
-    );
-
-    multiAssetStore.updateAsset(
-      "SENSEX",
-
-      {
-        price:
-          Number(
-            sensex.toFixed(
-              2
-            )
-          ),
-
-        change:
-          Number(
-            (
-              Math.random() *
-                2 -
-              1
-            ).toFixed(2)
-          ),
-
-        volume:
-          Math.floor(
-            Math.random() *
-              1000000
-          ),
-
-        trend:
-          Math.random() >
-          0.5
-            ? "BULLISH"
-            : "BEARISH",
-
-        volatility:
-          Math.random() >
-          0.5
-            ? "HIGH"
-            : "LOW",
-      }
-    );
-
-    multiAssetStore.updateAsset(
-      "FINNIFTY",
-
-      {
-        price:
-          Number(
-            finnifty.toFixed(
-              2
-            )
-          ),
-
-        change:
-          Number(
-            (
-              Math.random() *
-                2 -
-              1
-            ).toFixed(2)
-          ),
-
-        volume:
-          Math.floor(
-            Math.random() *
-              1000000
-          ),
-
-        trend:
-          Math.random() >
-          0.5
-            ? "BULLISH"
-            : "BEARISH",
-
-        volatility:
-          Math.random() >
-          0.5
-            ? "HIGH"
-            : "LOW",
-      }
-    );
+    const ts = Date.now();
 
     /*
-      Candle builder
+      Feed candle builder
     */
 
-    processTick({
-      price: nifty,
+    if (nifty != null) {
+      processTick(
+        { price: nifty, timestamp: ts },
+        "NIFTY"
+      );
+    }
 
-      timestamp:
-        Date.now(),
-    });
+    if (banknifty != null) {
+      processTick(
+        {
+          price: banknifty,
+          timestamp: ts,
+        },
+        "BANKNIFTY"
+      );
+    }
+
+    if (sensex != null) {
+      processTick(
+        { price: sensex, timestamp: ts },
+        "SENSEX"
+      );
+    }
 
     /*
-      Position tracking
+      Update open positions — only during market hours
     */
 
-    updateOpenPositions(
-      nifty
-    );
+    if (nifty != null && isMarketOpen()) {
+      updateOpenPositions(nifty);
+    }
 
+    console.log("Live Tick:", prices);
+  };
+
+  ws.onerror = (err) => {
+    console.error("Upstox WS Error:", err);
+  };
+
+  ws.onclose = () => {
     console.log(
-      "Live Tick:",
-      nifty
+      "Upstox WS Closed, reconnecting in 5s..."
     );
 
-  }, 1000);
+    socketStarted = false;
+
+    setTimeout(
+      () => startMarketWebSocket(),
+      5000
+    );
+  };
 }

@@ -22,19 +22,30 @@ type Tick = {
   timestamp: number;
 };
 
-let currentCandle:
-  | {
-      open: number;
+type Symbol =
+  | "NIFTY"
+  | "BANKNIFTY"
+  | "SENSEX";
 
-      high: number;
+type CandleState = {
+  open: number;
 
-      low: number;
+  high: number;
 
-      close: number;
+  low: number;
 
-      time: number;
-    }
-  | undefined;
+  close: number;
+
+  time: number;
+};
+
+/*
+  Per-symbol current candle state
+*/
+
+const currentCandles: Partial<
+  Record<Symbol, CandleState>
+> = {};
 
 function detectMarketRegime({
   rsi,
@@ -55,33 +66,20 @@ function detectMarketRegime({
 }) {
   if (
     atr > 180 &&
-    Math.abs(
-      macd - signal
-    ) > 20
+    Math.abs(macd - signal) > 20
   ) {
     return "BREAKOUT";
   }
 
-  if (
-    trend ===
-      "BULLISH" &&
-    rsi > 55
-  ) {
+  if (trend === "BULLISH" && rsi > 55) {
     return "TRENDING_BULLISH";
   }
 
-  if (
-    trend ===
-      "BEARISH" &&
-    rsi < 45
-  ) {
+  if (trend === "BEARISH" && rsi < 45) {
     return "TRENDING_BEARISH";
   }
 
-  if (
-    rsi > 75 ||
-    rsi < 25
-  ) {
+  if (rsi > 75 || rsi < 25) {
     return "REVERSAL";
   }
 
@@ -89,23 +87,24 @@ function detectMarketRegime({
 }
 
 export function processTick(
-  tick: Tick
+  tick: Tick,
+  symbol: Symbol = "NIFTY"
 ) {
-  const candleDuration =
-    60 * 1000;
+  const candleDuration = 60 * 1000;
 
   const bucket =
     Math.floor(
-      tick.timestamp /
-        candleDuration
+      tick.timestamp / candleDuration
     ) * candleDuration;
 
+  const current = currentCandles[symbol];
+
   /*
-    First candle
+    First candle for this symbol
   */
 
-  if (!currentCandle) {
-    currentCandle = {
+  if (!current) {
+    currentCandles[symbol] = {
       open: tick.price,
 
       high: tick.price,
@@ -121,239 +120,147 @@ export function processTick(
   }
 
   /*
-    New candle
+    New candle minute boundary
   */
 
-  if (
-    bucket !==
-    currentCandle.time
-  ) {
+  if (bucket !== current.time) {
     const candle = {
-      open:
-        currentCandle.open,
+      open: current.open,
 
-      high:
-        currentCandle.high,
+      high: current.high,
 
-      low:
-        currentCandle.low,
+      low: current.low,
 
-      close:
-        currentCandle.close,
+      close: current.close,
 
-      time:
-        currentCandle.time,
+      time: current.time,
     };
 
-    /*
-      Store candle
-    */
+    const store = useCandleStore.getState();
 
-    useCandleStore
-      .getState()
-      .addNiftyCandle(
-        candle
-      );
-
-    /*
-      Get candles
-    */
-
-    const candles =
-      useCandleStore
-        .getState()
-        .niftyCandles;
-
-    /*
-      Indicators
-    */
-
-    if (
-      candles.length > 35
-    ) {
-      const rsi =
-        calculateRSI(
-          candles
-        );
-
-      const ema =
-        calculateEMA(
-          candles
-        );
-
-      const atr =
-        calculateATR(
-          candles
-        );
-
-      const macd =
-        calculateMACD(
-          candles
-        );
-
-      const bollinger =
-        calculateBollingerBands(
-          candles
-        );
-
-      const supertrend =
-        calculateSupertrend(
-          candles
-        );
+    if (symbol === "NIFTY") {
+      store.addNiftyCandle(candle);
 
       /*
-        Indicator store
+        Indicators — NIFTY only
       */
 
-      useIndicatorStore
-        .getState()
-        .setIndicators({
-          rsi,
+      const candles = store.niftyCandles;
 
-          ema,
+      if (candles.length > 35) {
+        const rsi = calculateRSI(candles);
 
-          atr,
+        const ema = calculateEMA(candles);
 
-          macd:
-            macd.macd,
+        const atr = calculateATR(candles);
 
-          macdSignal:
-            macd.signal,
+        const macd = calculateMACD(candles);
 
-          macdHistogram:
-            macd.histogram,
+        const bollinger =
+          calculateBollingerBands(candles);
 
-          supertrend:
-            supertrend.trend,
+        const supertrend =
+          calculateSupertrend(candles);
 
-          bollingerUpper:
-            bollinger.upper,
+        useIndicatorStore
+          .getState()
+          .setIndicators({
+            rsi,
 
-          bollingerMiddle:
-            bollinger.middle,
+            ema,
 
-          bollingerLower:
-            bollinger.lower,
-        });
+            atr,
 
-      /*
-        Market regime
-      */
+            macd: macd.macd,
 
-      const regime =
-        detectMarketRegime({
+            macdSignal: macd.signal,
+
+            macdHistogram: macd.histogram,
+
+            supertrend: supertrend.trend,
+
+            bollingerUpper: bollinger.upper,
+
+            bollingerMiddle:
+              bollinger.middle,
+
+            bollingerLower: bollinger.lower,
+          });
+
+        const regime = detectMarketRegime({
           rsi,
 
           atr,
 
-          macd:
-            macd.macd,
+          macd: macd.macd,
 
-          signal:
-            macd.signal,
+          signal: macd.signal,
 
-          trend:
-            supertrend.trend,
+          trend: supertrend.trend,
         });
 
-      /*
-        Volatility state
-      */
+        const volatility =
+          atr > 200
+            ? "HIGH"
+            : atr > 100
+            ? "MEDIUM"
+            : "LOW";
 
-      const volatility =
-        atr > 200
-          ? "HIGH"
-          : atr > 100
-          ? "MEDIUM"
-          : "LOW";
+        let momentum = "NEUTRAL";
 
-      /*
-        Momentum
-      */
+        if (macd.macd > macd.signal) {
+          momentum = "BULLISH";
+        }
 
-      let momentum =
-        "NEUTRAL";
+        if (macd.macd < macd.signal) {
+          momentum = "BEARISH";
+        }
 
-      if (
-        macd.macd >
-        macd.signal
-      ) {
-        momentum =
-          "BULLISH";
-      }
+        const trendAlignment =
+          regime.includes("TRENDING")
+            ? "ALIGNED"
+            : "MISALIGNED";
 
-      if (
-        macd.macd <
-        macd.signal
-      ) {
-        momentum =
-          "BEARISH";
-      }
-
-      /*
-        Trend alignment
-      */
-
-      const trendAlignment =
-        regime.includes(
-          "TRENDING"
-        )
-          ? "ALIGNED"
-          : "MISALIGNED";
-
-      /*
-        Market strength
-      */
-
-      const strength =
-        Math.min(
+        const strength = Math.min(
           100,
-
           Math.abs(
-            macd.macd -
-              macd.signal
-          ) +
-            rsi
+            macd.macd - macd.signal
+          ) + rsi
         );
 
-      /*
-        Market summary
-      */
-
-      const summary = `
+        const summary = `
 ${regime} market with ${volatility} volatility and ${momentum} momentum.
-Market strength currently at ${strength.toFixed(
-        0
-      )}/100.
+Market strength currently at ${strength.toFixed(0)}/100.
 `;
 
-      /*
-        Broadcast market state
-      */
+        useMarketRegimeStore
+          .getState()
+          .setMarketState({
+            regime,
 
-      useMarketRegimeStore
-        .getState()
-        .setMarketState({
-          regime,
+            volatility,
 
-          volatility,
+            trendAlignment,
 
-          trendAlignment,
+            momentum,
 
-          momentum,
+            strength,
 
-          strength,
+            summary,
+          });
 
-          summary,
-        });
-
-      console.log(
-        "Market State Updated"
-      );
+        console.log(
+          "Market State Updated"
+        );
+      }
+    } else if (symbol === "BANKNIFTY") {
+      store.addBankniftyCandle(candle);
+    } else if (symbol === "SENSEX") {
+      store.addSensexCandle(candle);
     }
 
     console.log(
-      "New Candle:",
+      `New Candle [${symbol}]:`,
       candle
     );
 
@@ -361,7 +268,7 @@ Market strength currently at ${strength.toFixed(
       Start next candle
     */
 
-    currentCandle = {
+    currentCandles[symbol] = {
       open: tick.price,
 
       high: tick.price,
@@ -377,21 +284,18 @@ Market strength currently at ${strength.toFixed(
   }
 
   /*
-    Update live candle
+    Update live candle OHLC
   */
 
-  currentCandle.high =
-    Math.max(
-      currentCandle.high,
-      tick.price
-    );
+  current.high = Math.max(
+    current.high,
+    tick.price
+  );
 
-  currentCandle.low =
-    Math.min(
-      currentCandle.low,
-      tick.price
-    );
+  current.low = Math.min(
+    current.low,
+    tick.price
+  );
 
-  currentCandle.close =
-    tick.price;
+  current.close = tick.price;
 }
