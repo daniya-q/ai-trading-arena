@@ -22,18 +22,6 @@ export default function Sidebar() {
           </div>
         </Link>
 
-        <Link href="/bots">
-          <div className="w-full px-4 py-3 rounded-2xl text-zinc-400 hover:bg-zinc-900 hover:text-white transition-all cursor-pointer">
-            Bots
-          </div>
-        </Link>
-
-        <Link href="/statistics">
-          <div className="w-full px-4 py-3 rounded-2xl text-zinc-400 hover:bg-zinc-900 hover:text-white transition-all cursor-pointer">
-            Statistics
-          </div>
-        </Link>
-
         <Link href="/trades">
           <div className="w-full px-4 py-3 rounded-2xl text-zinc-400 hover:bg-zinc-900 hover:text-white transition-all cursor-pointer">
             Trades
@@ -43,12 +31,6 @@ export default function Sidebar() {
         <Link href="/market">
           <div className="w-full px-4 py-3 rounded-2xl text-zinc-400 hover:bg-zinc-900 hover:text-white transition-all cursor-pointer">
             Market
-          </div>
-        </Link>
-
-        <Link href="/settings">
-          <div className="w-full px-4 py-3 rounded-2xl text-zinc-400 hover:bg-zinc-900 hover:text-white transition-all cursor-pointer">
-            Settings
           </div>
         </Link>
 

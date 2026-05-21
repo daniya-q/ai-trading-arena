@@ -32,8 +32,8 @@ export default function CapitalAllocation() {
           ) => {
             const growth =
               ((capital.allocatedCapital -
-                1000000) /
-                1000000) *
+                100000) /
+                100000) *
               100;
 
             return (

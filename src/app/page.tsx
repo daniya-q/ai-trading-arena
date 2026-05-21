@@ -14,19 +14,7 @@ import PortfolioRisk from "@/components/PortfolioRisk";
 
 import CapitalAllocation from "@/components/CapitalAllocation";
 
-import AIThoughts from "@/components/AIThoughts";
-
-import AIMemoryPanel from "@/components/AIMemoryPanel";
-
 import MultiAssetDashboard from "@/components/MultiAssetDashboard";
-
-import ExecutionAnalytics from "@/components/ExecutionAnalytics";
-
-import PerformanceAttribution from "@/components/PerformanceAttribution";
-
-import BacktestPanel from "@/components/BacktestPanel";
-
-import BrokerPanel from "@/components/BrokerPanel";
 
 import { useMarketStore } from "@/store/marketStore";
 
@@ -329,30 +317,6 @@ export default function Home() {
       {/* Capital Allocation */}
 
       <CapitalAllocation />
-
-      {/* AI Thoughts */}
-
-      <AIThoughts />
-
-      {/* AI Memory */}
-
-      <AIMemoryPanel />
-
-      {/* Execution Analytics */}
-
-      <ExecutionAnalytics />
-
-      {/* Performance Attribution */}
-
-      <PerformanceAttribution />
-
-      {/* Historical Backtesting */}
-
-      <BacktestPanel />
-
-      {/* Broker Infrastructure */}
-
-      <BrokerPanel />
 
       {/* Trading Chart */}
 
