@@ -6,6 +6,8 @@ import { usePerformanceStore } from "@/store/performanceStore";
 
 import { useMultiAssetStore } from "@/store/multiAssetStore";
 
+import { enrichPosition } from "@/lib/market/optionGreeks";
+
 import { trades } from "@/data/trades";
 
 export function updateOpenPositions(
@@ -115,6 +117,38 @@ export function updateOpenPositions(
         }
       }
 
+      /*
+        Enrich options positions with Greeks before updating
+      */
+
+      const optionsEnrichment =
+        position.optionType != null
+          ? (() => {
+              const enriched =
+                enrichPosition(
+                  position,
+                  latestPrice
+                );
+
+              return {
+                dte:
+                  enriched.dte,
+
+                theta:
+                  enriched.theta,
+
+                itmStatus:
+                  enriched.itmStatus,
+
+                thetaPaid:
+                  enriched.thetaPaid,
+
+                isExpiringSoon:
+                  enriched.isExpiringSoon,
+              };
+            })()
+          : {};
+
       updatePosition(
         position.id,
 
@@ -132,6 +166,8 @@ export function updateOpenPositions(
                 2
               )
             ),
+
+          ...optionsEnrichment,
         }
       );
 

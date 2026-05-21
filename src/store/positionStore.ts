@@ -30,6 +30,27 @@ export type Position = {
   openedAt: string;
 
   closedAt?: string;
+
+  // ── Options metadata (set when position is an option) ──────
+  optionType?: "CE" | "PE";
+
+  strike?: number;
+
+  expiryDate?: string; // YYYY-MM-DD
+
+  /** Implied volatility as a percentage, e.g. 18 for 18% */
+  iv?: number;
+
+  // ── Enriched by enrichPosition (updated each price tick) ───
+  dte?: number;
+
+  theta?: number;
+
+  itmStatus?: "ITM" | "ATM" | "OTM";
+
+  thetaPaid?: number;
+
+  isExpiringSoon?: boolean;
 };
 
 type Exposure = {
