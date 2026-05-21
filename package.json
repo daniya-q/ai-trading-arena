@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "server": "ts-node --project server/tsconfig.json server/trading-server.ts"
+    "server": "ts-node --project server/tsconfig.json server/trading-server.ts",
+    "server:start": "node server/trading-server.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.1",

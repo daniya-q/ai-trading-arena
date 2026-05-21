@@ -8,7 +8,7 @@
     "strict": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "outDir": "../dist-server"
+    "outDir": "."
   },
-  "include": ["trading-server.ts"]
+  "files": ["trading-server.ts"]
 }
