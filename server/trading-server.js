@@ -1,4 +1,5 @@
 "use strict";
+// RAILWAY_CACHE_BUST: 2026-05-22
 /**
  * AI Trading Arena — Standalone Backend Server
  *
