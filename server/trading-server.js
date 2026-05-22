@@ -67,7 +67,7 @@ const BOTS = [
     { id: "groq", name: "Groq Bot", provider: "groq" },
 ];
 // ══════════════════════════════════════════════════════════════
-// In-memory candle store (NIFTY 1-min candles)
+// In-memory candle store (NIFTY 1-sec candles)
 // ══════════════════════════════════════════════════════════════
 const niftyCandles = [];
 const MAX_CANDLES = 200;
@@ -77,7 +77,7 @@ let lastNiftyPrice = 0;
 let lastBankniftyPrice = 0;
 let lastSensexPrice = 0;
 function processTick(price, timestamp) {
-    const CANDLE_DURATION = 60000;
+    const CANDLE_DURATION = 1000;
     const bucket = Math.floor(timestamp / CANDLE_DURATION) * CANDLE_DURATION;
     if (!currentCandle) {
         currentCandle = { open: price, high: price, low: price, close: price, time: bucket };
