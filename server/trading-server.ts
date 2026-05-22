@@ -99,7 +99,7 @@ interface AvailableInstruments {
 }
 
 // ══════════════════════════════════════════════════════════════
-// In-memory candle store (NIFTY 1-min candles)
+// In-memory candle store (NIFTY 1-sec candles)
 // ══════════════════════════════════════════════════════════════
 
 const niftyCandles: Candle[] = [];
@@ -113,7 +113,7 @@ let lastBankniftyPrice = 0;
 let lastSensexPrice = 0;
 
 function processTick(price: number, timestamp: number): void {
-  const CANDLE_DURATION = 60_000;
+  const CANDLE_DURATION = 1_000;
   const bucket = Math.floor(timestamp / CANDLE_DURATION) * CANDLE_DURATION;
 
   if (!currentCandle) {
