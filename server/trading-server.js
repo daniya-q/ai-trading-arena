@@ -1,3 +1,4 @@
+// Build: 2026-05-22-v2
 "use strict";
 // RAILWAY_CACHE_BUST: 2026-05-22
 /**
