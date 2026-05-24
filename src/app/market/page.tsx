@@ -136,8 +136,13 @@ export default function MarketPage() {
 
     try {
 
-      const res =
-        await fetch("/api/upstox/stocks-ltp");
+      const backendUrl =
+        process.env.NEXT_PUBLIC_BACKEND_URL ||
+        "https://ai-trading-arena-backend-production.up.railway.app";
+
+      const res = await fetch(
+        `${backendUrl}/api/stocks-ltp`
+      );
 
       const json = await res.json();
 
