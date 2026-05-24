@@ -390,17 +390,28 @@ async function fetchOptionSlice(instrument, expiryStr) {
     }
 }
 // ══════════════════════════════════════════════════════════════
-// Binance WebSocket — BTC/USDT live price feed
+// Kraken WebSocket — XBT/USD live price feed
 // ══════════════════════════════════════════════════════════════
 function connectBinanceWS() {
-    const socket = new ws_1.default("wss://stream.binance.com:9443/ws/btcusdt@trade");
+    const socket = new ws_1.default("wss://ws.kraken.com");
     socket.on("open", () => {
-        console.log("[BTC] Binance WebSocket connected");
+        console.log("[BTC] Kraken WebSocket connected — subscribing to XBT/USD trades");
+        socket.send(JSON.stringify({
+            event: "subscribe",
+            pair: ["XBT/USD"],
+            subscription: { name: "trade" },
+        }));
     });
     socket.on("message", (data) => {
         try {
+            // Kraken trade message: [channelID, [[price, vol, time, side, orderType, misc], ...], "trade", "XBT/USD"]
             const msg = JSON.parse(data.toString());
-            const price = parseFloat(msg.p ?? "0");
+            if (!Array.isArray(msg) || msg[3] !== "XBT/USD")
+                return;
+            const trades = msg[1];
+            if (!Array.isArray(trades) || !trades[0])
+                return;
+            const price = parseFloat(trades[0][0]);
             if (!price)
                 return;
             btcPrice = price;
