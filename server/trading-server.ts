@@ -947,6 +947,17 @@ async function runTradingCycle(): Promise<void> {
           continue;
         }
 
+        // ── Position sizing: cannot spend more than freeCash ──
+        const cost = entryPrice * decision.quantity;
+        if (cost > freeCash) {
+          decision.quantity = Math.floor(freeCash / entryPrice);
+          console.warn(`[${bot.id}] Quantity capped — cost ₹${cost.toFixed(2)} > freeCash ₹${freeCash.toFixed(2)} → qty reduced to ${decision.quantity}`);
+        }
+        if (decision.quantity < 1) {
+          console.warn(`[${bot.id}] Insufficient cash (₹${freeCash.toFixed(2)}) to buy 1 unit of "${entrySymbol}" @₹${entryPrice.toFixed(2)} — skipping`);
+          continue;
+        }
+
         await openPosition(bot.id, decision, entryPrice, atr, entrySymbol);
 
       } catch (botErr) {
