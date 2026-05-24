@@ -4,19 +4,9 @@ import { bots } from "@/data/bots";
 
 import { trades } from "@/data/trades";
 
-import TradingChart from "@/components/charts/TradingChart";
-
-import Leaderboard from "@/components/Leaderboard";
-
-import OpenPositions from "@/components/OpenPositions";
-
-import PortfolioRisk from "@/components/PortfolioRisk";
-
 import CapitalAllocation from "@/components/CapitalAllocation";
 
-import MultiAssetDashboard from "@/components/MultiAssetDashboard";
-
-import { useMarketStore } from "@/store/marketStore";
+import OpenPositions from "@/components/OpenPositions";
 
 import { useLiveMarketStore } from "@/store/liveMarketStore";
 
@@ -49,12 +39,69 @@ import {
   useState,
 } from "react";
 
-export default function Home() {
+// Returns current time in IST as a Date object
+function getISTDate(): Date {
+  const now = new Date();
+  const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+  return new Date(utcMs + 5.5 * 60 * 60 * 1000);
+}
 
-  const {
-    market,
-    updateIndexPrice,
-  } = useMarketStore();
+function getMarketStatus(): {
+  isOpen: boolean;
+  timeUntilOpen: string;
+} {
+  const ist = getISTDate();
+  const day = ist.getDay(); // 0=Sun, 6=Sat
+  const h = ist.getHours();
+  const m = ist.getMinutes();
+  const totalMin = h * 60 + m;
+  const openMin = 9 * 60 + 15;
+  const closeMin = 15 * 60 + 30;
+
+  const isWeekday = day >= 1 && day <= 5;
+  const isOpen =
+    isWeekday &&
+    totalMin >= openMin &&
+    totalMin < closeMin;
+
+  if (isOpen) {
+    return { isOpen: true, timeUntilOpen: "" };
+  }
+
+  // Calculate minutes until next open
+  let minsUntilOpen = 0;
+
+  if (isWeekday && totalMin < openMin) {
+    // Same day, before open
+    minsUntilOpen = openMin - totalMin;
+  } else {
+    // After close or weekend — find next weekday
+    let daysUntilMon = 0;
+    if (day === 5 && totalMin >= closeMin) daysUntilMon = 3; // Fri after close → Mon
+    else if (day === 6) daysUntilMon = 2; // Sat → Mon
+    else if (day === 0) daysUntilMon = 1; // Sun → Mon
+    else daysUntilMon = 1; // Weekday after close → next day
+
+    const minsLeftToday = 24 * 60 - totalMin;
+    minsUntilOpen =
+      minsLeftToday + (daysUntilMon - 1) * 24 * 60 + openMin;
+  }
+
+  const daysLeft = Math.floor(minsUntilOpen / (24 * 60));
+  const hoursLeft = Math.floor((minsUntilOpen % (24 * 60)) / 60);
+  const minsLeft = minsUntilOpen % 60;
+
+  let timeUntilOpen = "";
+  if (daysLeft > 0)
+    timeUntilOpen += `${daysLeft}d `;
+  if (hoursLeft > 0 || daysLeft > 0)
+    timeUntilOpen += `${hoursLeft}h `;
+  timeUntilOpen += `${minsLeft}m`;
+
+  return { isOpen: false, timeUntilOpen: timeUntilOpen.trim() };
+}
+
+export default function Home() {
 
   const {
     nifty,
@@ -90,14 +137,21 @@ export default function Home() {
   const [mounted, setMounted] =
     useState(false);
 
+  const [marketStatus, setMarketStatus] =
+    useState<{ isOpen: boolean; timeUntilOpen: string }>({
+      isOpen: false,
+      timeUntilOpen: "",
+    });
+
   useEffect(() => {
 
     setMounted(true);
 
-    /*
-      Load persistent state from Supabase before starting engines.
-      Runs in parallel: capitals, open positions, AI memory for all bots.
-    */
+    // Update market status immediately and every 30s
+    setMarketStatus(getMarketStatus());
+    const statusInterval = setInterval(() => {
+      setMarketStatus(getMarketStatus());
+    }, 30000);
 
     Promise.all([
       useCapitalStore
@@ -112,25 +166,11 @@ export default function Home() {
         .getState()
         .loadFromSupabase(),
     ]).then(() => {
-      /*
-        Start AI trading after stores are hydrated
-      */
-
       startLiveAITrading();
     });
 
-    /*
-      WebSocket and REST polling start immediately —
-      they don't depend on store hydration
-    */
-
     startMarketWebSocket();
-
     startRestPolling();
-
-    /*
-      Simulated capital updates
-    */
 
     const interval =
       setInterval(() => {
@@ -155,36 +195,14 @@ export default function Home() {
           ]);
         }
 
-        market.indices.forEach(
-          (index) => {
-
-            const randomMove =
-              Math.random() *
-                20 -
-              10;
-
-            updateIndexPrice(
-              index.symbol,
-
-              Number(
-                (
-                  index.price +
-                  randomMove
-                ).toFixed(2)
-              )
-            );
-          }
-        );
-
       }, 2000);
 
-    return () =>
+    return () => {
       clearInterval(interval);
+      clearInterval(statusInterval);
+    };
 
-  }, [
-    market.indices,
-    updateIndexPrice,
-  ]);
+  }, []);
 
   if (!mounted) {
     return null;
@@ -195,7 +213,7 @@ export default function Home() {
 
       {/* Market Banner */}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
 
@@ -232,6 +250,41 @@ export default function Home() {
           </h2>
 
         </div>
+
+      </div>
+
+      {/* Market Status */}
+
+      <div className="flex items-center gap-3 mb-8 px-1">
+
+        <span
+          className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-semibold border ${
+            marketStatus.isOpen
+              ? "bg-green-500/10 border-green-500/30 text-green-400"
+              : "bg-red-500/10 border-red-500/30 text-red-400"
+          }`}
+        >
+
+          <span
+            className={`w-2 h-2 rounded-full ${
+              marketStatus.isOpen
+                ? "bg-green-400 animate-pulse"
+                : "bg-red-400"
+            }`}
+          />
+
+          {marketStatus.isOpen
+            ? "MARKET OPEN"
+            : "MARKET CLOSED"}
+
+        </span>
+
+        {!marketStatus.isOpen &&
+          marketStatus.timeUntilOpen && (
+            <span className="text-zinc-500 text-sm">
+              Opens in {marketStatus.timeUntilOpen}
+            </span>
+          )}
 
       </div>
 
@@ -306,37 +359,9 @@ export default function Home() {
 
       </div>
 
-      {/* Risk Engine */}
-
-      <PortfolioRisk />
-
-      {/* Multi Asset Engine */}
-
-      <MultiAssetDashboard />
-
       {/* Capital Allocation */}
 
       <CapitalAllocation />
-
-      {/* Trading Chart */}
-
-      <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 mb-10">
-
-        <h2 className="text-3xl font-bold mb-8">
-          Market Performance
-        </h2>
-
-        <TradingChart />
-
-      </div>
-
-      {/* Open Positions */}
-
-      <OpenPositions />
-
-      {/* Leaderboard */}
-
-      <Leaderboard />
 
       {/* Equity Curve */}
 
@@ -383,6 +408,10 @@ export default function Home() {
         </div>
 
       </div>
+
+      {/* Open Positions */}
+
+      <OpenPositions />
 
       {/* Closed Trades */}
 
