@@ -52,6 +52,21 @@ interface Candle {
   time: number;
 }
 
+interface BtcPosition {
+  id: string;
+  bot_id: string;
+  entry_price: number;
+  entry_inr: number;
+  btc_quantity: number;
+  pnl: number;
+  status: "OPEN" | "CLOSED";
+}
+
+interface BtcCapitalRow {
+  btc_capital: number;
+  pnl: number;
+}
+
 interface DbPosition {
   id: string;
   bot_id: string;
@@ -99,11 +114,13 @@ interface AvailableInstruments {
 }
 
 // ══════════════════════════════════════════════════════════════
-// In-memory candle store (NIFTY 1-sec candles)
+// In-memory candle stores
 // ══════════════════════════════════════════════════════════════
 
-const niftyCandles: Candle[] = [];
 const MAX_CANDLES = 200;
+
+// ── NIFTY 1-sec candles ──
+const niftyCandles: Candle[] = [];
 
 let currentCandle: Candle | null = null;
 let currentBucket = 0;
@@ -111,6 +128,36 @@ let currentBucket = 0;
 let lastNiftyPrice = 0;
 let lastBankniftyPrice = 0;
 let lastSensexPrice = 0;
+
+// ── BTC 1-sec candles ──
+const btcCandles: Candle[] = [];
+let btcCurrentCandle: Candle | null = null;
+let btcCurrentBucket = 0;
+let btcPrice = 0;
+let lastBtcLogTime = 0;
+
+function processBtcTick(price: number, timestamp: number): void {
+  const CANDLE_DURATION = 1_000;
+  const bucket = Math.floor(timestamp / CANDLE_DURATION) * CANDLE_DURATION;
+
+  if (!btcCurrentCandle) {
+    btcCurrentCandle = { open: price, high: price, low: price, close: price, time: bucket };
+    btcCurrentBucket = bucket;
+    return;
+  }
+
+  if (bucket !== btcCurrentBucket) {
+    btcCandles.push({ ...btcCurrentCandle });
+    if (btcCandles.length > MAX_CANDLES) btcCandles.shift();
+    btcCurrentCandle = { open: price, high: price, low: price, close: price, time: bucket };
+    btcCurrentBucket = bucket;
+    return;
+  }
+
+  btcCurrentCandle.high  = Math.max(btcCurrentCandle.high, price);
+  btcCurrentCandle.low   = Math.min(btcCurrentCandle.low,  price);
+  btcCurrentCandle.close = price;
+}
 
 function processTick(price: number, timestamp: number): void {
   const CANDLE_DURATION = 1_000;
@@ -395,6 +442,45 @@ async function fetchOptionSlice(instrument: string, expiryStr: string): Promise<
   } catch {
     return null;
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Binance WebSocket — BTC/USDT live price feed
+// ══════════════════════════════════════════════════════════════
+
+function connectBinanceWS(): void {
+  const socket = new ws("wss://stream.binance.com:9443/ws/btcusdt@trade");
+
+  socket.on("open", () => {
+    console.log("[BTC] Binance WebSocket connected");
+  });
+
+  socket.on("message", (data: ws.RawData) => {
+    try {
+      const msg = JSON.parse(data.toString()) as { p?: string };
+      const price = parseFloat(msg.p ?? "0");
+      if (!price) return;
+
+      btcPrice = price;
+      processBtcTick(price, Date.now());
+
+      if (Date.now() - lastBtcLogTime > 5_000) {
+        console.log(`[BTC] Price: $${btcPrice.toFixed(2)}`);
+        lastBtcLogTime = Date.now();
+      }
+    } catch (err) {
+      console.error("[BTC] WS parse error:", err);
+    }
+  });
+
+  socket.on("error", (err: Error) => {
+    console.error("[BTC] WS error:", err.message);
+  });
+
+  socket.on("close", () => {
+    console.warn("[BTC] WS closed — reconnecting in 5s...");
+    setTimeout(connectBinanceWS, 5_000);
+  });
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -740,6 +826,74 @@ Rules:
 }
 
 // ══════════════════════════════════════════════════════════════
+// BTC prompt builder
+// ══════════════════════════════════════════════════════════════
+
+function buildBtcPrompt(params: {
+  botName: string;
+  botProvider: string;
+  btcPrice: number;
+  capitalInr: number;
+  freeCash: number;
+  totalPnl: number;
+  openPositions: BtcPosition[];
+}): string {
+  const { botName, botProvider, btcPrice: price, capitalInr, freeCash, totalPnl, openPositions } = params;
+
+  const posSec = openPositions.length
+    ? openPositions.map((p, i) => {
+        const currentValue = p.btc_quantity * price;
+        const pnl = currentValue - p.entry_inr;
+        return `  ${i + 1}. LONG ${p.btc_quantity.toFixed(6)} BTC\n` +
+               `     Entry: $${p.entry_price.toFixed(2)}  |  Now: $${price.toFixed(2)}\n` +
+               `     Invested: ₹${p.entry_inr.toFixed(2)}  |  Current value: ₹${currentValue.toFixed(2)}  |  PnL: ${pnl >= 0 ? "+" : ""}₹${pnl.toFixed(2)}`;
+      }).join("\n")
+    : "  No open positions — fully in cash.";
+
+  return `You are ${botName} (${botProvider}), an autonomous AI trader in a live competition.
+
+You are trading BTC/USDT spot on Binance. No leverage, no options, no expiry — pure spot trading.
+
+════════════════════════════════════════
+  MARKET
+════════════════════════════════════════
+BTC/USDT Price: $${price.toFixed(2)}
+
+════════════════════════════════════════
+  YOUR STATE
+════════════════════════════════════════
+Capital (INR pool): ₹${capitalInr.toFixed(2)}
+Free cash:          ₹${freeCash.toFixed(2)}
+Total PnL:          ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(2)}
+Open positions:     ${openPositions.length}
+
+════════════════════════════════════════
+  OPEN POSITIONS
+════════════════════════════════════════
+${posSec}
+
+════════════════════════════════════════
+  DECISION REQUIRED
+════════════════════════════════════════
+You can:
+  • BUY  — go long on BTC spot (set quantity_inr = INR worth of BTC to buy)
+  • SELL — close ALL open BTC long positions and realise profit/loss
+  • HOLD — do nothing this cycle
+
+Rules:
+  • quantity_inr cannot exceed free cash ₹${freeCash.toFixed(2)}
+  • Goal: maximum profit
+
+Respond ONLY in valid JSON — no markdown, no extra text:
+{
+  "action": "BUY" | "SELL" | "HOLD",
+  "quantity_inr": <number — INR to spend, 0 if SELL or HOLD>,
+  "reasoning": "your analysis"
+}
+`;
+}
+
+// ══════════════════════════════════════════════════════════════
 // Supabase state helpers
 // ══════════════════════════════════════════════════════════════
 
@@ -772,6 +926,24 @@ async function getLeaderboardRank(botId: string): Promise<number> {
   if (!data?.length) return 4;
   const idx = (data as Array<{ bot_id: string }>).findIndex(r => r.bot_id === botId);
   return idx === -1 ? 4 : idx + 1;
+}
+
+async function getBtcCapital(botId: string): Promise<BtcCapitalRow> {
+  const { data } = await supabase
+    .from("btc_capital")
+    .select("btc_capital,pnl")
+    .eq("bot_id", botId)
+    .single();
+  return (data as BtcCapitalRow) ?? { btc_capital: 100000, pnl: 0 };
+}
+
+async function getOpenBtcPositions(botId: string): Promise<BtcPosition[]> {
+  const { data } = await supabase
+    .from("btc_positions")
+    .select("*")
+    .eq("bot_id", botId)
+    .eq("status", "OPEN");
+  return (data ?? []) as BtcPosition[];
 }
 
 async function openPosition(botId: string, decision: ParsedDecision, entryPrice: number, atr: number, symbol: string): Promise<void> {
@@ -975,6 +1147,131 @@ async function runTradingCycle(): Promise<void> {
 }
 
 // ══════════════════════════════════════════════════════════════
+// BTC trading cycle — every 60s, 24/7
+// ══════════════════════════════════════════════════════════════
+
+let btcCycleRunning = false;
+
+async function runBtcTradingCycle(): Promise<void> {
+  if (btcCycleRunning) return;
+  btcCycleRunning = true;
+
+  try {
+    if (btcCandles.length < 60) {
+      console.log(`[BTC Cycle] Waiting for candles (${btcCandles.length}/60)...`);
+      return;
+    }
+    if (!btcPrice) {
+      console.log("[BTC Cycle] No BTC price yet — skipping");
+      return;
+    }
+
+    for (const bot of BOTS) {
+      try {
+        const capital = await getBtcCapital(bot.id);
+        const openPositions = await getOpenBtcPositions(bot.id);
+
+        const deployed = openPositions.reduce((sum, p) => sum + p.entry_inr, 0);
+        const freeCash = capital.btc_capital - deployed;
+
+        const prompt = buildBtcPrompt({
+          botName:      bot.name,
+          botProvider:  bot.provider,
+          btcPrice,
+          capitalInr:   capital.btc_capital,
+          freeCash,
+          totalPnl:     capital.pnl,
+          openPositions,
+        });
+
+        const rawResponse = await runAI(bot.provider, prompt);
+
+        // Parse BTC decision
+        let action: "BUY" | "SELL" | "HOLD" = "HOLD";
+        let quantity_inr = 0;
+        let reasoning = "No reasoning";
+        try {
+          const cleaned = rawResponse.replace(/```json/g, "").replace(/```/g, "").trim();
+          const parsed  = JSON.parse(cleaned) as { action?: string; quantity_inr?: number; reasoning?: string };
+          const rawAct  = (parsed.action ?? "HOLD").toString().toUpperCase();
+          action       = (["BUY", "SELL", "HOLD"].includes(rawAct) ? rawAct : "HOLD") as "BUY" | "SELL" | "HOLD";
+          quantity_inr = Math.max(0, Number(parsed.quantity_inr) || 0);
+          reasoning    = parsed.reasoning ?? "No reasoning";
+        } catch {
+          action = "HOLD";
+        }
+
+        console.log(`[BTC:${bot.id}] ${action} | ₹${quantity_inr} | ${reasoning.slice(0, 80)}`);
+
+        if (action === "HOLD") continue;
+
+        // ── SELL: close all open BTC positions ──
+        if (action === "SELL") {
+          if (!openPositions.length) {
+            console.log(`[BTC:${bot.id}] SELL — no open positions`);
+            continue;
+          }
+          let totalRealised = 0;
+          for (const pos of openPositions) {
+            const currentValue = pos.btc_quantity * btcPrice;
+            const pnl = currentValue - pos.entry_inr;
+            totalRealised += pnl;
+            const { error } = await supabase.from("btc_positions").update({
+              status:     "CLOSED",
+              exit_price: Number(btcPrice.toFixed(2)),
+              pnl:        Number(pnl.toFixed(2)),
+              closed_at:  new Date().toISOString(),
+            }).eq("id", pos.id);
+            if (error) console.error(`[BTC:${bot.id}] Close failed:`, error.message);
+            else console.log(`[BTC:${bot.id}] CLOSED ${pos.btc_quantity.toFixed(6)} BTC  PnL: ${pnl >= 0 ? "+" : ""}₹${pnl.toFixed(2)}`);
+          }
+          // Update btc_capital
+          await supabase.from("btc_capital").update({
+            btc_capital: Number((capital.btc_capital + totalRealised).toFixed(2)),
+            pnl:         Number((capital.pnl + totalRealised).toFixed(2)),
+          }).eq("bot_id", bot.id);
+          continue;
+        }
+
+        // ── BUY: open a long position ──
+        if (action === "BUY") {
+          let spendInr = quantity_inr;
+          if (spendInr > freeCash) {
+            console.warn(`[BTC:${bot.id}] quantity_inr ₹${spendInr} > freeCash ₹${freeCash.toFixed(2)} — capping`);
+            spendInr = freeCash;
+          }
+          if (spendInr < 100) {
+            console.warn(`[BTC:${bot.id}] Insufficient cash (₹${freeCash.toFixed(2)}) — skipping BUY`);
+            continue;
+          }
+          const btcQty = spendInr / btcPrice;
+          const { error } = await supabase.from("btc_positions").insert({
+            bot_id:       bot.id,
+            entry_price:  Number(btcPrice.toFixed(2)),
+            entry_inr:    Number(spendInr.toFixed(2)),
+            btc_quantity: Number(btcQty.toFixed(8)),
+            pnl:          0,
+            status:       "OPEN",
+          });
+          if (error) console.error(`[BTC:${bot.id}] Insert failed:`, error.message);
+          else console.log(`[BTC:${bot.id}] BOUGHT ${btcQty.toFixed(6)} BTC @ $${btcPrice.toFixed(2)} (₹${spendInr.toFixed(2)})`);
+        }
+
+      } catch (botErr) {
+        console.error(`[BTC:${bot.id}] Error:`, botErr);
+      }
+    }
+
+    console.log(`[BTC Cycle] Done — $${btcPrice.toFixed(2)} | candles: ${btcCandles.length}`);
+
+  } catch (err) {
+    console.error("[BTC Cycle] Fatal:", err);
+  } finally {
+    btcCycleRunning = false;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
 // LTP poller — every second
 // ══════════════════════════════════════════════════════════════
 
@@ -1025,6 +1322,10 @@ app.get("/candles", (_req, res) => {
   res.json({ count: niftyCandles.length, candles: niftyCandles.slice(-20) });
 });
 
+app.get("/btc/status", (_req, res) => {
+  res.json({ btcPrice, btcCandles: btcCandles.length, activeBots: BOTS.length });
+});
+
 app.listen(PORT, () => {
   console.log(`\n[Server] AI Trading Arena backend running on http://localhost:${PORT}`);
   console.log(`         Health:  http://localhost:${PORT}/health`);
@@ -1045,3 +1346,8 @@ setInterval(pollLTP, 1000);
 
 runTradingCycle();
 setInterval(runTradingCycle, 15_000);
+
+// BTC — Binance live feed + trading cycle
+connectBinanceWS();
+runBtcTradingCycle();
+setInterval(runBtcTradingCycle, 60_000);
