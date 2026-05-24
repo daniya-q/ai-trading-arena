@@ -1,52 +1,134 @@
+"use client";
+
 import Link from "next/link";
 
-export default function Sidebar() {
+import { usePathname } from "next/navigation";
+
+const NAV = [
+  { href: "/", label: "DASHBOARD" },
+  { href: "/leaderboard", label: "LEADERBOARD" },
+  { href: "/bots", label: "BOTS" },
+  { href: "/trades", label: "TRADES" },
+  { href: "/market", label: "MARKET" },
+];
+
+const CRYPTO_NAV = [
+  { href: "/btc", label: "BTC ARENA" },
+];
+
+function NavItem({
+  href,
+  label,
+  accent,
+  pathname,
+}: {
+  href: string;
+  label: string;
+  accent?: string;
+  pathname: string;
+}) {
+  const isActive = pathname === href;
+
   return (
-    <aside className="w-72 border-r border-zinc-800 bg-black/70 p-6 hidden lg:block min-h-screen">
+    <Link href={href}>
+      <div
+        className="w-full px-3 py-3 cursor-pointer font-pixel text-[8px] leading-relaxed flex items-center gap-2 transition-colors"
+        style={
+          isActive
+            ? {
+                color: accent || "#ffffff",
+                background: "rgba(255,255,255,0.04)",
+                borderLeft: `2px solid ${accent || "#ffffff"}`,
+                paddingLeft: "10px",
+              }
+            : {
+                color: accent ? `${accent}80` : "#52525b",
+                borderLeft: "2px solid transparent",
+              }
+        }
+      >
+        <span
+          style={{
+            color: isActive
+              ? accent || "#ffffff"
+              : "transparent",
+          }}
+        >
+          ▸
+        </span>
+        {label}
+      </div>
+    </Link>
+  );
+}
 
-      <h1 className="text-3xl font-bold mb-10 text-white">
-        AI Trading Arena
-      </h1>
+export default function Sidebar() {
 
-      <div className="space-y-3">
+  const pathname = usePathname();
 
-        <Link href="/">
-          <div className="w-full px-4 py-3 rounded-2xl text-zinc-400 hover:bg-zinc-900 hover:text-white transition-all cursor-pointer">
-            Dashboard
-          </div>
-        </Link>
+  return (
+    <aside className="w-64 border-r border-zinc-900 bg-black hidden lg:flex flex-col min-h-screen">
 
-        <Link href="/leaderboard">
-          <div className="w-full px-4 py-3 rounded-2xl text-zinc-400 hover:bg-zinc-900 hover:text-white transition-all cursor-pointer">
-            Leaderboard
-          </div>
-        </Link>
+      {/* Logo */}
+      <div className="p-5 border-b border-zinc-900">
 
-        <Link href="/trades">
-          <div className="w-full px-4 py-3 rounded-2xl text-zinc-400 hover:bg-zinc-900 hover:text-white transition-all cursor-pointer">
-            Trades
-          </div>
-        </Link>
+        <p className="font-pixel text-[6px] text-zinc-600 mb-2 tracking-widest">
+          SEASON 1
+        </p>
 
-        <Link href="/market">
-          <div className="w-full px-4 py-3 rounded-2xl text-zinc-400 hover:bg-zinc-900 hover:text-white transition-all cursor-pointer">
-            Market
-          </div>
-        </Link>
+        <h1 className="font-pixel text-[9px] text-white leading-relaxed">
+          AI TRADING
+          <br />
+          ARENA
+        </h1>
 
-        <div className="pt-3 pb-1">
-          <p className="text-xs font-semibold text-zinc-600 uppercase tracking-widest px-4">
-            Crypto
+      </div>
+
+      {/* Main nav */}
+      <div className="flex-1 py-5 px-2 space-y-1">
+
+        <p className="font-pixel text-[6px] text-zinc-800 px-3 mb-3 tracking-widest">
+          ── MAIN ──
+        </p>
+
+        {NAV.map((item) => (
+          <NavItem
+            key={item.href}
+            href={item.href}
+            label={item.label}
+            pathname={pathname}
+          />
+        ))}
+
+        <div className="pt-4">
+
+          <p className="font-pixel text-[6px] text-zinc-800 px-3 mb-3 tracking-widest">
+            ── CRYPTO ──
           </p>
+
+          {CRYPTO_NAV.map((item) => (
+            <NavItem
+              key={item.href}
+              href={item.href}
+              label={item.label}
+              accent="#f97316"
+              pathname={pathname}
+            />
+          ))}
+
         </div>
 
-        <Link href="/btc">
-          <div className="w-full px-4 py-3 rounded-2xl text-orange-400/80 hover:bg-orange-500/10 hover:text-orange-300 transition-all cursor-pointer flex items-center gap-2">
-            <span>₿</span>
-            <span>BTC Arena</span>
-          </div>
-        </Link>
+      </div>
 
+      {/* Footer */}
+      <div className="p-5 border-t border-zinc-900">
+        <p className="font-pixel text-[5px] text-zinc-800 leading-loose">
+          AUTONOMOUS AI
+          <br />
+          HEDGE FUNDS
+          <br />
+          LIVE MARKETS
+        </p>
       </div>
 
     </aside>

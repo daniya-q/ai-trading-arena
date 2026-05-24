@@ -19,6 +19,11 @@ body {
   overflow-x: hidden;
 }
 
+.font-pixel {
+  font-family: 'Press Start 2P', cursive;
+  line-height: 1.8;
+}
+
 body {
   background:
     radial-gradient(circle at top left, #111827 0%, #050505 40%),
