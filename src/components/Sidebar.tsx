@@ -67,7 +67,15 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-64 border-r border-zinc-900 bg-black hidden lg:flex flex-col min-h-screen">
+    <aside
+      className="w-64 hidden lg:flex flex-col min-h-screen"
+      style={{
+        background: "rgba(5,5,15,0.85)",
+        backdropFilter: "blur(20px)",
+        WebkitBackdropFilter: "blur(20px)",
+        borderRight: "1px solid rgba(255,255,255,0.06)",
+      }}
+    >
 
       {/* Logo */}
       <div className="p-5 border-b border-zinc-900">

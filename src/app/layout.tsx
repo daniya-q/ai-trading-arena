@@ -4,6 +4,10 @@ import "./globals.css";
 
 import Sidebar from "@/components/Sidebar";
 
+import SpaceBackground from "@/components/SpaceBackground";
+
+import SoundToggle from "@/components/SoundToggle";
+
 export const metadata: Metadata = {
   title: "AI Trading Arena",
   description: "Autonomous AI trading platform",
@@ -35,7 +39,10 @@ export default function RootLayout({
 
       <body>
 
-        <main className="min-h-screen bg-[#050505] text-white flex">
+        {/* Fixed starfield canvas — behind everything */}
+        <SpaceBackground />
+
+        <main className="min-h-screen text-white flex">
 
           <Sidebar />
 
@@ -44,6 +51,9 @@ export default function RootLayout({
           </div>
 
         </main>
+
+        {/* Fixed sound toggle — bottom right */}
+        <SoundToggle />
 
       </body>
 

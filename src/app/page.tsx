@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import Link from "next/link";
 
@@ -36,13 +36,23 @@ const INITIAL_CAPITAL = 400000;
 
 const PER_BOT_CAPITAL = 100000;
 
-const BOT_CONFIG: Record<string, { name: string; color: string }> =
-  {
-    gpt: { name: "GPT", color: "#00A67E" },
-    claude: { name: "Claude", color: "#CC785C" },
-    gemini: { name: "Gemini", color: "#4285F4" },
-    groq: { name: "Groq", color: "#F55036" },
-  };
+const BOT_CONFIG: Record<string, { name: string; color: string }> = {
+  gpt: { name: "GPT", color: "#00A67E" },
+  claude: { name: "Claude", color: "#CC785C" },
+  gemini: { name: "Gemini", color: "#4285F4" },
+  groq: { name: "Groq", color: "#F55036" },
+};
+
+// Solar system positions (top + left percentages, centered via translateX)
+const PLANET_POS: Record<
+  string,
+  { top?: number; bottom?: number; left: string }
+> = {
+  gpt: { top: 60, left: "16%" },
+  claude: { top: 60, left: "84%" },
+  gemini: { top: 320, left: "16%" },
+  groq: { top: 320, left: "84%" },
+};
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -60,7 +70,30 @@ type BotCardData = {
   carrySymbol: string | null;
 };
 
-// ── IST / Market helpers ───────────────────────────────────────
+// ── Color helpers ──────────────────────────────────────────────
+
+function hexToRgb(hex: string) {
+  const r = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return r
+    ? {
+        r: parseInt(r[1], 16),
+        g: parseInt(r[2], 16),
+        b: parseInt(r[3], 16),
+      }
+    : { r: 255, g: 255, b: 255 };
+}
+
+function lighten(hex: string, amt = 55): string {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgb(${Math.min(255, r + amt)},${Math.min(255, g + amt)},${Math.min(255, b + amt)})`;
+}
+
+function darken(hex: string, amt = 45): string {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgb(${Math.max(0, r - amt)},${Math.max(0, g - amt)},${Math.max(0, b - amt)})`;
+}
+
+// ── IST helpers ────────────────────────────────────────────────
 
 function getISTDate(): Date {
   const now = new Date();
@@ -73,11 +106,9 @@ function getISTDate(): Date {
 
 function getTodayMarketOpenUTC(): Date {
   const ist = getISTDate();
-  const istOpen = new Date(ist);
-  istOpen.setHours(9, 15, 0, 0);
-  return new Date(
-    istOpen.getTime() - 5.5 * 60 * 60 * 1000
-  );
+  const o = new Date(ist);
+  o.setHours(9, 15, 0, 0);
+  return new Date(o.getTime() - 5.5 * 60 * 60 * 1000);
 }
 
 function getMarketStatus(): {
@@ -90,24 +121,16 @@ function getMarketStatus(): {
   const open = 9 * 60 + 15;
   const close = 15 * 60 + 30;
   const weekday = day >= 1 && day <= 5;
-  const isOpen =
-    weekday && total >= open && total < close;
+  const isOpen = weekday && total >= open && total < close;
 
   if (isOpen) return { isOpen: true, timeUntilOpen: "" };
 
   let mins = 0;
-
   if (weekday && total < open) {
     mins = open - total;
   } else {
     const ahead =
-      day === 5 && total >= close
-        ? 3
-        : day === 6
-        ? 2
-        : day === 0
-        ? 1
-        : 1;
+      day === 5 && total >= close ? 3 : day === 6 ? 2 : 1;
     mins =
       24 * 60 - total + (ahead - 1) * 24 * 60 + open;
   }
@@ -122,378 +145,38 @@ function getMarketStatus(): {
   return { isOpen: false, timeUntilOpen: s.trim() };
 }
 
-// ── Pixel art bot SVG avatars ──────────────────────────────────
-
-function GptAvatar({ color }: { color: string }) {
-  return (
-    <svg
-      width="56"
-      height="56"
-      viewBox="0 0 16 16"
-      xmlns="http://www.w3.org/2000/svg"
-      style={{ imageRendering: "pixelated" }}
-    >
-      <rect x="7" y="0" width="2" height="2" fill={color} />
-      <rect x="6" y="2" width="4" height="1" fill={color} />
-      <rect x="2" y="3" width="12" height="7" fill={color} />
-      <rect x="3" y="5" width="3" height="2" fill="white" />
-      <rect x="10" y="5" width="3" height="2" fill="white" />
-      <rect x="4" y="6" width="1" height="1" fill={color} />
-      <rect x="11" y="6" width="1" height="1" fill={color} />
-      <rect x="4" y="9" width="8" height="1" fill="white" />
-      <rect x="4" y="11" width="8" height="3" fill={color} />
-      <rect x="4" y="14" width="3" height="2" fill={color} />
-      <rect x="9" y="14" width="3" height="2" fill={color} />
-    </svg>
-  );
-}
-
-function ClaudeAvatar({ color }: { color: string }) {
-  return (
-    <svg
-      width="56"
-      height="56"
-      viewBox="0 0 16 16"
-      xmlns="http://www.w3.org/2000/svg"
-      style={{ imageRendering: "pixelated" }}
-    >
-      <rect x="3" y="1" width="10" height="1" fill={color} />
-      <rect x="2" y="2" width="12" height="7" fill={color} />
-      <rect x="3" y="3" width="3" height="3" fill="white" />
-      <rect x="10" y="3" width="3" height="3" fill="white" />
-      <rect x="4" y="4" width="1" height="2" fill={color} />
-      <rect x="11" y="4" width="1" height="2" fill={color} />
-      <rect x="4" y="7" width="2" height="1" fill="white" />
-      <rect x="10" y="7" width="2" height="1" fill="white" />
-      <rect x="6" y="8" width="4" height="1" fill="white" />
-      <rect x="4" y="10" width="8" height="3" fill={color} />
-      <rect x="4" y="13" width="3" height="3" fill={color} />
-      <rect x="9" y="13" width="3" height="3" fill={color} />
-    </svg>
-  );
-}
-
-function GeminiAvatar({ color }: { color: string }) {
-  return (
-    <svg
-      width="56"
-      height="56"
-      viewBox="0 0 16 16"
-      xmlns="http://www.w3.org/2000/svg"
-      style={{ imageRendering: "pixelated" }}
-    >
-      <rect x="3" y="0" width="2" height="3" fill={color} />
-      <rect x="11" y="0" width="2" height="3" fill={color} />
-      <rect x="2" y="3" width="12" height="7" fill={color} />
-      <rect x="4" y="5" width="3" height="1" fill="white" />
-      <rect x="5" y="4" width="1" height="3" fill="white" />
-      <rect x="10" y="5" width="3" height="1" fill="white" />
-      <rect x="11" y="4" width="1" height="3" fill="white" />
-      <rect x="5" y="8" width="6" height="1" fill="white" />
-      <rect x="4" y="11" width="8" height="3" fill={color} />
-      <rect x="4" y="14" width="3" height="2" fill={color} />
-      <rect x="9" y="14" width="3" height="2" fill={color} />
-    </svg>
-  );
-}
-
-function GroqAvatar({ color }: { color: string }) {
-  return (
-    <svg
-      width="56"
-      height="56"
-      viewBox="0 0 16 16"
-      xmlns="http://www.w3.org/2000/svg"
-      style={{ imageRendering: "pixelated" }}
-    >
-      <rect x="7" y="0" width="3" height="1" fill={color} />
-      <rect x="8" y="1" width="2" height="1" fill={color} />
-      <rect x="6" y="2" width="3" height="1" fill={color} />
-      <rect x="7" y="3" width="2" height="1" fill={color} />
-      <rect x="2" y="4" width="12" height="6" fill={color} />
-      <rect x="3" y="5" width="4" height="1" fill="#8B0000" />
-      <rect x="9" y="5" width="4" height="1" fill="#8B0000" />
-      <rect x="3" y="6" width="4" height="1" fill="white" />
-      <rect x="9" y="6" width="4" height="1" fill="white" />
-      <rect x="3" y="8" width="10" height="1" fill="white" />
-      <rect x="4" y="9" width="2" height="1" fill="white" />
-      <rect x="10" y="9" width="2" height="1" fill="white" />
-      <rect x="4" y="11" width="8" height="3" fill={color} />
-      <rect x="4" y="14" width="3" height="2" fill={color} />
-      <rect x="9" y="14" width="3" height="2" fill={color} />
-    </svg>
-  );
-}
-
-const AVATARS: Record<
-  string,
-  ({ color }: { color: string }) => React.ReactElement
-> = {
-  gpt: GptAvatar,
-  claude: ClaudeAvatar,
-  gemini: GeminiAvatar,
-  groq: GroqAvatar,
-};
-
-// ── PixelBorder ───────────────────────────────────────────────
-
-function PixelBorder({
-  color,
-  children,
-  className = "",
-}: {
-  color: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <div
-      className={`relative ${className}`}
-      style={{ border: `2px solid ${color}` }}
-    >
-      <div
-        className="absolute w-2 h-2"
-        style={{ top: -4, left: -4, backgroundColor: color }}
-      />
-      <div
-        className="absolute w-2 h-2"
-        style={{ top: -4, right: -4, backgroundColor: color }}
-      />
-      <div
-        className="absolute w-2 h-2"
-        style={{ bottom: -4, left: -4, backgroundColor: color }}
-      />
-      <div
-        className="absolute w-2 h-2"
-        style={{
-          bottom: -4,
-          right: -4,
-          backgroundColor: color,
-        }}
-      />
-      {children}
-    </div>
-  );
-}
-
-// ── BotCard ───────────────────────────────────────────────────
-
-function BotCard({ data }: { data: BotCardData }) {
-  const {
-    color,
-    botId,
-    botName,
-    rank,
-    pnl,
-    winRate,
-    totalTrades,
-    allocatedCapital,
-    openSymbol,
-    carrySymbol,
-  } = data;
-
-  const AvatarComp = AVATARS[botId] || GptAvatar;
-
-  const pctReturn = (
-    (pnl / PER_BOT_CAPITAL) *
-    100
-  ).toFixed(1);
-
-  const capitalPct = (allocatedCapital / PER_BOT_CAPITAL) * 100;
-
-  const barColor =
-    allocatedCapital >= PER_BOT_CAPITAL
-      ? "#22c55e"
-      : "#ef4444";
-
-  return (
-    <PixelBorder color={color} className="bg-zinc-950 p-5">
-
-      {/* Rank badge */}
-      <div
-        className="absolute top-2 right-3 font-pixel text-[9px]"
-        style={{ color }}
-      >
-        #{rank}
-      </div>
-
-      {/* Avatar + Name */}
-      <div className="flex items-center gap-4 mb-5">
-
-        <AvatarComp color={color} />
-
-        <div>
-          <h3
-            className="font-pixel text-[11px]"
-            style={{ color }}
-          >
-            {botName}
-          </h3>
-          <p className="font-pixel text-[6px] text-zinc-600 mt-2">
-            AI TRADER
-          </p>
-        </div>
-
-      </div>
-
-      {/* Stats 2x3 grid */}
-      <div className="grid grid-cols-2 gap-x-6 gap-y-4 mb-5">
-
-        <div>
-          <p className="font-pixel text-[6px] text-zinc-500 mb-1">
-            P&amp;L
-          </p>
-          <p
-            className="font-pixel text-[11px]"
-            style={{ color: pnl >= 0 ? "#22c55e" : "#ef4444" }}
-          >
-            {pnl >= 0 ? "+" : ""}₹
-            {Math.abs(pnl).toLocaleString("en-IN")}
-          </p>
-        </div>
-
-        <div>
-          <p className="font-pixel text-[6px] text-zinc-500 mb-1">
-            RETURN
-          </p>
-          <p
-            className="font-pixel text-[11px]"
-            style={{
-              color:
-                Number(pctReturn) >= 0 ? "#22c55e" : "#ef4444",
-            }}
-          >
-            {Number(pctReturn) >= 0 ? "+" : ""}
-            {pctReturn}%
-          </p>
-        </div>
-
-        <div>
-          <p className="font-pixel text-[6px] text-zinc-500 mb-1">
-            TRADES
-          </p>
-          <p className="font-pixel text-[11px] text-white">
-            {totalTrades}
-          </p>
-        </div>
-
-        <div>
-          <p className="font-pixel text-[6px] text-zinc-500 mb-1">
-            WIN RATE
-          </p>
-          <p className="font-pixel text-[11px] text-white">
-            {(winRate * 100).toFixed(1)}%
-          </p>
-        </div>
-
-        <div>
-          <p className="font-pixel text-[6px] text-zinc-500 mb-1">
-            OPEN
-          </p>
-          <p
-            className="font-pixel text-[9px]"
-            style={{ color: openSymbol ? color : "#52525b" }}
-          >
-            {openSymbol ?? "NONE"}
-          </p>
-        </div>
-
-        <div>
-          <p className="font-pixel text-[6px] text-zinc-500 mb-1">
-            CARRY
-          </p>
-          <p
-            className="font-pixel text-[9px]"
-            style={{
-              color: carrySymbol ? "#f59e0b" : "#52525b",
-            }}
-          >
-            {carrySymbol ?? "NONE"}
-          </p>
-        </div>
-
-      </div>
-
-      {/* Capital bar */}
-      <div>
-
-        <div className="flex justify-between mb-1">
-          <p className="font-pixel text-[6px] text-zinc-500">
-            CAPITAL
-          </p>
-          <p
-            className="font-pixel text-[6px]"
-            style={{ color: barColor }}
-          >
-            {capitalPct.toFixed(0)}%
-          </p>
-        </div>
-
-        <div className="w-full h-2 bg-zinc-800">
-          <div
-            className="h-full transition-all duration-700"
-            style={{
-              width: `${Math.min(capitalPct, 100)}%`,
-              backgroundColor: barColor,
-            }}
-          />
-        </div>
-
-        <div className="flex justify-between mt-1">
-          <p className="font-pixel text-[5px] text-zinc-700">
-            ₹0
-          </p>
-          <p className="font-pixel text-[5px] text-zinc-700">
-            ₹{(allocatedCapital / 1000).toFixed(1)}K
-          </p>
-        </div>
-
-      </div>
-
-    </PixelBorder>
-  );
-}
-
 // ── Data fetcher ───────────────────────────────────────────────
 
 async function fetchBotCardData(): Promise<BotCardData[]> {
-
   const todayOpen = getTodayMarketOpenUTC();
 
-  const [capitalRes, openPosRes, allPosRes] =
-    await Promise.all([
-      supabase.from("capital").select("*"),
-      supabase
-        .from("positions")
-        .select("bot_id, symbol, opened_at")
-        .eq("status", "OPEN"),
-      supabase.from("positions").select("bot_id"),
-    ]);
+  const [capRes, openRes, allRes] = await Promise.all([
+    supabase.from("capital").select("*"),
+    supabase
+      .from("positions")
+      .select("bot_id, symbol, opened_at")
+      .eq("status", "OPEN"),
+    supabase.from("positions").select("bot_id"),
+  ]);
 
-  const tradeCounts: Record<string, number> = {};
-
-  (allPosRes.data || []).forEach((r) => {
-    tradeCounts[r.bot_id] =
-      (tradeCounts[r.bot_id] || 0) + 1;
+  const counts: Record<string, number> = {};
+  (allRes.data || []).forEach((r) => {
+    counts[r.bot_id] = (counts[r.bot_id] || 0) + 1;
   });
 
-  const openPos = openPosRes.data || [];
-  const capital = capitalRes.data || [];
+  const openPos = openRes.data || [];
+  const capital = capRes.data || [];
 
-  const data: BotCardData[] = bots.map((bot) => {
+  const data = bots.map((bot) => {
     const cap = capital.find((c) => c.bot_id === bot.id);
-    const botOpen = openPos.filter(
-      (p) => p.bot_id === bot.id
-    );
-    const openSymbol = botOpen[0]?.symbol ?? null;
+    const botOpen = openPos.filter((p) => p.bot_id === bot.id);
     const carry = botOpen.find(
       (p) => new Date(p.opened_at) < todayOpen
     );
     const cfg = BOT_CONFIG[bot.id] ?? {
       name: bot.id,
-      color: "#ffffff",
+      color: "#fff",
     };
-
     return {
       botId: bot.id,
       botName: cfg.name,
@@ -504,19 +187,352 @@ async function fetchBotCardData(): Promise<BotCardData[]> {
       pnl: Number(cap?.pnl) || 0,
       winRate: Number(cap?.win_rate) || 0,
       sharpeLike: Number(cap?.sharpe_like) || 0,
-      totalTrades: tradeCounts[bot.id] || 0,
-      openSymbol,
+      totalTrades: counts[bot.id] || 0,
+      openSymbol: botOpen[0]?.symbol ?? null,
       carrySymbol: carry?.symbol ?? null,
     };
   });
 
   data.sort((a, b) => b.pnl - a.pnl);
-
   data.forEach((d, i) => {
     d.rank = i + 1;
   });
-
   return data;
+}
+
+// ── Planet node ────────────────────────────────────────────────
+
+function PlanetNode({
+  data,
+  pos,
+  onClick,
+}: {
+  data: BotCardData;
+  pos: { top?: number; bottom?: number; left: string };
+  onClick: () => void;
+}) {
+  const { color, botName, pnl } = data;
+  const posStyle: React.CSSProperties = {
+    position: "absolute",
+    left: pos.left,
+    transform: "translateX(-50%)",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    cursor: "pointer",
+    zIndex: 10,
+  };
+  if (pos.top !== undefined) posStyle.top = pos.top;
+  if (pos.bottom !== undefined) posStyle.bottom = pos.bottom;
+
+  return (
+    <div style={posStyle} onClick={onClick}>
+
+      {/* P&L floating above */}
+      <p
+        className="font-pixel text-[8px] mb-2"
+        style={{
+          color: pnl >= 0 ? "#22c55e" : "#ef4444",
+          animation: "floatUp 3s ease-in-out infinite",
+          textShadow:
+            pnl >= 0
+              ? "0 0 12px rgba(34,197,94,0.6)"
+              : "0 0 12px rgba(239,68,68,0.6)",
+        }}
+      >
+        {pnl >= 0 ? "+" : ""}₹
+        {Math.abs(pnl).toLocaleString("en-IN")}
+      </p>
+
+      {/* Orbit ring + planet */}
+      <div
+        style={{
+          position: "relative",
+          width: 180,
+          height: 180,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+
+        {/* Spinning orbit ring */}
+        <div
+          style={{
+            position: "absolute",
+            width: 180,
+            height: 180,
+            borderRadius: "50%",
+            border: `1px dashed ${color}50`,
+            animation: "slowSpin 20s linear infinite",
+          }}
+        />
+
+        {/* Atmospheric glow (static, behind planet) */}
+        <div
+          style={{
+            position: "absolute",
+            width: 160,
+            height: 160,
+            borderRadius: "50%",
+            background: `radial-gradient(circle, ${color}22 0%, transparent 70%)`,
+            filter: "blur(18px)",
+          }}
+        />
+
+        {/* Planet */}
+        <div
+          className="group-hover:scale-110"
+          style={{
+            width: 120,
+            height: 120,
+            borderRadius: "50%",
+            background: `radial-gradient(circle at 35% 32%, ${lighten(color)}, ${color} 52%, ${darken(color)})`,
+            boxShadow: `0 0 28px ${color}70, 0 0 56px ${color}28`,
+            animation: "planetGlow 4s ease-in-out infinite",
+            transition: "transform 0.25s ease",
+            zIndex: 2,
+          }}
+        >
+          {/* Surface shading overlay */}
+          <div
+            style={{
+              width: "100%",
+              height: "100%",
+              borderRadius: "50%",
+              background: `radial-gradient(circle at 68% 68%, ${darken(color, 60)}60 0%, transparent 55%)`,
+            }}
+          />
+        </div>
+
+      </div>
+
+      {/* Bot name below */}
+      <p
+        className="font-pixel text-[9px] mt-3"
+        style={{ color, textShadow: `0 0 12px ${color}80` }}
+      >
+        {botName}
+      </p>
+
+      {/* Rank */}
+      <p
+        className="font-pixel text-[6px] mt-1 text-zinc-600"
+      >
+        #{data.rank}
+      </p>
+
+    </div>
+  );
+}
+
+// ── Planet expanded overlay ────────────────────────────────────
+
+function PlanetOverlay({
+  data,
+  onClose,
+}: {
+  data: BotCardData;
+  onClose: () => void;
+}) {
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const { color, botName, pnl, winRate, totalTrades,
+          allocatedCapital, openSymbol, carrySymbol } = data;
+
+  const pctReturn = ((pnl / PER_BOT_CAPITAL) * 100).toFixed(2);
+  const capitalPct = (allocatedCapital / PER_BOT_CAPITAL) * 100;
+  const barColor = allocatedCapital >= PER_BOT_CAPITAL ? "#22c55e" : "#ef4444";
+
+  return (
+    <div
+      ref={overlayRef}
+      onClick={(e) => {
+        if (e.target === overlayRef.current) onClose();
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 100,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,0.65)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+      }}
+    >
+      <div
+        style={{
+          position: "relative",
+          maxWidth: 440,
+          width: "90%",
+          padding: "28px",
+          background: "rgba(8,8,20,0.96)",
+          border: `2px solid ${color}`,
+          boxShadow: `0 0 60px ${color}30`,
+          animation: "scaleIn 0.2s ease-out",
+        }}
+      >
+
+        {/* Corner squares */}
+        {[
+          { top: -4, left: -4 },
+          { top: -4, right: -4 },
+          { bottom: -4, left: -4 },
+          { bottom: -4, right: -4 },
+        ].map((pos, i) => (
+          <div
+            key={i}
+            style={{
+              position: "absolute",
+              width: 8,
+              height: 8,
+              backgroundColor: color,
+              ...pos,
+            }}
+          />
+        ))}
+
+        {/* Close */}
+        <button
+          onClick={onClose}
+          className="font-pixel text-[9px] text-zinc-500 hover:text-white transition-colors"
+          style={{ position: "absolute", top: 12, right: 14 }}
+        >
+          [X]
+        </button>
+
+        {/* Bot name */}
+        <h2
+          className="font-pixel text-sm mb-6"
+          style={{
+            color,
+            textShadow: `0 0 20px ${color}80`,
+          }}
+        >
+          {botName}
+        </h2>
+
+        {/* Stats grid */}
+        <div className="grid grid-cols-2 gap-x-8 gap-y-5 mb-6">
+
+          <div>
+            <p className="font-pixel text-[6px] text-zinc-500 mb-1">
+              P&amp;L
+            </p>
+            <p
+              className="font-pixel text-[11px]"
+              style={{ color: pnl >= 0 ? "#22c55e" : "#ef4444" }}
+            >
+              {pnl >= 0 ? "+" : ""}₹
+              {Math.abs(pnl).toLocaleString("en-IN")}
+            </p>
+          </div>
+
+          <div>
+            <p className="font-pixel text-[6px] text-zinc-500 mb-1">
+              RETURN
+            </p>
+            <p
+              className="font-pixel text-[11px]"
+              style={{
+                color:
+                  Number(pctReturn) >= 0 ? "#22c55e" : "#ef4444",
+              }}
+            >
+              {Number(pctReturn) >= 0 ? "+" : ""}
+              {pctReturn}%
+            </p>
+          </div>
+
+          <div>
+            <p className="font-pixel text-[6px] text-zinc-500 mb-1">
+              TRADES
+            </p>
+            <p className="font-pixel text-[11px] text-white">
+              {totalTrades}
+            </p>
+          </div>
+
+          <div>
+            <p className="font-pixel text-[6px] text-zinc-500 mb-1">
+              WIN RATE
+            </p>
+            <p className="font-pixel text-[11px] text-white">
+              {(winRate * 100).toFixed(1)}%
+            </p>
+          </div>
+
+          <div>
+            <p className="font-pixel text-[6px] text-zinc-500 mb-1">
+              OPEN
+            </p>
+            <p
+              className="font-pixel text-[9px]"
+              style={{
+                color: openSymbol ? color : "#52525b",
+              }}
+            >
+              {openSymbol ?? "NONE"}
+            </p>
+          </div>
+
+          <div>
+            <p className="font-pixel text-[6px] text-zinc-500 mb-1">
+              CARRY
+            </p>
+            <p
+              className="font-pixel text-[9px]"
+              style={{
+                color: carrySymbol ? "#f59e0b" : "#52525b",
+              }}
+            >
+              {carrySymbol ?? "NONE"}
+            </p>
+          </div>
+
+        </div>
+
+        {/* Capital bar */}
+        <div className="mb-6">
+          <div className="flex justify-between mb-1">
+            <p className="font-pixel text-[6px] text-zinc-500">
+              CAPITAL
+            </p>
+            <p
+              className="font-pixel text-[6px]"
+              style={{ color: barColor }}
+            >
+              {capitalPct.toFixed(0)}%
+            </p>
+          </div>
+          <div
+            className="w-full h-2"
+            style={{ background: "rgba(255,255,255,0.06)" }}
+          >
+            <div
+              className="h-full transition-all"
+              style={{
+                width: `${Math.min(capitalPct, 100)}%`,
+                backgroundColor: barColor,
+              }}
+            />
+          </div>
+        </div>
+
+        {/* View full details */}
+        <Link href="/bots">
+          <p
+            className="font-pixel text-[8px] hover:underline transition-colors"
+            style={{ color }}
+          >
+            VIEW FULL DETAILS →
+          </p>
+        </Link>
+
+      </div>
+    </div>
+  );
 }
 
 // ── Page ──────────────────────────────────────────────────────
@@ -527,6 +543,9 @@ export default function Home() {
 
   const [botCards, setBotCards] =
     useState<BotCardData[]>([]);
+
+  const [selected, setSelected] =
+    useState<string | null>(null);
 
   const [equityData, setEquityData] =
     useState<{ t: string; v: number }[]>([]);
@@ -540,12 +559,7 @@ export default function Home() {
     (s, b) => s + b.allocatedCapital,
     0
   );
-
-  const totalPnL = capitals.reduce(
-    (s, b) => s + b.pnl,
-    0
-  );
-
+  const totalPnL = capitals.reduce((s, b) => s + b.pnl, 0);
   const totalPnLPct = (
     (totalPnL / INITIAL_CAPITAL) *
     100
@@ -557,7 +571,6 @@ export default function Home() {
   }
 
   useEffect(() => {
-
     setMounted(true);
 
     Promise.all([
@@ -566,15 +579,13 @@ export default function Home() {
         .initializeBots(bots.map((b) => b.id)),
       usePositionStore.getState().loadFromSupabase(),
       useAIMemoryStore.getState().loadFromSupabase(),
-    ]).then(() => {
-      startLiveAITrading();
-    });
+    ]).then(() => startLiveAITrading());
 
     startMarketWebSocket();
     startRestPolling();
     refreshBotCards();
 
-    const eqInterval = setInterval(() => {
+    const eq = setInterval(() => {
       const caps = useCapitalStore.getState().capitals;
       const total = caps.reduce(
         (s, b) => s + b.allocatedCapital,
@@ -594,48 +605,48 @@ export default function Home() {
       }
     }, 3000);
 
-    const cardInterval = setInterval(refreshBotCards, 30000);
+    const cards = setInterval(refreshBotCards, 30000);
 
-    const statusInterval = setInterval(() => {
+    const status = setInterval(() => {
       setMarketStatus(getMarketStatus());
     }, 30000);
 
     return () => {
-      clearInterval(eqInterval);
-      clearInterval(cardInterval);
-      clearInterval(statusInterval);
+      clearInterval(eq);
+      clearInterval(cards);
+      clearInterval(status);
     };
-
   }, []);
 
   if (!mounted) return null;
 
   const leader = botCards[0];
+  const selectedData = botCards.find(
+    (b) => b.botId === selected
+  );
 
   return (
-    <div className="flex-1 p-6 bg-black min-h-screen text-white fade-in">
+    <div className="flex-1 p-6 min-h-screen text-white fade-in">
 
       {/* ── Section 1: Competition Header ─────────────────── */}
 
       <div
         className="mb-10 p-6"
         style={{
-          border: "2px dashed #3f3f46",
-          background:
-            "linear-gradient(135deg,#0a0a0a 0%,#111111 100%)",
+          border: "2px dashed rgba(255,255,255,0.08)",
+          background: "rgba(10,10,22,0.55)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
         }}
       >
 
         <div className="text-center mb-6">
-
           <h1 className="font-pixel text-lg text-white mb-2">
             SEASON 1
           </h1>
-
           <p className="font-pixel text-[9px] text-zinc-400 tracking-widest">
             AI TRADING ARENA
           </p>
-
         </div>
 
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-6 mb-6">
@@ -700,9 +711,14 @@ export default function Home() {
           <span
             className={`inline-flex items-center gap-2 px-4 py-2 font-pixel text-[8px] border ${
               marketStatus.isOpen
-                ? "border-green-500/40 text-green-400 bg-green-500/5"
-                : "border-red-500/40 text-red-400 bg-red-500/5"
+                ? "border-green-500/30 text-green-400"
+                : "border-red-500/30 text-red-400"
             }`}
+            style={{
+              background: marketStatus.isOpen
+                ? "rgba(34,197,94,0.06)"
+                : "rgba(239,68,68,0.06)",
+            }}
           >
             <span
               className={`w-2 h-2 inline-block ${
@@ -723,33 +739,55 @@ export default function Home() {
 
       </div>
 
-      {/* ── Section 2: Bot Cards ──────────────────────────── */}
+      {/* ── Section 2: Solar System ───────────────────────── */}
 
       <div className="mb-12">
 
-        <p className="font-pixel text-[7px] text-zinc-600 mb-6 tracking-widest">
-          ▸ CONTESTANTS
+        <p className="font-pixel text-[7px] text-zinc-600 mb-2 tracking-widest text-center">
+          ▸ AI BATTLE GROUND ◂
         </p>
 
-        {botCards.length === 0 ? (
+        <p className="font-pixel text-[6px] text-zinc-700 mb-6 text-center">
+          CLICK A PLANET TO EXPLORE
+        </p>
 
-          <div className="flex items-center justify-center py-20">
-            <div className="w-8 h-8 border-2 border-zinc-700 border-t-zinc-300 rounded-full animate-spin" />
-          </div>
+        {/* Solar system canvas */}
+        <div
+          style={{
+            position: "relative",
+            minHeight: 560,
+            width: "100%",
+          }}
+        >
 
-        ) : (
+          {botCards.length === 0 ? (
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-            {botCards.map((card) => (
-              <BotCard key={card.botId} data={card} />
-            ))}
-          </div>
+            <div className="flex items-center justify-center h-[560px]">
+              <div className="w-10 h-10 border-2 border-zinc-700 border-t-zinc-300 rounded-full animate-spin" />
+            </div>
 
-        )}
+          ) : (
+
+            botCards.map((card) => {
+              const pos = PLANET_POS[card.botId];
+              if (!pos) return null;
+              return (
+                <PlanetNode
+                  key={card.botId}
+                  data={card}
+                  pos={pos}
+                  onClick={() => setSelected(card.botId)}
+                />
+              );
+            })
+
+          )}
+
+        </div>
 
       </div>
 
-      {/* ── Section 3: Leaderboard Glimpse ───────────────── */}
+      {/* ── Section 3: Leader Glimpse ─────────────────────── */}
 
       {leader && (
 
@@ -759,17 +797,39 @@ export default function Home() {
             ▸ CURRENT LEADER
           </p>
 
-          <PixelBorder
-            color={leader.color}
-            className="bg-zinc-950 p-5"
+          <div
+            style={{
+              position: "relative",
+              border: `2px solid ${leader.color}`,
+              background: "rgba(8,8,20,0.75)",
+              backdropFilter: "blur(14px)",
+              WebkitBackdropFilter: "blur(14px)",
+              padding: "20px",
+            }}
           >
+            {/* Corner squares */}
+            {[
+              { top: -4, left: -4 },
+              { top: -4, right: -4 },
+              { bottom: -4, left: -4 },
+              { bottom: -4, right: -4 },
+            ].map((pos, i) => (
+              <div
+                key={i}
+                style={{
+                  position: "absolute",
+                  width: 8,
+                  height: 8,
+                  backgroundColor: leader.color,
+                  ...pos,
+                }}
+              />
+            ))}
 
             <div className="flex items-center justify-between flex-wrap gap-4">
 
               <div className="flex items-center gap-4">
-
                 <span className="text-3xl">🏆</span>
-
                 <div>
                   <p
                     className="font-pixel text-[10px] mb-2"
@@ -781,18 +841,13 @@ export default function Home() {
                     className="font-pixel text-sm"
                     style={{
                       color:
-                        leader.pnl >= 0
-                          ? "#22c55e"
-                          : "#ef4444",
+                        leader.pnl >= 0 ? "#22c55e" : "#ef4444",
                     }}
                   >
                     {leader.pnl >= 0 ? "+" : ""}₹
-                    {Math.abs(leader.pnl).toLocaleString(
-                      "en-IN"
-                    )}
+                    {Math.abs(leader.pnl).toLocaleString("en-IN")}
                   </p>
                 </div>
-
               </div>
 
               <Link href="/leaderboard">
@@ -802,8 +857,7 @@ export default function Home() {
               </Link>
 
             </div>
-
-          </PixelBorder>
+          </div>
 
         </div>
 
@@ -818,64 +872,55 @@ export default function Home() {
         </p>
 
         <div
-          className="p-4 bg-zinc-950"
-          style={{ border: "1px solid #27272a" }}
+          style={{
+            padding: 16,
+            background: "rgba(10,10,22,0.6)",
+            backdropFilter: "blur(12px)",
+            WebkitBackdropFilter: "blur(12px)",
+            border: "1px solid rgba(255,255,255,0.07)",
+          }}
         >
 
           {equityData.length < 2 ? (
-
             <div className="h-[240px] flex items-center justify-center">
               <p className="font-pixel text-[7px] text-zinc-700 animate-pulse">
                 COLLECTING DATA...
               </p>
             </div>
-
           ) : (
-
             <div className="h-[240px]">
-
-              <ResponsiveContainer
-                width="100%"
-                height="100%"
-              >
+              <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={equityData}>
-
                   <XAxis
                     dataKey="t"
-                    stroke="#3f3f46"
+                    stroke="#27272a"
                     tick={{
                       fontSize: 7,
-                      fontFamily:
-                        "'Press Start 2P', cursive",
+                      fontFamily: "'Press Start 2P', cursive",
                       fill: "#52525b",
                     }}
                     interval="preserveStartEnd"
                   />
-
                   <YAxis
-                    stroke="#3f3f46"
+                    stroke="#27272a"
                     tick={{
                       fontSize: 7,
-                      fontFamily:
-                        "'Press Start 2P', cursive",
+                      fontFamily: "'Press Start 2P', cursive",
                       fill: "#52525b",
                     }}
                     domain={["auto", "auto"]}
                     width={70}
                   />
-
                   <Tooltip
                     contentStyle={{
-                      background: "#0a0a0a",
-                      border: "1px solid #3f3f46",
+                      background: "rgba(8,8,20,0.95)",
+                      border: "1px solid rgba(255,255,255,0.1)",
                       borderRadius: 0,
-                      fontFamily:
-                        "'Press Start 2P', cursive",
+                      fontFamily: "'Press Start 2P', cursive",
                       fontSize: 7,
                       color: "#fff",
                     }}
                   />
-
                   <Line
                     type="stepAfter"
                     dataKey="v"
@@ -884,17 +929,23 @@ export default function Home() {
                     dot={false}
                     name="Portfolio Value"
                   />
-
                 </LineChart>
               </ResponsiveContainer>
-
             </div>
-
           )}
 
         </div>
 
       </div>
+
+      {/* ── Planet expanded overlay ───────────────────────── */}
+
+      {selected && selectedData && (
+        <PlanetOverlay
+          data={selectedData}
+          onClose={() => setSelected(null)}
+        />
+      )}
 
     </div>
   );
