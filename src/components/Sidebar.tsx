@@ -34,6 +34,19 @@ export default function Sidebar() {
           </div>
         </Link>
 
+        <div className="pt-3 pb-1">
+          <p className="text-xs font-semibold text-zinc-600 uppercase tracking-widest px-4">
+            Crypto
+          </p>
+        </div>
+
+        <Link href="/btc">
+          <div className="w-full px-4 py-3 rounded-2xl text-orange-400/80 hover:bg-orange-500/10 hover:text-orange-300 transition-all cursor-pointer flex items-center gap-2">
+            <span>₿</span>
+            <span>BTC Arena</span>
+          </div>
+        </Link>
+
       </div>
 
     </aside>
