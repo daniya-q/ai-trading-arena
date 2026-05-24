@@ -199,21 +199,23 @@ async function fetchBotCards(): Promise<BotCard[]> {
 async function fetchOpenPositions(): Promise<OpenPosition[]> {
   const { data } = await supabase
     .from("btc_positions")
-    .select("id,bot_id,entry_price,entry_inr,btc_quantity")
+    .select("id,bot_id,entry_price,quantity")
     .eq("status", "OPEN");
   return (data ?? []).map((row) => {
     const cfg = BOT_CONFIG[row.bot_id] ?? {
       name: row.bot_id,
       color: "#fff",
     };
+    const entryPrice = Number(row.entry_price);
+    const btcQuantity = Number(row.quantity);
     return {
       id: row.id,
       botId: row.bot_id,
       botName: cfg.name,
       color: cfg.color,
-      entryPrice: Number(row.entry_price),
-      entryInr: Number(row.entry_inr),
-      btcQuantity: Number(row.btc_quantity),
+      entryPrice,
+      entryInr: btcQuantity * entryPrice,  // computed: no separate column
+      btcQuantity,
     };
   });
 }
@@ -222,7 +224,7 @@ async function fetchClosedTrades(): Promise<ClosedTrade[]> {
   const { data } = await supabase
     .from("btc_positions")
     .select(
-      "id,bot_id,btc_quantity,entry_price,exit_price,pnl,closed_at,created_at"
+      "id,bot_id,quantity,entry_price,current_price,pnl,closed_at,opened_at"
     )
     .eq("status", "CLOSED")
     .order("closed_at", { ascending: false })
@@ -237,12 +239,12 @@ async function fetchClosedTrades(): Promise<ClosedTrade[]> {
       botId: row.bot_id,
       botName: cfg.name,
       color: cfg.color,
-      btcQuantity: Number(row.btc_quantity),
+      btcQuantity: Number(row.quantity),
       entryPrice: Number(row.entry_price),
-      exitPrice: Number(row.exit_price ?? 0),
+      exitPrice: Number(row.current_price ?? 0),  // current_price holds exit price after close
       pnl: Number(row.pnl),
       closedAt: row.closed_at ?? "",
-      openedAt: row.created_at ?? "",
+      openedAt: row.opened_at ?? "",
     };
   });
 }

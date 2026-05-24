@@ -750,16 +750,17 @@ function buildBtcPrompt(params) {
     const { botName, botProvider, btcPrice: price, capitalInr, freeCash, totalPnl, openPositions } = params;
     const posSec = openPositions.length
         ? openPositions.map((p, i) => {
-            const currentValue = p.btc_quantity * price;
-            const pnl = currentValue - p.entry_inr;
-            return `  ${i + 1}. LONG ${p.btc_quantity.toFixed(6)} BTC\n` +
+            const entryInr = p.quantity * p.entry_price;
+            const currentValue = p.quantity * price;
+            const pnl = currentValue - entryInr;
+            return `  ${i + 1}. LONG ${p.quantity.toFixed(6)} BTC\n` +
                 `     Entry: $${p.entry_price.toFixed(2)}  |  Now: $${price.toFixed(2)}\n` +
-                `     Invested: ₹${p.entry_inr.toFixed(2)}  |  Current value: ₹${currentValue.toFixed(2)}  |  PnL: ${pnl >= 0 ? "+" : ""}₹${pnl.toFixed(2)}`;
+                `     Invested: ₹${entryInr.toFixed(2)}  |  Current value: ₹${currentValue.toFixed(2)}  |  PnL: ${pnl >= 0 ? "+" : ""}₹${pnl.toFixed(2)}`;
         }).join("\n")
         : "  No open positions — fully in cash.";
     return `You are ${botName} (${botProvider}), an autonomous AI trader in a live competition.
 
-You are trading BTC/USDT spot on Binance. No leverage, no options, no expiry — pure spot trading.
+You are trading BTC/USDT spot (via Kraken). No leverage, no options, no expiry — pure spot trading.
 
 ════════════════════════════════════════
   MARKET
@@ -1058,8 +1059,10 @@ async function runBtcTradingCycle() {
             try {
                 const capital = await getBtcCapital(bot.id);
                 const openPositions = await getOpenBtcPositions(bot.id);
-                const deployed = openPositions.reduce((sum, p) => sum + p.entry_inr, 0);
+                // entry_inr for each position = quantity * entry_price (no separate column)
+                const deployed = openPositions.reduce((sum, p) => sum + p.quantity * p.entry_price, 0);
                 const freeCash = capital.btc_capital - deployed;
+                console.log(`[BTC:${bot.id}] capital=₹${capital.btc_capital} deployed=₹${deployed.toFixed(2)} freeCash=₹${freeCash.toFixed(2)} openPos=${openPositions.length}`);
                 const prompt = buildBtcPrompt({
                     botName: bot.name,
                     botProvider: bot.provider,
@@ -1070,6 +1073,7 @@ async function runBtcTradingCycle() {
                     openPositions,
                 });
                 const rawResponse = await runAI(bot.provider, prompt);
+                console.log(`[BTC:${bot.id}] Raw AI response: ${rawResponse.slice(0, 200)}`);
                 // Parse BTC decision
                 let action = "HOLD";
                 let quantity_inr = 0;
@@ -1082,39 +1086,43 @@ async function runBtcTradingCycle() {
                     quantity_inr = Math.max(0, Number(parsed.quantity_inr) || 0);
                     reasoning = parsed.reasoning ?? "No reasoning";
                 }
-                catch {
+                catch (parseErr) {
+                    console.error(`[BTC:${bot.id}] JSON parse failed:`, parseErr);
                     action = "HOLD";
                 }
-                console.log(`[BTC:${bot.id}] ${action} | ₹${quantity_inr} | ${reasoning.slice(0, 80)}`);
+                console.log(`[BTC:${bot.id}] Decision: ${action} | quantity_inr=₹${quantity_inr} | ${reasoning.slice(0, 80)}`);
                 if (action === "HOLD")
                     continue;
                 // ── SELL: close all open BTC positions ──
                 if (action === "SELL") {
                     if (!openPositions.length) {
-                        console.log(`[BTC:${bot.id}] SELL — no open positions`);
+                        console.log(`[BTC:${bot.id}] SELL — no open positions to close`);
                         continue;
                     }
                     let totalRealised = 0;
                     for (const pos of openPositions) {
-                        const currentValue = pos.btc_quantity * btcPrice;
-                        const pnl = currentValue - pos.entry_inr;
+                        const entryInr = pos.quantity * pos.entry_price;
+                        const currentValue = pos.quantity * btcPrice;
+                        const pnl = currentValue - entryInr;
                         totalRealised += pnl;
                         const { error } = await supabase.from("btc_positions").update({
                             status: "CLOSED",
-                            exit_price: Number(btcPrice.toFixed(2)),
+                            current_price: Number(btcPrice.toFixed(2)),
                             pnl: Number(pnl.toFixed(2)),
                             closed_at: new Date().toISOString(),
                         }).eq("id", pos.id);
                         if (error)
-                            console.error(`[BTC:${bot.id}] Close failed:`, error.message);
+                            console.error(`[BTC:${bot.id}] Close failed:`, error.message, JSON.stringify(error));
                         else
-                            console.log(`[BTC:${bot.id}] CLOSED ${pos.btc_quantity.toFixed(6)} BTC  PnL: ${pnl >= 0 ? "+" : ""}₹${pnl.toFixed(2)}`);
+                            console.log(`[BTC:${bot.id}] CLOSED ${pos.quantity.toFixed(6)} BTC @ $${btcPrice.toFixed(2)}  PnL: ${pnl >= 0 ? "+" : ""}₹${pnl.toFixed(2)}`);
                     }
                     // Update btc_capital
-                    await supabase.from("btc_capital").update({
+                    const { error: capErr } = await supabase.from("btc_capital").update({
                         btc_capital: Number((capital.btc_capital + totalRealised).toFixed(2)),
                         pnl: Number((capital.pnl + totalRealised).toFixed(2)),
                     }).eq("bot_id", bot.id);
+                    if (capErr)
+                        console.error(`[BTC:${bot.id}] btc_capital update failed:`, capErr.message);
                     continue;
                 }
                 // ── BUY: open a long position ──
@@ -1125,22 +1133,32 @@ async function runBtcTradingCycle() {
                         spendInr = freeCash;
                     }
                     if (spendInr < 100) {
-                        console.warn(`[BTC:${bot.id}] Insufficient cash (₹${freeCash.toFixed(2)}) — skipping BUY`);
+                        console.warn(`[BTC:${bot.id}] Insufficient cash ₹${freeCash.toFixed(2)} (need ≥₹100) — skipping BUY`);
                         continue;
                     }
+                    // quantity = BTC amount = INR to spend / BTC price (system treats $ as ₹ for simulation)
                     const btcQty = spendInr / btcPrice;
-                    const { error } = await supabase.from("btc_positions").insert({
+                    const insertPayload = {
                         bot_id: bot.id,
+                        symbol: "BTC/USDT",
+                        side: "BUY",
+                        quantity: Number(btcQty.toFixed(8)),
                         entry_price: Number(btcPrice.toFixed(2)),
-                        entry_inr: Number(spendInr.toFixed(2)),
-                        btc_quantity: Number(btcQty.toFixed(8)),
+                        current_price: Number(btcPrice.toFixed(2)),
+                        stop_loss: 0,
+                        take_profit: 0,
                         pnl: 0,
                         status: "OPEN",
-                    });
-                    if (error)
-                        console.error(`[BTC:${bot.id}] Insert failed:`, error.message);
-                    else
-                        console.log(`[BTC:${bot.id}] BOUGHT ${btcQty.toFixed(6)} BTC @ $${btcPrice.toFixed(2)} (₹${spendInr.toFixed(2)})`);
+                        opened_at: new Date().toISOString(),
+                    };
+                    console.log(`[BTC:${bot.id}] Inserting btc_positions:`, JSON.stringify(insertPayload));
+                    const { error, data: inserted } = await supabase.from("btc_positions").insert(insertPayload).select();
+                    if (error) {
+                        console.error(`[BTC:${bot.id}] Insert FAILED — code: ${error.code} | message: ${error.message} | details: ${error.details} | hint: ${error.hint}`);
+                    }
+                    else {
+                        console.log(`[BTC:${bot.id}] BOUGHT ${btcQty.toFixed(6)} BTC @ $${btcPrice.toFixed(2)} (₹${spendInr.toFixed(2)}) | inserted id: ${inserted?.[0]?.id}`);
+                    }
                 }
             }
             catch (botErr) {
