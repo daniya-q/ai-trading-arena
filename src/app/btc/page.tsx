@@ -154,11 +154,20 @@ async function fetchBotCards(): Promise<BotCard[]> {
   const [capRes, posRes] = await Promise.all([
     supabase
       .from("btc_capital")
-      .select("bot_id,allocated_capital,pnl"),
+      .select("bot_id,allocated_capital,pnl,win_rate"),
     supabase
       .from("btc_positions")
       .select("bot_id,pnl,status"),
   ]);
+
+  if (capRes.error) {
+    console.error("[BTC Page] btc_capital fetch failed:", capRes.error);
+    throw new Error(`btc_capital: ${capRes.error.message}`);
+  }
+  if (posRes.error) {
+    console.error("[BTC Page] btc_positions fetch failed:", posRes.error);
+    throw new Error(`btc_positions: ${posRes.error.message}`);
+  }
 
   const caps = capRes.data ?? [];
   const allPos = posRes.data ?? [];
@@ -197,10 +206,14 @@ async function fetchBotCards(): Promise<BotCard[]> {
 }
 
 async function fetchOpenPositions(): Promise<OpenPosition[]> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("btc_positions")
-    .select("id,bot_id,entry_price,quantity")
+    .select("id,bot_id,entry_price,quantity,current_price,pnl,status,opened_at,closed_at")
     .eq("status", "OPEN");
+  if (error) {
+    console.error("[BTC Page] open positions fetch failed:", error);
+    throw new Error(`btc_positions (open): ${error.message}`);
+  }
   return (data ?? []).map((row) => {
     const cfg = BOT_CONFIG[row.bot_id] ?? {
       name: row.bot_id,
@@ -221,14 +234,18 @@ async function fetchOpenPositions(): Promise<OpenPosition[]> {
 }
 
 async function fetchClosedTrades(): Promise<ClosedTrade[]> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("btc_positions")
     .select(
-      "id,bot_id,quantity,entry_price,current_price,pnl,closed_at,opened_at"
+      "id,bot_id,quantity,entry_price,current_price,pnl,status,opened_at,closed_at"
     )
     .eq("status", "CLOSED")
     .order("closed_at", { ascending: false })
     .limit(20);
+  if (error) {
+    console.error("[BTC Page] closed trades fetch failed:", error);
+    throw new Error(`btc_positions (closed): ${error.message}`);
+  }
   return (data ?? []).map((row) => {
     const cfg = BOT_CONFIG[row.bot_id] ?? {
       name: row.bot_id,
@@ -446,39 +463,54 @@ export default function BtcArenaPage() {
   const [closedTrades, setClosedTrades] = useState<ClosedTrade[]>([]);
   const [btcStatus, setBtcStatus] = useState<BtcStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [equityData, setEquityData] = useState<EquityPoint[]>([]);
 
   async function refreshCards() {
-    const cards = await fetchBotCards();
-    setBotCards(cards);
+    try {
+      const cards = await fetchBotCards();
+      setFetchError(null);
+      setBotCards(cards);
 
-    // Append equity point
-    const t = new Date().toLocaleTimeString("en-IN", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-    setEquityData((prev) => {
-      const point: EquityPoint = {
-        t,
-        gpt:    cards.find((c) => c.botId === "gpt")?.btcCapital    ?? PER_BOT_CAPITAL,
-        claude: cards.find((c) => c.botId === "claude")?.btcCapital ?? PER_BOT_CAPITAL,
-        gemini: cards.find((c) => c.botId === "gemini")?.btcCapital ?? PER_BOT_CAPITAL,
-        groq:   cards.find((c) => c.botId === "groq")?.btcCapital   ?? PER_BOT_CAPITAL,
-      };
-      return [...prev.slice(-59), point];
-    });
+      // Append equity point
+      const t = new Date().toLocaleTimeString("en-IN", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      setEquityData((prev) => {
+        const point: EquityPoint = {
+          t,
+          gpt:    cards.find((c) => c.botId === "gpt")?.btcCapital    ?? PER_BOT_CAPITAL,
+          claude: cards.find((c) => c.botId === "claude")?.btcCapital ?? PER_BOT_CAPITAL,
+          gemini: cards.find((c) => c.botId === "gemini")?.btcCapital ?? PER_BOT_CAPITAL,
+          groq:   cards.find((c) => c.botId === "groq")?.btcCapital   ?? PER_BOT_CAPITAL,
+        };
+        return [...prev.slice(-59), point];
+      });
+    } catch (err) {
+      console.error("[BTC Page] refreshCards error:", err);
+      setFetchError(String(err));
+      setLoading(false);
+    }
   }
 
   async function refreshPositions() {
-    const [open, closed] = await Promise.all([
-      fetchOpenPositions(),
-      fetchClosedTrades(),
-    ]);
-    setOpenPositions(open);
-    setClosedTrades(closed);
-    setLastUpdated(new Date());
-    setLoading(false);
+    try {
+      const [open, closed] = await Promise.all([
+        fetchOpenPositions(),
+        fetchClosedTrades(),
+      ]);
+      setFetchError(null);
+      setOpenPositions(open);
+      setClosedTrades(closed);
+      setLastUpdated(new Date());
+      setLoading(false);
+    } catch (err) {
+      console.error("[BTC Page] refreshPositions error:", err);
+      setFetchError(String(err));
+      setLoading(false);
+    }
   }
 
   async function refreshStatus() {
@@ -544,6 +576,27 @@ export default function BtcArenaPage() {
         )}
 
       </div>
+
+      {/* ── Fetch error banner ──────────────────────────────── */}
+
+      {fetchError && (
+        <div
+          className="mb-6 px-4 py-3 font-pixel text-[7px] leading-relaxed"
+          style={{
+            background: "rgba(239,68,68,0.08)",
+            border: "1px solid rgba(239,68,68,0.35)",
+            color: "#ef4444",
+          }}
+        >
+          <span className="text-red-400">▸ SUPABASE FETCH ERROR</span>
+          <br />
+          {fetchError}
+          <br />
+          <span className="text-zinc-500">
+            Check: NEXT_PUBLIC_SUPABASE_URL · NEXT_PUBLIC_SUPABASE_ANON_KEY · RLS policies on btc_capital / btc_positions
+          </span>
+        </div>
+      )}
 
       {/* ── BTC Price Hero ─────────────────────────────────── */}
 
