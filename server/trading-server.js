@@ -1102,26 +1102,37 @@ async function runBtcTradingCycle() {
                     openPositions,
                 });
                 const rawResponse = await runAI(bot.provider, prompt);
-                console.log(`[BTC:${bot.id}] Raw AI response: ${rawResponse.slice(0, 200)}`);
+                console.log(`[BTC:${bot.id}] ── RAW RESPONSE (${rawResponse.length} chars) ──`);
+                console.log(rawResponse);
+                console.log(`[BTC:${bot.id}] ── END RAW RESPONSE ──`);
                 // Parse BTC decision
                 let action = "HOLD";
                 let quantity_inr = 0;
                 let reasoning = "No reasoning";
                 try {
                     const cleaned = rawResponse.replace(/```json/g, "").replace(/```/g, "").trim();
+                    console.log(`[BTC:${bot.id}] Cleaned JSON string: ${cleaned}`);
                     const parsed = JSON.parse(cleaned);
+                    console.log(`[BTC:${bot.id}] Parsed fields — action: "${parsed.action}" | quantity_inr: ${parsed.quantity_inr} | reasoning: "${String(parsed.reasoning ?? "").slice(0, 120)}"`);
                     const rawAct = (parsed.action ?? "HOLD").toString().toUpperCase();
                     action = (["BUY", "SELL", "HOLD"].includes(rawAct) ? rawAct : "HOLD");
+                    if (!["BUY", "SELL", "HOLD"].includes(rawAct)) {
+                        console.warn(`[BTC:${bot.id}] Unrecognised action "${rawAct}" — defaulting to HOLD`);
+                    }
                     quantity_inr = Math.max(0, Number(parsed.quantity_inr) || 0);
                     reasoning = parsed.reasoning ?? "No reasoning";
                 }
                 catch (parseErr) {
-                    console.error(`[BTC:${bot.id}] JSON parse failed:`, parseErr);
+                    console.error(`[BTC:${bot.id}] JSON parse FAILED:`, parseErr);
+                    console.error(`[BTC:${bot.id}] Failed raw string was: ${rawResponse.slice(0, 500)}`);
                     action = "HOLD";
                 }
-                console.log(`[BTC:${bot.id}] Decision: ${action} | quantity_inr=₹${quantity_inr} | ${reasoning.slice(0, 80)}`);
-                if (action === "HOLD")
+                console.log(`[BTC:${bot.id}] ── DECISION: ${action} | quantity_inr=₹${quantity_inr} | freeCash=₹${freeCash.toFixed(2)} | maxBuy=₹${(freeCash * 0.1).toFixed(2)}`);
+                console.log(`[BTC:${bot.id}] Reasoning: ${reasoning.slice(0, 200)}`);
+                if (action === "HOLD") {
+                    console.log(`[BTC:${bot.id}] HOLD — skipping this cycle`);
                     continue;
+                }
                 // ── SELL: close all open BTC positions ──
                 if (action === "SELL") {
                     if (!openPositions.length) {
