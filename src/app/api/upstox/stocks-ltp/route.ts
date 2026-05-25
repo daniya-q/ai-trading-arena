@@ -20,11 +20,11 @@ const STOCKS = [
 const INSTRUMENT_KEYS = STOCKS.map((s) => `NSE_EQ|${s}`);
 
 export async function GET() {
-  const accessToken = process.env.UPSTOX_ACCESS_TOKEN;
+  const accessToken = process.env.UPSTOX_ANALYTICS_TOKEN || process.env.UPSTOX_ACCESS_TOKEN;
 
   if (!accessToken) {
     return NextResponse.json(
-      { error: "UPSTOX_ACCESS_TOKEN not set" },
+      { error: "UPSTOX_ANALYTICS_TOKEN not set" },
       { status: 500 }
     );
   }

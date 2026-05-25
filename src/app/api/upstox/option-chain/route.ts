@@ -59,10 +59,10 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const token = process.env.UPSTOX_ACCESS_TOKEN;
+  const token = process.env.UPSTOX_ANALYTICS_TOKEN || process.env.UPSTOX_ACCESS_TOKEN;
   if (!token) {
     return NextResponse.json(
-      { error: "UPSTOX_ACCESS_TOKEN is not configured" },
+      { error: "UPSTOX_ANALYTICS_TOKEN is not configured" },
       { status: 500 }
     );
   }

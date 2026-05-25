@@ -337,7 +337,7 @@ const INDEX_KEY_MAP: Record<string, "NIFTY" | "BANKNIFTY" | "SENSEX"> = {
 };
 
 async function fetchIndexLTP(): Promise<Partial<Record<"NIFTY" | "BANKNIFTY" | "SENSEX", number>>> {
-  const token = process.env.UPSTOX_ACCESS_TOKEN;
+  const token = process.env.UPSTOX_ANALYTICS_TOKEN || process.env.UPSTOX_ACCESS_TOKEN;
   if (!token) return {};
   const keys = ["NSE_INDEX|Nifty 50", "NSE_INDEX|Nifty Bank", "BSE_INDEX|SENSEX"]
     .map(encodeURIComponent).join(",");
@@ -363,7 +363,7 @@ async function fetchIndexLTP(): Promise<Partial<Record<"NIFTY" | "BANKNIFTY" | "
 const STOCK_SYMBOLS = ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "HINDUNILVR", "ITC", "SBIN", "BHARTIARTL", "KOTAKBANK"];
 
 async function fetchStockLTPs(): Promise<Array<{ symbol: string; price: number; change: number }>> {
-  const token = process.env.UPSTOX_ACCESS_TOKEN;
+  const token = process.env.UPSTOX_ANALYTICS_TOKEN || process.env.UPSTOX_ACCESS_TOKEN;
   if (!token) return [];
   const keys = STOCK_SYMBOLS.map(s => `NSE_EQ|${s}`).map(encodeURIComponent).join(",");
   try {
@@ -401,7 +401,7 @@ function getDTE(expiryStr: string): number {
 }
 
 async function fetchOptionSlice(instrument: string, expiryStr: string): Promise<OptionSlice | null> {
-  const token = process.env.UPSTOX_ACCESS_TOKEN;
+  const token = process.env.UPSTOX_ANALYTICS_TOKEN || process.env.UPSTOX_ACCESS_TOKEN;
   if (!token) return null;
   const instrumentKey = OPTION_KEYS[instrument];
   if (!instrumentKey) return null;
@@ -1445,6 +1445,11 @@ app.listen(PORT, () => {
 console.log("[Server] Starting...");
 console.log(`[Server] Supabase: ${process.env.NEXT_PUBLIC_SUPABASE_URL}`);
 console.log(`[Server] Upstox token set: ${!!process.env.UPSTOX_ACCESS_TOKEN}`);
+if (process.env.UPSTOX_ANALYTICS_TOKEN) {
+  console.log("[Token] Using Analytics Token for market data (expires 2027)");
+} else {
+  console.warn("[Token] UPSTOX_ANALYTICS_TOKEN not set — falling back to UPSTOX_ACCESS_TOKEN for market data");
+}
 
 // Load Upstox token from Supabase config (overwrites .env value if present)
 loadTokenFromSupabase().catch(console.error);

@@ -16,7 +16,7 @@ export async function fetchIndianMarketData() {
         `https://api.upstox.com/v2/market-quote/quotes?instrument_key=${instrumentKeys}`,
         {
           headers: {
-            Authorization: `Bearer ${process.env.UPSTOX_ACCESS_TOKEN}`,
+            Authorization: `Bearer ${process.env.UPSTOX_ANALYTICS_TOKEN || process.env.UPSTOX_ACCESS_TOKEN}`,
 
             Accept:
               "application/json",
