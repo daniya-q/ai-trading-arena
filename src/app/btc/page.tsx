@@ -154,7 +154,7 @@ async function fetchBotCards(): Promise<BotCard[]> {
   const [capRes, posRes] = await Promise.all([
     supabase
       .from("btc_capital")
-      .select("bot_id,btc_capital,pnl"),
+      .select("bot_id,allocated_capital,pnl"),
     supabase
       .from("btc_positions")
       .select("bot_id,pnl,status"),
@@ -174,7 +174,7 @@ async function fetchBotCards(): Promise<BotCard[]> {
     ).length;
     const totalTrades = closed.length;
     const pnl = Number(cap?.pnl ?? 0);
-    const btcCapital = Number(cap?.btc_capital ?? PER_BOT_CAPITAL);
+    const btcCapital = Number(cap?.allocated_capital ?? PER_BOT_CAPITAL);
     return {
       botId: id,
       name: cfg.name,

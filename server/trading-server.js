@@ -83,6 +83,9 @@ let btcCurrentCandle = null;
 let btcCurrentBucket = 0;
 let btcPrice = 0;
 let lastBtcLogTime = 0;
+// USD/INR exchange rate cache
+let cachedUsdToInr = 84;
+let lastUsdInrFetch = 0;
 function processBtcTick(price, timestamp) {
     const CANDLE_DURATION = 1000;
     const bucket = Math.floor(timestamp / CANDLE_DURATION) * CANDLE_DURATION;
@@ -432,6 +435,32 @@ function connectBinanceWS() {
         console.warn("[BTC] WS closed — reconnecting in 5s...");
         setTimeout(connectBinanceWS, 5000);
     });
+}
+// ══════════════════════════════════════════════════════════════
+// USD/INR exchange rate
+// ══════════════════════════════════════════════════════════════
+async function refreshUsdToInr() {
+    try {
+        const res = await fetch("https://api.exchangerate-api.com/v4/latest/USD");
+        if (!res.ok)
+            return;
+        const json = await res.json();
+        const rate = json.rates?.INR;
+        if (rate && rate > 0) {
+            cachedUsdToInr = rate;
+            lastUsdInrFetch = Date.now();
+            console.log(`[FX] USD/INR updated: ${rate.toFixed(2)}`);
+        }
+    }
+    catch {
+        console.warn(`[FX] USD/INR fetch failed — using fallback ₹${cachedUsdToInr}`);
+    }
+}
+function getUsdToInr() {
+    if (Date.now() - lastUsdInrFetch > 3600000) {
+        refreshUsdToInr().catch(() => { });
+    }
+    return cachedUsdToInr;
 }
 // ══════════════════════════════════════════════════════════════
 // Expiry calendar (inlined, Supabase holiday-adjusted)
@@ -835,10 +864,10 @@ async function getLeaderboardRank(botId) {
 async function getBtcCapital(botId) {
     const { data } = await supabase
         .from("btc_capital")
-        .select("btc_capital,pnl")
+        .select("allocated_capital,pnl")
         .eq("bot_id", botId)
         .single();
-    return data ?? { btc_capital: 100000, pnl: 0 };
+    return data ?? { allocated_capital: 100000, pnl: 0 };
 }
 async function getOpenBtcPositions(botId) {
     const { data } = await supabase
@@ -1061,13 +1090,13 @@ async function runBtcTradingCycle() {
                 const openPositions = await getOpenBtcPositions(bot.id);
                 // entry_inr for each position = quantity * entry_price (no separate column)
                 const deployed = openPositions.reduce((sum, p) => sum + p.quantity * p.entry_price, 0);
-                const freeCash = capital.btc_capital - deployed;
-                console.log(`[BTC:${bot.id}] capital=₹${capital.btc_capital} deployed=₹${deployed.toFixed(2)} freeCash=₹${freeCash.toFixed(2)} openPos=${openPositions.length}`);
+                const freeCash = capital.allocated_capital - deployed;
+                console.log(`[BTC:${bot.id}] capital=₹${capital.allocated_capital} deployed=₹${deployed.toFixed(2)} freeCash=₹${freeCash.toFixed(2)} openPos=${openPositions.length}`);
                 const prompt = buildBtcPrompt({
                     botName: bot.name,
                     botProvider: bot.provider,
                     btcPrice,
-                    capitalInr: capital.btc_capital,
+                    capitalInr: capital.allocated_capital,
                     freeCash,
                     totalPnl: capital.pnl,
                     openPositions,
@@ -1116,28 +1145,42 @@ async function runBtcTradingCycle() {
                         else
                             console.log(`[BTC:${bot.id}] CLOSED ${pos.quantity.toFixed(6)} BTC @ $${btcPrice.toFixed(2)}  PnL: ${pnl >= 0 ? "+" : ""}₹${pnl.toFixed(2)}`);
                     }
-                    // Update btc_capital
+                    // Recompute totals from ALL closed positions for this bot
+                    const { data: allClosed } = await supabase
+                        .from("btc_positions")
+                        .select("pnl")
+                        .eq("bot_id", bot.id)
+                        .eq("status", "CLOSED");
+                    const allClosedArr = (allClosed ?? []);
+                    const totalPnl = allClosedArr.reduce((s, p) => s + Number(p.pnl), 0);
+                    const wins = allClosedArr.filter(p => Number(p.pnl) > 0).length;
+                    const winRate = allClosedArr.length > 0 ? wins / allClosedArr.length : 0;
                     const { error: capErr } = await supabase.from("btc_capital").update({
-                        btc_capital: Number((capital.btc_capital + totalRealised).toFixed(2)),
-                        pnl: Number((capital.pnl + totalRealised).toFixed(2)),
+                        allocated_capital: Number((100000 + totalPnl).toFixed(2)),
+                        pnl: Number(totalPnl.toFixed(2)),
+                        win_rate: Number(winRate.toFixed(4)),
                     }).eq("bot_id", bot.id);
                     if (capErr)
                         console.error(`[BTC:${bot.id}] btc_capital update failed:`, capErr.message);
+                    else
+                        console.log(`[BTC:${bot.id}] Capital updated — total PnL: ₹${totalPnl.toFixed(2)} | win rate: ${(winRate * 100).toFixed(1)}%`);
                     continue;
                 }
                 // ── BUY: open a long position ──
                 if (action === "BUY") {
-                    let spendInr = quantity_inr;
-                    if (spendInr > freeCash) {
-                        console.warn(`[BTC:${bot.id}] quantity_inr ₹${spendInr} > freeCash ₹${freeCash.toFixed(2)} — capping`);
+                    // Cap each trade at 10% of free cash
+                    let spendInr = Math.min(quantity_inr, freeCash * 0.1);
+                    if (spendInr > freeCash)
                         spendInr = freeCash;
-                    }
                     if (spendInr < 100) {
                         console.warn(`[BTC:${bot.id}] Insufficient cash ₹${freeCash.toFixed(2)} (need ≥₹100) — skipping BUY`);
                         continue;
                     }
-                    // quantity = BTC amount = INR to spend / BTC price (system treats $ as ₹ for simulation)
-                    const btcQty = spendInr / btcPrice;
+                    // Convert INR → BTC using live USD/INR rate
+                    const usdInr = getUsdToInr();
+                    const btcPriceInr = btcPrice * usdInr;
+                    const btcQty = spendInr / btcPriceInr;
+                    console.log(`[BTC:${bot.id}] BUY sizing: ₹${spendInr.toFixed(2)} ÷ ($${btcPrice.toFixed(2)} × ₹${usdInr.toFixed(2)}) = ${btcQty.toFixed(8)} BTC`);
                     const insertPayload = {
                         bot_id: bot.id,
                         symbol: "BTC/USDT",
@@ -1305,6 +1348,8 @@ else {
 }
 // Load Upstox token from Supabase config (overwrites .env value if present)
 loadTokenFromSupabase().catch(console.error);
+// Fetch live USD/INR rate immediately; getUsdToInr() will lazy-refresh every hour
+refreshUsdToInr().catch(console.error);
 // Schedule daily 8:30 AM IST token approval request
 scheduleTokenRequest();
 // Kick off immediately, then repeat
