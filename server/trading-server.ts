@@ -1,4 +1,4 @@
-// RAILWAY_CACHE_BUST: 2026-05-22
+// RAILWAY_CACHE_BUST: 2026-05-25
 /**
  * AI Trading Arena — Standalone Backend Server
  *
@@ -1325,10 +1325,55 @@ async function pollLTP(): Promise<void> {
 }
 
 // ══════════════════════════════════════════════════════════════
+// Upstox token management
+// ══════════════════════════════════════════════════════════════
+
+async function loadTokenFromSupabase(): Promise<void> {
+  try {
+    const { data, error } = await supabase
+      .from("config")
+      .select("value")
+      .eq("key", "UPSTOX_ACCESS_TOKEN")
+      .single();
+    if (error || !data?.value) {
+      console.log("[Token] No token found in Supabase config");
+      return;
+    }
+    process.env.UPSTOX_ACCESS_TOKEN = (data as { value: string }).value;
+    console.log("[Token] Loaded token from Supabase config");
+  } catch (err) {
+    console.error("[Token] Failed to load from Supabase:", err);
+  }
+}
+
+let lastTokenRequestDate = "";
+
+function scheduleTokenRequest(): void {
+  setInterval(() => {
+    const ist = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    const day = ist.getDay();
+    if (day === 0 || day === 6) return; // skip weekends
+    const hh   = String(ist.getHours()).padStart(2, "0");
+    const mm   = String(ist.getMinutes()).padStart(2, "0");
+    const today = ist.toISOString().split("T")[0];
+    if (`${hh}:${mm}` !== "08:30" || lastTokenRequestDate === today) return;
+    lastTokenRequestDate = today;
+    fetch("https://api.upstox.com/v3/login/auth/token/request/7NAEVR", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client_secret: process.env.UPSTOX_API_SECRET }),
+    })
+      .then(() => console.log("[Token] Approval request sent — check Upstox app to approve"))
+      .catch((err: Error) => console.error("[Token] Failed to send approval request:", err));
+  }, 60_000);
+}
+
+// ══════════════════════════════════════════════════════════════
 // Express health endpoints
 // ══════════════════════════════════════════════════════════════
 
 const app = express();
+app.use(express.json());
 const PORT = Number(process.env.PORT ?? process.env.TRADING_SERVER_PORT ?? 4000);
 
 app.get("/ping", (_req, res) => {
@@ -1357,6 +1402,36 @@ app.get("/btc/status", (_req, res) => {
   res.json({ btcPrice, btcCandles: btcCandles.length, activeBots: BOTS.length });
 });
 
+app.post("/api/upstox/token-webhook", async (req, res) => {
+  const { access_token, message_type } = req.body as {
+    client_id?: string;
+    user_id?: string;
+    access_token?: string;
+    token_type?: string;
+    expires_at?: string;
+    message_type?: string;
+  };
+
+  if (message_type !== "access_token" || !access_token) {
+    res.json({ received: true });
+    return;
+  }
+
+  // Update in-memory token immediately
+  process.env.UPSTOX_ACCESS_TOKEN = access_token;
+
+  // Persist to Supabase config table
+  const { error } = await supabase
+    .from("config")
+    .upsert({ key: "UPSTOX_ACCESS_TOKEN", value: access_token }, { onConflict: "key" });
+  if (error) {
+    console.error("[Token] Failed to save to Supabase:", error.message);
+  }
+
+  console.log("[Token] New Upstox token received and activated");
+  res.json({ received: true });
+});
+
 app.listen(PORT, () => {
   console.log(`\n[Server] AI Trading Arena backend running on http://localhost:${PORT}`);
   console.log(`         Health:  http://localhost:${PORT}/health`);
@@ -1370,6 +1445,12 @@ app.listen(PORT, () => {
 console.log("[Server] Starting...");
 console.log(`[Server] Supabase: ${process.env.NEXT_PUBLIC_SUPABASE_URL}`);
 console.log(`[Server] Upstox token set: ${!!process.env.UPSTOX_ACCESS_TOKEN}`);
+
+// Load Upstox token from Supabase config (overwrites .env value if present)
+loadTokenFromSupabase().catch(console.error);
+
+// Schedule daily 8:30 AM IST token approval request
+scheduleTokenRequest();
 
 // Kick off immediately, then repeat
 pollLTP();
