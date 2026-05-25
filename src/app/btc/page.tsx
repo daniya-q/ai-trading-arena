@@ -16,6 +16,7 @@ const BOT_CONFIG: Record<string, { name: string; color: string }> = {
 
 const BOT_IDS = ["gpt", "claude", "gemini", "groq"];
 const TOTAL_STARTING_CAPITAL = 400_000; // 4 × ₹1,00,000
+const USD_TO_INR = 95.82;               // used for live unrealised PnL display
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -363,7 +364,7 @@ export default function BtcArenaPage() {
                     const isOpen       = pos.status === "OPEN";
                     const currentPrice = isOpen ? btcPrice : pos.current_price;
                     const displayPnl   = isOpen && btcPrice > 0
-                      ? (btcPrice - pos.entry_price) * pos.quantity
+                      ? (btcPrice - pos.entry_price) * pos.quantity * USD_TO_INR
                       : pos.pnl;
 
                     return (

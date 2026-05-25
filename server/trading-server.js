@@ -1139,12 +1139,12 @@ async function runBtcTradingCycle() {
                         console.log(`[BTC:${bot.id}] SELL — no open positions to close`);
                         continue;
                     }
+                    const usdInr = getUsdToInr();
                     let totalRealised = 0;
                     for (const pos of openPositions) {
-                        const entryInr = pos.quantity * pos.entry_price;
-                        const currentValue = pos.quantity * btcPrice;
-                        const pnl = currentValue - entryInr;
+                        const pnl = (btcPrice - pos.entry_price) * pos.quantity * usdInr;
                         totalRealised += pnl;
+                        console.log(`[BTC:${bot.id}] PnL = ($${btcPrice.toFixed(2)} - $${pos.entry_price.toFixed(2)}) × ${pos.quantity.toFixed(8)} × ₹${usdInr.toFixed(2)} = ₹${pnl.toFixed(2)}`);
                         const { error } = await supabase.from("btc_positions").update({
                             status: "CLOSED",
                             current_price: Number(btcPrice.toFixed(2)),
@@ -1166,15 +1166,17 @@ async function runBtcTradingCycle() {
                     const totalPnl = allClosedArr.reduce((s, p) => s + Number(p.pnl), 0);
                     const wins = allClosedArr.filter(p => Number(p.pnl) > 0).length;
                     const winRate = allClosedArr.length > 0 ? wins / allClosedArr.length : 0;
+                    const newCapital = Number((100000 + totalPnl).toFixed(2));
                     const { error: capErr } = await supabase.from("btc_capital").update({
-                        allocated_capital: Number((100000 + totalPnl).toFixed(2)),
+                        allocated_capital: newCapital,
                         pnl: Number(totalPnl.toFixed(2)),
                         win_rate: Number(winRate.toFixed(4)),
+                        updated_at: new Date().toISOString(),
                     }).eq("bot_id", bot.id);
                     if (capErr)
                         console.error(`[BTC:${bot.id}] btc_capital update failed:`, capErr.message);
                     else
-                        console.log(`[BTC:${bot.id}] Capital updated — total PnL: ₹${totalPnl.toFixed(2)} | win rate: ${(winRate * 100).toFixed(1)}%`);
+                        console.log(`[BTC:${bot.id}] Capital updated to ₹${newCapital.toFixed(2)} (total PnL: ₹${totalPnl.toFixed(2)} | win rate: ${(winRate * 100).toFixed(1)}%)`);
                     continue;
                 }
                 // ── BUY: open a long position ──
