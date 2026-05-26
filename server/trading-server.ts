@@ -658,6 +658,11 @@ async function runAI(provider: string, prompt: string): Promise<string> {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
         body: JSON.stringify({ model: "llama3-70b-8192", messages: [{ role: "user", content: prompt }], temperature: 0.7 }),
       });
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error(`[AI:groq] API error ${res.status} ${res.statusText}:`, errText);
+        return "No response";
+      }
       const d = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
       return d?.choices?.[0]?.message?.content ?? "No response";
     }
@@ -881,60 +886,15 @@ function buildBtcPrompt(params: {
   totalPnl: number;
   openPositions: BtcPosition[];
 }): string {
-  const { botName, botProvider, btcPrice: price, capitalInr, freeCash, totalPnl, openPositions } = params;
+  const { btcPrice: price, freeCash, openPositions } = params;
 
-  const posSec = openPositions.length
-    ? openPositions.map((p, i) => {
-        const entryInr     = p.quantity * p.entry_price;
-        const currentValue = p.quantity * price;
-        const pnl          = currentValue - entryInr;
-        return `  ${i + 1}. LONG ${p.quantity.toFixed(6)} BTC\n` +
-               `     Entry: $${p.entry_price.toFixed(2)}  |  Now: $${price.toFixed(2)}\n` +
-               `     Invested: ₹${entryInr.toFixed(2)}  |  Current value: ₹${currentValue.toFixed(2)}  |  PnL: ${pnl >= 0 ? "+" : ""}₹${pnl.toFixed(2)}`;
-      }).join("\n")
-    : "  No open positions — fully in cash.";
+  const posStr = openPositions.length
+    ? openPositions.map((p, i) =>
+        `#${i + 1}: ${p.quantity.toFixed(6)} BTC @ $${p.entry_price.toFixed(2)}`
+      ).join(", ")
+    : "none";
 
-  return `You are ${botName} (${botProvider}), an autonomous AI trader in a live competition.
-
-You are trading BTC/USDT spot (via Kraken). No leverage, no options, no expiry — pure spot trading.
-
-════════════════════════════════════════
-  MARKET
-════════════════════════════════════════
-BTC/USDT Price: $${price.toFixed(2)}
-
-════════════════════════════════════════
-  YOUR STATE
-════════════════════════════════════════
-Capital (INR pool): ₹${capitalInr.toFixed(2)}
-Free cash:          ₹${freeCash.toFixed(2)}
-Total PnL:          ${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(2)}
-Open positions:     ${openPositions.length}
-
-════════════════════════════════════════
-  OPEN POSITIONS
-════════════════════════════════════════
-${posSec}
-
-════════════════════════════════════════
-  DECISION REQUIRED
-════════════════════════════════════════
-You can:
-  • BUY  — go long on BTC spot (set quantity_inr = INR worth of BTC to buy)
-  • SELL — close ALL open BTC long positions and realise profit/loss
-  • HOLD — do nothing this cycle
-
-Rules:
-  • quantity_inr cannot exceed free cash ₹${freeCash.toFixed(2)}
-  • Goal: maximum profit
-
-Respond ONLY in valid JSON — no markdown, no extra text:
-{
-  "action": "BUY" | "SELL" | "HOLD",
-  "quantity_inr": <number — INR to spend, 0 if SELL or HOLD>,
-  "reasoning": "your analysis"
-}
-`;
+  return `You are competing against 3 other AIs for maximum profit trading BTC/USDT spot. You have ₹1,00,000 total capital. You can hold multiple BTC positions simultaneously — each BUY opens a new position using some of your free cash. SELL closes ALL your open positions. Your free cash: ₹${freeCash.toFixed(2)}. Your open positions: ${posStr}. Current BTC price: $${price.toFixed(2)}. Use whatever strategy and risk management you want. Goal: maximum ₹ profit. Respond in JSON: { "action": "BUY"|"SELL"|"HOLD", "quantity_inr": number, "reasoning": string }`;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1212,6 +1172,7 @@ async function runBtcTradingCycle(): Promise<void> {
 
     for (const bot of BOTS) {
       try {
+        console.log(`[BTC:${bot.id}] Starting cycle...`);
         const capital = await getBtcCapital(bot.id);
         const openPositions = await getOpenBtcPositions(bot.id);
 

@@ -67,7 +67,8 @@ function fmtTime(iso: string | null): string {
 }
 
 function pnlColor(n: number): string {
-  return n >= 0 ? "#22c55e" : "#ef4444";
+  if (n === 0) return "#888888";
+  return n > 0 ? "#00ff88" : "#ff4444";
 }
 
 function pnlStr(n: number): string {
@@ -133,7 +134,11 @@ export default function BtcArenaPage() {
 
   // ── Derived pool totals ────────────────────────────────────────
   const totalCapital  = caps.reduce((s, c) => s + c.allocated_capital, 0);
-  const totalPnl      = caps.reduce((s, c) => s + c.pnl, 0);
+  const realisedPnl   = caps.reduce((s, c) => s + c.pnl, 0);
+  const unrealisedPnl = positions
+    .filter((p) => p.status === "OPEN")
+    .reduce((s, p) => s + (btcPrice - p.entry_price) * p.quantity * USD_TO_INR, 0);
+  const totalPnl      = realisedPnl + unrealisedPnl;
   const totalPnlPct   = (totalPnl / TOTAL_STARTING_CAPITAL) * 100;
 
   // ── Render ────────────────────────────────────────────────────
