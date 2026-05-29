@@ -1374,4 +1374,4 @@ setInterval(runTradingCycle, 15000);
 // BTC — Binance live feed + trading cycle
 connectBinanceWS();
 runBtcTradingCycle();
-setInterval(runBtcTradingCycle, 60000);
+setInterval(runBtcTradingCycle, 15 * 60 * 1000);
