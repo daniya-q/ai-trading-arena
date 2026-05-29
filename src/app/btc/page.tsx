@@ -263,7 +263,7 @@ export default function BtcArenaPage() {
           return (
             <div
               key={botId}
-              onClick={() => router.push(`/btc/bots?bot=${botId}`)}
+              onClick={() => router.push(`/btc/trades?bot=${botId}`)}
               className="cursor-pointer px-5 py-5 flex flex-col gap-4 transition-all hover:scale-[1.02]"
               style={{
                 background: "rgba(10,10,22,0.85)",

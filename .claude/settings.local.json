@@ -19,7 +19,8 @@
       "Bash(npx:*)",
       "Bash(rm:*)",
       "Bash(railway version:*)",
-      "Bash(RAILWAY_API_TOKEN=\"389d467d-ec7b-4540-b590-c622db2dc24b\" railway list:*)"
+      "Bash(RAILWAY_API_TOKEN=\"389d467d-ec7b-4540-b590-c622db2dc24b\" railway list:*)",
+      "Bash(sed:*)"
     ]
   }
 }
