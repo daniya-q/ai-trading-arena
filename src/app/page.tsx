@@ -896,7 +896,7 @@ export default function Home() {
                     stroke="#27272a"
                     tick={{
                       fontSize: 7,
-                      fontFamily: "'Press Start 2P', cursive",
+                      fontFamily: "'Inter', sans-serif",
                       fill: "#52525b",
                     }}
                     interval="preserveStartEnd"
@@ -905,7 +905,7 @@ export default function Home() {
                     stroke="#27272a"
                     tick={{
                       fontSize: 7,
-                      fontFamily: "'Press Start 2P', cursive",
+                      fontFamily: "'Inter', sans-serif",
                       fill: "#52525b",
                     }}
                     domain={["auto", "auto"]}
@@ -916,7 +916,7 @@ export default function Home() {
                       background: "rgba(8,8,20,0.95)",
                       border: "1px solid rgba(255,255,255,0.1)",
                       borderRadius: 0,
-                      fontFamily: "'Press Start 2P', cursive",
+                      fontFamily: "'Inter', sans-serif",
                       fontSize: 7,
                       color: "#fff",
                     }}
