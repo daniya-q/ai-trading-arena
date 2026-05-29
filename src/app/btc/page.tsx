@@ -298,7 +298,7 @@ export default function BtcArenaPage() {
                     }}
                   />
                   <p
-                    className="font-pixel text-[10px]"
+                    className="font-pixel text-6xl"
                     style={{ color: cfg.color }}
                   >
                     {cfg.name} BOT
@@ -307,29 +307,29 @@ export default function BtcArenaPage() {
 
                 <div className="flex items-center gap-8">
                   <div className="text-right">
-                    <p className="font-pixel text-[5px] text-zinc-700 mb-1 tracking-widest">
+                    <p className="font-pixel text-6xl text-zinc-700 mb-1 tracking-widest">
                       CAPITAL
                     </p>
-                    <p className="font-pixel text-[9px] text-white">
+                    <p className="font-pixel text-6xl text-white">
                       ₹{fmtINR(capital)}
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="font-pixel text-[5px] text-zinc-700 mb-1 tracking-widest">
+                    <p className="font-pixel text-6xl text-zinc-700 mb-1 tracking-widest">
                       TOTAL PNL
                     </p>
                     <p
-                      className="font-pixel text-[9px]"
+                      className="font-pixel text-6xl"
                       style={{ color: pnlColor(pnl) }}
                     >
                       {pnlStr(pnl)}
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="font-pixel text-[5px] text-zinc-700 mb-1 tracking-widest">
+                    <p className="font-pixel text-6xl text-zinc-700 mb-1 tracking-widest">
                       TRADES
                     </p>
-                    <p className="font-pixel text-[9px] text-zinc-500">
+                    <p className="font-pixel text-6xl text-zinc-500">
                       {botPos.length}
                       {openPos.length > 0 && (
                         <span style={{ color: "#22c55e" }}>
