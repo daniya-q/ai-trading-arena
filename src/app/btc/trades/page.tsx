@@ -44,6 +44,10 @@ type PosRow = {
   current_price: number;
   pnl: number;
   charges: number;
+  direction: string | null;
+  leverage: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
   status: "OPEN" | "CLOSED";
   opened_at: string | null;
   closed_at: string | null;
@@ -61,7 +65,7 @@ function BtcTradesContent() {
   const refresh = useCallback(async () => {
     const { data } = await supabase
       .from("btc_positions")
-      .select("id,bot_id,quantity,entry_price,current_price,pnl,charges,status,opened_at,closed_at,reasoning")
+      .select("id,bot_id,quantity,entry_price,current_price,pnl,charges,direction,leverage,stop_loss,take_profit,status,opened_at,closed_at,reasoning")
       .order("opened_at", { ascending: false });
     setPositions((data ?? []) as PosRow[]);
   }, []);
@@ -160,7 +164,7 @@ function BtcTradesContent() {
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "100px 90px 120px 120px 100px 120px 120px 1fr auto",
+                  gridTemplateColumns: "100px 70px 60px 60px 110px 110px 90px 90px 110px 110px 120px auto",
                   alignItems: "center",
                   padding: "12px 16px",
                   gap: 8,
@@ -170,9 +174,11 @@ function BtcTradesContent() {
                 onClick={() => pos.reasoning &&
                   setExpanded(isExpanded ? null : pos.id)}
               >
+                {/* Bot */}
                 <span style={{ fontSize: 13, fontWeight: 700, color: cfg.color }}>
                   {cfg.name}
                 </span>
+                {/* Status */}
                 <span style={{
                   fontSize: 11, fontWeight: 600, textAlign: "center",
                   padding: "3px 8px", borderRadius: 4,
@@ -184,14 +190,25 @@ function BtcTradesContent() {
                 }}>
                   {pos.status}
                 </span>
+                {/* Direction */}
+                <span style={{
+                  fontSize: 12, fontWeight: 700,
+                  color: (pos.direction ?? "LONG") === "SHORT" ? "#ef4444" : "#22c55e",
+                }}>
+                  {pos.direction ?? "LONG"}
+                </span>
+                {/* Leverage */}
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#f97316" }}>
+                  {(pos.leverage ?? 1)}x
+                </span>
+                {/* Entry */}
                 <div>
-                  <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 2 }}>
-                    Entry
-                  </div>
+                  <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 2 }}>Entry</div>
                   <div style={{ fontSize: 13, fontFamily: "monospace" }}>
                     ${fmtUSD(pos.entry_price)}
                   </div>
                 </div>
+                {/* Exit / Current */}
                 <div>
                   <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 2 }}>
                     {isOpen ? "Current" : "Exit"}
@@ -201,27 +218,31 @@ function BtcTradesContent() {
                     {curPrice > 0 ? `$${fmtUSD(curPrice)}` : "—"}
                   </div>
                 </div>
+                {/* SL */}
                 <div>
-                  <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 2 }}>
-                    BTC Qty
-                  </div>
-                  <div style={{ fontSize: 13, fontFamily: "monospace" }}>
-                    {pos.quantity.toFixed(6)}
+                  <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 2 }}>SL</div>
+                  <div style={{ fontSize: 12, fontFamily: "monospace", color: "#ef4444" }}>
+                    {pos.stop_loss ? `$${fmtUSD(pos.stop_loss)}` : "—"}
                   </div>
                 </div>
+                {/* Target */}
                 <div>
-                  <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 2 }}>
-                    Gross PnL
+                  <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 2 }}>Target</div>
+                  <div style={{ fontSize: 12, fontFamily: "monospace", color: "#22c55e" }}>
+                    {pos.take_profit ? `$${fmtUSD(pos.take_profit)}` : "—"}
                   </div>
+                </div>
+                {/* Gross PnL */}
+                <div>
+                  <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 2 }}>Gross PnL</div>
                   <div style={{ fontSize: 13, fontFamily: "monospace",
                     fontWeight: 600, color: pnlColor(grossPnl) }}>
                     {pnlStr(grossPnl)}
                   </div>
                 </div>
+                {/* Net PnL */}
                 <div>
-                  <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 2 }}>
-                    Net PnL
-                  </div>
+                  <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 2 }}>Net PnL</div>
                   <div style={{ fontSize: 13, fontFamily: "monospace",
                     fontWeight: 700, color: pnlColor(netPnl) }}>
                     {pnlStr(netPnl)}
@@ -232,14 +253,14 @@ function BtcTradesContent() {
                     </div>
                   )}
                 </div>
+                {/* Opened */}
                 <div>
-                  <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 2 }}>
-                    Opened
-                  </div>
+                  <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 2 }}>Opened</div>
                   <div style={{ fontSize: 11, color: "#a1a1aa" }}>
                     {fmtTime(pos.opened_at)}
                   </div>
                 </div>
+                {/* Expand */}
                 {pos.reasoning && (
                   <span style={{ fontSize: 16, color: "#6b7280" }}>
                     {isExpanded ? "▾" : "▸"}

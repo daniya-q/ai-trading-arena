@@ -35,6 +35,8 @@ type PosRow = {
   current_price: number;
   pnl: number;
   charges: number | null;
+  direction: string | null;
+  leverage: number | null;
   status: "OPEN" | "CLOSED";
   opened_at: string | null;
   closed_at: string | null;
@@ -81,7 +83,7 @@ export default function BtcArenaPage() {
         .select("bot_id,allocated_capital,pnl"),
       supabase
         .from("btc_positions")
-        .select("id,bot_id,quantity,entry_price,current_price,pnl,charges,status,opened_at,closed_at")
+        .select("id,bot_id,quantity,entry_price,current_price,pnl,charges,direction,leverage,status,opened_at,closed_at")
         .order("opened_at", { ascending: false }),
     ]);
 
@@ -286,11 +288,11 @@ export default function BtcArenaPage() {
               {/* Stats */}
               <div className="flex flex-col gap-3">
                 {[
-                  { label: "CAPITAL",  value: `₹${fmtINR(capital)}`,                           color: "#ffffff" },
+                  { label: "CAPITAL",   value: `₹${fmtINR(capital)}`,                           color: "#ffffff" },
                   { label: "TOTAL PNL", value: pnlStr(pnl),                                     color: pnlColor(pnl) },
-                  { label: "RETURN",   value: `${retPct >= 0 ? "+" : ""}${retPct.toFixed(2)}%`, color: pnlColor(retPct) },
-                  { label: "TRADES",   value: `${botPos.length} (${openPos.length} open)`,      color: "#a1a1aa" },
-                  { label: "CHARGES",  value: `₹${fmtINR(totalCharges)}`,                       color: "#f59e0b" },
+                  { label: "RETURN",    value: `${retPct >= 0 ? "+" : ""}${retPct.toFixed(2)}%`, color: pnlColor(retPct) },
+                  { label: "TRADES",    value: `${botPos.length} (${openPos.length} open)`,      color: "#a1a1aa" },
+                  { label: "CHARGES",   value: `₹${fmtINR(totalCharges)}`,                       color: "#f59e0b" },
                 ].map((row) => (
                   <div key={row.label} className="flex justify-between items-baseline">
                     <p className="font-pixel font-bold text-[1.176rem] text-zinc-400 tracking-widest">
@@ -301,6 +303,24 @@ export default function BtcArenaPage() {
                     </p>
                   </div>
                 ))}
+              </div>
+
+              {/* Open positions direction/leverage */}
+              <div className="flex flex-col gap-1">
+                {openPos.length === 0 ? (
+                  <p className="font-pixel text-[0.7rem] text-zinc-400">No open position</p>
+                ) : (
+                  openPos.map((p) => {
+                    const dir = p.direction ?? "LONG";
+                    const lev = p.leverage ?? 1;
+                    return (
+                      <p key={p.id} className="font-pixel text-[0.7rem] font-bold"
+                        style={{ color: dir === "SHORT" ? "#ef4444" : "#22c55e" }}>
+                        {dir} {lev}x
+                      </p>
+                    );
+                  })
+                )}
               </div>
 
               {/* Click hint */}

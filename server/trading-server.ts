@@ -59,6 +59,10 @@ interface BtcPosition {
   quantity: number;       // BTC quantity held
   pnl: number;
   charges?: number;
+  leverage?: number;
+  direction?: string;     // "LONG" | "SHORT"
+  stop_loss?: number;
+  take_profit?: number;
   status: "OPEN" | "CLOSED";
 }
 
@@ -887,15 +891,39 @@ function buildBtcPrompt(params: {
   totalPnl: number;
   openPositions: BtcPosition[];
 }): string {
-  const { btcPrice: price, freeCash, openPositions } = params;
+  const { btcPrice, capitalInr, freeCash, totalPnl, openPositions } = params;
 
-  const posStr = openPositions.length
-    ? openPositions.map((p, i) =>
-        `#${i + 1}: ${p.quantity.toFixed(6)} BTC @ $${p.entry_price.toFixed(2)}`
-      ).join(", ")
-    : "none";
+  const posStr = openPositions.length === 0
+    ? "none"
+    : openPositions.map(p =>
+        `${p.direction ?? "LONG"} ${p.quantity.toFixed(6)}BTC @ $${p.entry_price} ${p.leverage ?? 1}x leverage (SL:${p.stop_loss} TP:${p.take_profit})`
+      ).join(", ");
 
-  return `You are competing against 3 other AIs for maximum profit trading BTC/USDT spot. You have ₹1,00,000 total capital. You can hold multiple BTC positions simultaneously — each BUY opens a new position using some of your free cash. SELL closes ALL your open positions. Your free cash: ₹${freeCash.toFixed(2)}. Your open positions: ${posStr}. Current BTC price: $${price.toFixed(2)}. Use whatever strategy and risk management you want. Goal: maximum ₹ profit. Respond in JSON: { "action": "BUY"|"SELL"|"HOLD", "quantity_inr": number, "reasoning": string }`;
+  return `You are an aggressive BTC/USDT futures trader competing against 3 other AIs for maximum ₹ profit. You have ₹${capitalInr.toFixed(2)} total capital. Free cash: ₹${freeCash.toFixed(2)}. Current BTC price: $${btcPrice.toFixed(2)}. Open positions: ${posStr}. Total PnL so far: ₹${totalPnl.toFixed(2)}.
+
+You can:
+- Go LONG (profit if price goes up)
+- Go SHORT (profit if price goes down)
+- Use leverage from 1x to 100x
+- Set your own Stop Loss and Take Profit levels
+
+Rules:
+- OPEN opens a new position (LONG or SHORT)
+- CLOSE closes ALL your open positions
+- HOLD does nothing
+- Max 10% of free cash per trade (before leverage)
+- Be aggressive, use leverage wisely
+
+Respond ONLY in JSON:
+{
+  "action": "OPEN"|"CLOSE"|"HOLD",
+  "direction": "LONG"|"SHORT",
+  "leverage": <number 1-100>,
+  "quantity_inr": <INR amount to use as margin>,
+  "stop_loss": <price in USD>,
+  "take_profit": <price in USD>,
+  "reasoning": "<your detailed trade logic>"
+}`;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1199,29 +1227,38 @@ async function runBtcTradingCycle(): Promise<void> {
         console.log(`[BTC:${bot.id}] ── END RAW RESPONSE ──`);
 
         // Parse BTC decision
-        let action: "BUY" | "SELL" | "HOLD" = "HOLD";
+        let action: "OPEN" | "CLOSE" | "HOLD" = "HOLD";
         let quantity_inr = 0;
         let reasoning = "No reasoning";
+        let direction: "LONG" | "SHORT" = "LONG";
+        let leverage = 1;
+        let stop_loss = 0;
+        let take_profit = 0;
         try {
           const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
           const cleaned = jsonMatch ? jsonMatch[0] : rawResponse.replace(/```json/g, "").replace(/```/g, "").trim();
           console.log(`[BTC:${bot.id}] Cleaned JSON string: ${cleaned}`);
-          const parsed  = JSON.parse(cleaned) as { action?: string; quantity_inr?: number; reasoning?: string };
-          console.log(`[BTC:${bot.id}] Parsed fields — action: "${parsed.action}" | quantity_inr: ${parsed.quantity_inr} | reasoning: "${String(parsed.reasoning ?? "").slice(0, 120)}"`);
-          const rawAct  = (parsed.action ?? "HOLD").toString().toUpperCase();
-          action       = (["BUY", "SELL", "HOLD"].includes(rawAct) ? rawAct : "HOLD") as "BUY" | "SELL" | "HOLD";
-          if (!["BUY", "SELL", "HOLD"].includes(rawAct)) {
-            console.warn(`[BTC:${bot.id}] Unrecognised action "${rawAct}" — defaulting to HOLD`);
-          }
+          const parsed = JSON.parse(cleaned) as { action?: string; direction?: string; leverage?: number; quantity_inr?: number; stop_loss?: number; take_profit?: number; reasoning?: string };
+          console.log(`[BTC:${bot.id}] Parsed — action: "${parsed.action}" | dir: ${parsed.direction} | lev: ${parsed.leverage} | qty_inr: ${parsed.quantity_inr} | reasoning: "${String(parsed.reasoning ?? "").slice(0, 80)}"`);
+          const rawAct = (parsed.action ?? "HOLD").toString().toUpperCase();
+          // Accept both legacy (BUY/SELL) and new (OPEN/CLOSE) action names
+          const actMap: Record<string, "OPEN" | "CLOSE" | "HOLD"> = { OPEN: "OPEN", BUY: "OPEN", CLOSE: "CLOSE", SELL: "CLOSE", HOLD: "HOLD" };
+          action = actMap[rawAct] ?? "HOLD";
+          if (!actMap[rawAct]) console.warn(`[BTC:${bot.id}] Unrecognised action "${rawAct}" — defaulting to HOLD`);
           quantity_inr = Math.max(0, Number(parsed.quantity_inr) || 0);
           reasoning    = parsed.reasoning ?? "No reasoning";
+          const rawDir = (parsed.direction ?? "LONG").toString().toUpperCase();
+          direction    = rawDir === "SHORT" ? "SHORT" : "LONG";
+          leverage     = Math.min(100, Math.max(1, Number(parsed.leverage) || 1));
+          stop_loss    = Number(parsed.stop_loss) || 0;
+          take_profit  = Number(parsed.take_profit) || 0;
         } catch (parseErr) {
           console.error(`[BTC:${bot.id}] JSON parse FAILED:`, parseErr);
           console.error(`[BTC:${bot.id}] Failed raw string was: ${rawResponse.slice(0, 500)}`);
           action = "HOLD";
         }
 
-        console.log(`[BTC:${bot.id}] ── DECISION: ${action} | quantity_inr=₹${quantity_inr} | freeCash=₹${freeCash.toFixed(2)} | maxBuy=₹${(freeCash * 0.1).toFixed(2)}`);
+        console.log(`[BTC:${bot.id}] ── DECISION: ${action} ${direction} × ${leverage}x | qty_inr=₹${quantity_inr} | freeCash=₹${freeCash.toFixed(2)} | SL:$${stop_loss} TP:$${take_profit}`);
         console.log(`[BTC:${bot.id}] Reasoning: ${reasoning.slice(0, 200)}`);
 
         if (action === "HOLD") {
@@ -1229,21 +1266,25 @@ async function runBtcTradingCycle(): Promise<void> {
           continue;
         }
 
-        // ── SELL: close all open BTC positions ──
-        if (action === "SELL") {
+        // ── CLOSE: close all open BTC positions ──
+        if (action === "CLOSE") {
           if (!openPositions.length) {
-            console.log(`[BTC:${bot.id}] SELL — no open positions to close`);
+            console.log(`[BTC:${bot.id}] CLOSE — no open positions to close`);
             continue;
           }
           const usdInr = getUsdToInr();
           let totalRealised = 0;
           for (const pos of openPositions) {
-            const pnl        = (btcPrice - pos.entry_price) * pos.quantity * usdInr;
-            const sellValue  = btcPrice * pos.quantity * usdInr;
-            const sellCharges = Number((sellValue * 0.001 * 1.18 + sellValue * 0.01).toFixed(2)); // fee + GST + 1% TDS
-            const netPnl     = Number((pnl - sellCharges - (pos.charges ?? 0)).toFixed(2));
-            totalRealised   += netPnl;
-            console.log(`[BTC:${bot.id}] PnL = ($${btcPrice.toFixed(2)} - $${pos.entry_price.toFixed(2)}) × ${pos.quantity.toFixed(8)} × ₹${usdInr.toFixed(2)} = ₹${pnl.toFixed(2)} | sellCharges: ₹${sellCharges} | buyCharges: ₹${pos.charges ?? 0} | netPnl: ₹${netPnl.toFixed(2)}`);
+            const lev      = pos.leverage ?? 1;
+            const dir      = pos.direction ?? "LONG";
+            const grossPnl = dir === "SHORT"
+              ? (pos.entry_price - btcPrice) * pos.quantity * lev * usdInr
+              : (btcPrice - pos.entry_price) * pos.quantity * lev * usdInr;
+            const sellValue   = btcPrice * pos.quantity * usdInr;
+            const closeCharges = Number((sellValue * lev * 0.001 * 1.18 + sellValue * 0.01).toFixed(2)); // fee + GST + 1% TDS
+            const netPnl      = Number((grossPnl - closeCharges - (pos.charges ?? 0)).toFixed(2));
+            totalRealised    += netPnl;
+            console.log(`[BTC:${bot.id}] ${dir} × ${lev}x grossPnl: ₹${grossPnl.toFixed(2)} | closeCharges: ₹${closeCharges} | openCharges: ₹${pos.charges ?? 0} | netPnl: ₹${netPnl.toFixed(2)}`);
             const { error } = await supabase.from("btc_positions").update({
               status:        "CLOSED",
               current_price: Number(btcPrice.toFixed(2)),
@@ -1251,7 +1292,7 @@ async function runBtcTradingCycle(): Promise<void> {
               closed_at:     new Date().toISOString(),
             }).eq("id", pos.id);
             if (error) console.error(`[BTC:${bot.id}] Close failed:`, error.message, JSON.stringify(error));
-            else console.log(`[BTC:${bot.id}] CLOSED ${pos.quantity.toFixed(6)} BTC @ $${btcPrice.toFixed(2)}  Net PnL: ${netPnl >= 0 ? "+" : ""}₹${netPnl.toFixed(2)}`);
+            else console.log(`[BTC:${bot.id}] CLOSED ${dir} ${pos.quantity.toFixed(6)} BTC × ${lev}x @ $${btcPrice.toFixed(2)}  Net PnL: ${netPnl >= 0 ? "+" : ""}₹${netPnl.toFixed(2)}`);
           }
           // Recompute totals from ALL closed positions for this bot
           const { data: allClosed } = await supabase
@@ -1276,32 +1317,33 @@ async function runBtcTradingCycle(): Promise<void> {
           continue;
         }
 
-        // ── BUY: open a long position ──
-        if (action === "BUY") {
-          // Cap each trade at 10% of free cash
+        // ── OPEN: open a LONG or SHORT position with leverage ──
+        if (action === "OPEN") {
+          // Cap each trade at 10% of free cash (as margin)
           let spendInr = Math.min(quantity_inr, freeCash * 0.1);
           if (spendInr > freeCash) spendInr = freeCash;
           if (spendInr < 100) {
-            console.warn(`[BTC:${bot.id}] Insufficient cash ₹${freeCash.toFixed(2)} (need ≥₹100) — skipping BUY`);
+            console.warn(`[BTC:${bot.id}] Insufficient cash ₹${freeCash.toFixed(2)} (need ≥₹100) — skipping OPEN`);
             continue;
           }
-          // Convert INR → BTC using live USD/INR rate
-          const usdInr     = getUsdToInr();
+          const usdInr      = getUsdToInr();
           const btcPriceInr = btcPrice * usdInr;
-          const btcQty     = spendInr / btcPriceInr;
-          const buyCharges = Number((spendInr * 0.001 * 1.18).toFixed(2)); // 0.1% fee + 18% GST
-          console.log(`[BTC:${bot.id}] BUY sizing: ₹${spendInr.toFixed(2)} ÷ ($${btcPrice.toFixed(2)} × ₹${usdInr.toFixed(2)}) = ${btcQty.toFixed(8)} BTC | charges: ₹${buyCharges}`);
+          const btcQty      = spendInr / btcPriceInr;
+          const openCharges = Number((spendInr * leverage * 0.001 * 1.18).toFixed(2)); // fee + GST (leveraged)
+          console.log(`[BTC:${bot.id}] OPEN ${direction} × ${leverage}x | ₹${spendInr.toFixed(2)} margin ÷ ($${btcPrice.toFixed(2)} × ₹${usdInr.toFixed(2)}) = ${btcQty.toFixed(8)} BTC | charges: ₹${openCharges} | SL:$${stop_loss} TP:$${take_profit}`);
           const insertPayload = {
             bot_id:        bot.id,
             symbol:        "BTC/USDT",
-            side:          "BUY",
+            side:          direction === "LONG" ? "BUY" : "SELL",
+            direction,
+            leverage,
             quantity:      Number(btcQty.toFixed(8)),
             entry_price:   Number(btcPrice.toFixed(2)),
             current_price: Number(btcPrice.toFixed(2)),
-            stop_loss:     0,
-            take_profit:   0,
+            stop_loss,
+            take_profit,
             pnl:           0,
-            charges:       buyCharges,
+            charges:       openCharges,
             reasoning:     reasoning.slice(0, 1000),
             status:        "OPEN",
             opened_at:     new Date().toISOString(),
@@ -1311,7 +1353,7 @@ async function runBtcTradingCycle(): Promise<void> {
           if (error) {
             console.error(`[BTC:${bot.id}] Insert FAILED — code: ${error.code} | message: ${error.message} | details: ${error.details} | hint: ${error.hint}`);
           } else {
-            console.log(`[BTC:${bot.id}] BOUGHT ${btcQty.toFixed(6)} BTC @ $${btcPrice.toFixed(2)} (₹${spendInr.toFixed(2)}) | inserted id: ${(inserted as Array<{id: string}>)?.[0]?.id}`);
+            console.log(`[BTC:${bot.id}] OPENED ${direction} ${btcQty.toFixed(6)} BTC × ${leverage}x @ $${btcPrice.toFixed(2)} (₹${spendInr.toFixed(2)} margin) | id: ${(inserted as Array<{id: string}>)?.[0]?.id}`);
           }
         }
 
