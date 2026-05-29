@@ -14,6 +14,7 @@ const NAV = [
 
 const CRYPTO_NAV = [
   { href: "/btc", label: "BTC ARENA" },
+  { href: "/btc/trades", label: "BTC TRADES" },
 ];
 
 function NavItem({
