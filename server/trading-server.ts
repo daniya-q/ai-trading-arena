@@ -656,7 +656,7 @@ async function runAI(provider: string, prompt: string): Promise<string> {
       const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
-        body: JSON.stringify({ model: "llama3-70b-8192", messages: [{ role: "user", content: prompt }], temperature: 0.7 }),
+        body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "user", content: prompt }], temperature: 0.7, response_format: { type: "json_object" } }),
       });
       if (!res.ok) {
         const errText = await res.text();
@@ -1202,7 +1202,8 @@ async function runBtcTradingCycle(): Promise<void> {
         let quantity_inr = 0;
         let reasoning = "No reasoning";
         try {
-          const cleaned = rawResponse.replace(/```json/g, "").replace(/```/g, "").trim();
+          const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+          const cleaned = jsonMatch ? jsonMatch[0] : rawResponse.replace(/```json/g, "").replace(/```/g, "").trim();
           console.log(`[BTC:${bot.id}] Cleaned JSON string: ${cleaned}`);
           const parsed  = JSON.parse(cleaned) as { action?: string; quantity_inr?: number; reasoning?: string };
           console.log(`[BTC:${bot.id}] Parsed fields — action: "${parsed.action}" | quantity_inr: ${parsed.quantity_inr} | reasoning: "${String(parsed.reasoning ?? "").slice(0, 120)}"`);
