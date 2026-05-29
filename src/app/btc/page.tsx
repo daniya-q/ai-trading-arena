@@ -206,7 +206,7 @@ export default function BtcArenaPage() {
               borderRight: i < 2 ? "1px solid rgba(255,255,255,0.05)" : undefined,
             }}
           >
-            <p className="font-pixel text-[1.176rem] text-zinc-600 mb-2 tracking-widest">
+            <p className="font-pixel text-[1.176rem] text-zinc-500 mb-2 tracking-widest">
               {item.label}
             </p>
             <p className="font-pixel text-[1.176rem]" style={{ color: item.color }}>
@@ -226,7 +226,7 @@ export default function BtcArenaPage() {
         }}
       >
         <div>
-          <p className="font-pixel text-[1.176rem] text-zinc-600 mb-2 tracking-widest">
+          <p className="font-pixel text-[1.176rem] text-zinc-500 mb-2 tracking-widest">
             BTC / USD · LIVE
           </p>
           <p
@@ -307,7 +307,7 @@ export default function BtcArenaPage() {
 
                 <div className="flex items-center gap-8">
                   <div className="text-right">
-                    <p className="font-pixel text-[1.176rem] text-zinc-700 mb-1 tracking-widest">
+                    <p className="font-pixel text-[1.176rem] text-zinc-600 mb-1 tracking-widest">
                       CAPITAL
                     </p>
                     <p className="font-pixel text-[1.176rem] text-white">
@@ -315,7 +315,7 @@ export default function BtcArenaPage() {
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="font-pixel text-[1.176rem] text-zinc-700 mb-1 tracking-widest">
+                    <p className="font-pixel text-[1.176rem] text-zinc-600 mb-1 tracking-widest">
                       TOTAL PNL
                     </p>
                     <p
@@ -326,7 +326,7 @@ export default function BtcArenaPage() {
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="font-pixel text-[1.176rem] text-zinc-700 mb-1 tracking-widest">
+                    <p className="font-pixel text-[1.176rem] text-zinc-600 mb-1 tracking-widest">
                       TRADES
                     </p>
                     <p className="font-pixel text-[1.176rem] text-zinc-500">
