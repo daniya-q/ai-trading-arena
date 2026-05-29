@@ -206,10 +206,10 @@ export default function BtcArenaPage() {
               borderRight: i < 2 ? "1px solid rgba(255,255,255,0.05)" : undefined,
             }}
           >
-            <p className="font-pixel text-[5px] text-zinc-600 mb-2 tracking-widest">
+            <p className="font-pixel text-[11px] text-zinc-600 mb-2 tracking-widest">
               {item.label}
             </p>
-            <p className="font-pixel text-[11px]" style={{ color: item.color }}>
+            <p className="font-pixel text-[22px]" style={{ color: item.color }}>
               {item.value}
             </p>
           </div>
@@ -226,11 +226,11 @@ export default function BtcArenaPage() {
         }}
       >
         <div>
-          <p className="font-pixel text-[5px] text-zinc-600 mb-2 tracking-widest">
+          <p className="font-pixel text-[11px] text-zinc-600 mb-2 tracking-widest">
             BTC / USD · LIVE
           </p>
           <p
-            className="font-pixel text-2xl"
+            className="font-pixel text-4xl"
             style={{ color: btcPrice > 0 ? "#f97316" : "#3f3f46" }}
           >
             {btcPrice > 0 ? `$${fmtUSD(btcPrice)}` : "CONNECTING..."}
@@ -239,7 +239,7 @@ export default function BtcArenaPage() {
 
         {btcChange24h !== 0 && (
           <p
-            className="font-pixel text-[9px] mt-1"
+            className="font-pixel text-[14px] mt-1"
             style={{ color: pnlColor(btcChange24h) }}
           >
             {btcChange24h >= 0 ? "+" : ""}
@@ -252,7 +252,7 @@ export default function BtcArenaPage() {
             className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block"
             style={{ animation: "pulse 2s infinite" }}
           />
-          <span className="font-pixel text-[6px] text-green-400">
+          <span className="font-pixel text-[11px] text-green-400">
             MARKET OPEN 24/7
           </span>
         </div>
