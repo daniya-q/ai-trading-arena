@@ -58,6 +58,7 @@ interface BtcPosition {
   entry_price: number;
   quantity: number;       // BTC quantity held
   pnl: number;
+  charges?: number;
   status: "OPEN" | "CLOSED";
 }
 
@@ -1237,25 +1238,28 @@ async function runBtcTradingCycle(): Promise<void> {
           const usdInr = getUsdToInr();
           let totalRealised = 0;
           for (const pos of openPositions) {
-            const pnl = (btcPrice - pos.entry_price) * pos.quantity * usdInr;
-            totalRealised += pnl;
-            console.log(`[BTC:${bot.id}] PnL = ($${btcPrice.toFixed(2)} - $${pos.entry_price.toFixed(2)}) × ${pos.quantity.toFixed(8)} × ₹${usdInr.toFixed(2)} = ₹${pnl.toFixed(2)}`);
+            const pnl        = (btcPrice - pos.entry_price) * pos.quantity * usdInr;
+            const sellValue  = btcPrice * pos.quantity * usdInr;
+            const sellCharges = Number((sellValue * 0.001 * 1.18 + sellValue * 0.01).toFixed(2)); // fee + GST + 1% TDS
+            const netPnl     = Number((pnl - sellCharges - (pos.charges ?? 0)).toFixed(2));
+            totalRealised   += netPnl;
+            console.log(`[BTC:${bot.id}] PnL = ($${btcPrice.toFixed(2)} - $${pos.entry_price.toFixed(2)}) × ${pos.quantity.toFixed(8)} × ₹${usdInr.toFixed(2)} = ₹${pnl.toFixed(2)} | sellCharges: ₹${sellCharges} | buyCharges: ₹${pos.charges ?? 0} | netPnl: ₹${netPnl.toFixed(2)}`);
             const { error } = await supabase.from("btc_positions").update({
               status:        "CLOSED",
               current_price: Number(btcPrice.toFixed(2)),
-              pnl:           Number(pnl.toFixed(2)),
+              pnl:           netPnl,
               closed_at:     new Date().toISOString(),
             }).eq("id", pos.id);
             if (error) console.error(`[BTC:${bot.id}] Close failed:`, error.message, JSON.stringify(error));
-            else console.log(`[BTC:${bot.id}] CLOSED ${pos.quantity.toFixed(6)} BTC @ $${btcPrice.toFixed(2)}  PnL: ${pnl >= 0 ? "+" : ""}₹${pnl.toFixed(2)}`);
+            else console.log(`[BTC:${bot.id}] CLOSED ${pos.quantity.toFixed(6)} BTC @ $${btcPrice.toFixed(2)}  Net PnL: ${netPnl >= 0 ? "+" : ""}₹${netPnl.toFixed(2)}`);
           }
           // Recompute totals from ALL closed positions for this bot
           const { data: allClosed } = await supabase
             .from("btc_positions")
-            .select("pnl")
+            .select("pnl,charges")
             .eq("bot_id", bot.id)
             .eq("status", "CLOSED");
-          const allClosedArr = (allClosed ?? []) as Array<{ pnl: number }>;
+          const allClosedArr = (allClosed ?? []) as Array<{ pnl: number; charges: number }>;
           const totalPnl = allClosedArr.reduce((s, p) => s + Number(p.pnl), 0);
           const wins     = allClosedArr.filter(p => Number(p.pnl) > 0).length;
           const winRate  = allClosedArr.length > 0 ? wins / allClosedArr.length : 0;
@@ -1268,7 +1272,7 @@ async function runBtcTradingCycle(): Promise<void> {
             updated_at:        new Date().toISOString(),
           }).eq("bot_id", bot.id);
           if (capErr) console.error(`[BTC:${bot.id}] btc_capital update failed:`, capErr.message);
-          else console.log(`[BTC:${bot.id}] Capital updated to ₹${newCapital.toFixed(2)} (total PnL: ₹${totalPnl.toFixed(2)} | win rate: ${(winRate * 100).toFixed(1)}%)`);
+          else console.log(`[BTC:${bot.id}] Capital updated to ₹${newCapital.toFixed(2)} (net PnL after charges: ₹${totalPnl.toFixed(2)} | win rate: ${(winRate * 100).toFixed(1)}%)`);
           continue;
         }
 
@@ -1285,7 +1289,8 @@ async function runBtcTradingCycle(): Promise<void> {
           const usdInr     = getUsdToInr();
           const btcPriceInr = btcPrice * usdInr;
           const btcQty     = spendInr / btcPriceInr;
-          console.log(`[BTC:${bot.id}] BUY sizing: ₹${spendInr.toFixed(2)} ÷ ($${btcPrice.toFixed(2)} × ₹${usdInr.toFixed(2)}) = ${btcQty.toFixed(8)} BTC`);
+          const buyCharges = Number((spendInr * 0.001 * 1.18).toFixed(2)); // 0.1% fee + 18% GST
+          console.log(`[BTC:${bot.id}] BUY sizing: ₹${spendInr.toFixed(2)} ÷ ($${btcPrice.toFixed(2)} × ₹${usdInr.toFixed(2)}) = ${btcQty.toFixed(8)} BTC | charges: ₹${buyCharges}`);
           const insertPayload = {
             bot_id:        bot.id,
             symbol:        "BTC/USDT",
@@ -1296,6 +1301,8 @@ async function runBtcTradingCycle(): Promise<void> {
             stop_loss:     0,
             take_profit:   0,
             pnl:           0,
+            charges:       buyCharges,
+            reasoning:     reasoning.slice(0, 1000),
             status:        "OPEN",
             opened_at:     new Date().toISOString(),
           };

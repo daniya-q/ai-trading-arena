@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { useBtcStore } from "@/store/btcStore";
 import { startBtcWebSocket } from "@/lib/btc/btcWebSocket";
 import { supabase } from "@/lib/supabase/client";
@@ -33,6 +34,7 @@ type PosRow = {
   entry_price: number;
   current_price: number;
   pnl: number;
+  charges: number | null;
   status: "OPEN" | "CLOSED";
   opened_at: string | null;
   closed_at: string | null;
@@ -51,20 +53,6 @@ function fmtINR(n: number): string {
   return Math.abs(n).toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
-function fmtBTC(n: number): string {
-  return n.toFixed(6);
-}
-
-function fmtTime(iso: string | null): string {
-  if (!iso) return "--";
-  return new Date(iso).toLocaleString("en-IN", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
 
 function pnlColor(n: number): string {
   if (n === 0) return "#888888";
@@ -79,6 +67,7 @@ function pnlStr(n: number): string {
 
 export default function BtcArenaPage() {
   const { btcPrice, btcChange24h, update24h } = useBtcStore();
+  const router = useRouter();
 
   const [caps, setCaps]             = useState<CapRow[]>([]);
   const [positions, setPositions]   = useState<PosRow[]>([]);
@@ -92,7 +81,7 @@ export default function BtcArenaPage() {
         .select("bot_id,allocated_capital,pnl"),
       supabase
         .from("btc_positions")
-        .select("id,bot_id,quantity,entry_price,current_price,pnl,status,opened_at,closed_at")
+        .select("id,bot_id,quantity,entry_price,current_price,pnl,charges,status,opened_at,closed_at")
         .order("opened_at", { ascending: false }),
     ]);
 
@@ -258,181 +247,66 @@ export default function BtcArenaPage() {
         </div>
       </div>
 
-      {/* ── Bot sections ───────────────────────────────────── */}
-      <div className="space-y-5">
+      {/* ── Bot squares ────────────────────────────────────── */}
+      <div className="grid grid-cols-4 gap-4">
         {BOT_IDS.map((botId) => {
           const cfg     = BOT_CONFIG[botId]!;
           const cap     = caps.find((c) => c.bot_id === botId);
           const capital = cap?.allocated_capital ?? 100_000;
           const pnl     = cap?.pnl ?? 0;
+          const retPct  = (pnl / 100_000) * 100;
 
-          const botPos    = positions.filter((p) => p.bot_id === botId);
-          const openPos   = botPos.filter((p) => p.status === "OPEN");
-          const closedPos = botPos
-            .filter((p) => p.status === "CLOSED")
-            .sort((a, b) =>
-              (b.closed_at ?? "").localeCompare(a.closed_at ?? "")
-            );
-          const sorted = [...openPos, ...closedPos];
+          const botPos       = positions.filter((p) => p.bot_id === botId);
+          const openPos      = botPos.filter((p) => p.status === "OPEN");
+          const totalCharges = botPos.reduce((s, p) => s + (p.charges ?? 0), 0);
 
           return (
             <div
               key={botId}
+              onClick={() => router.push(`/btc/bots?bot=${botId}`)}
+              className="cursor-pointer px-5 py-5 flex flex-col gap-4 transition-all hover:scale-[1.02]"
               style={{
-                background: "rgba(10,10,22,0.80)",
-                border: `1px solid ${cfg.color}25`,
+                background: "rgba(10,10,22,0.85)",
+                border: `1px solid ${cfg.color}40`,
                 backdropFilter: "blur(12px)",
+                boxShadow: `0 0 20px ${cfg.color}10`,
               }}
             >
-              {/* Bot header */}
-              <div
-                className="flex items-center justify-between px-5 py-4"
-                style={{ borderBottom: `1px solid ${cfg.color}15` }}
-              >
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                    style={{
-                      background: cfg.color,
-                      boxShadow: `0 0 10px ${cfg.color}80`,
-                    }}
-                  />
-                  <p
-                    className="font-pixel font-bold text-[1.176rem]"
-                    style={{ color: cfg.color }}
-                  >
-                    {cfg.name} BOT
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-8">
-                  <div className="text-right">
-                    <p className="font-pixel font-bold text-[1.176rem] text-zinc-600 mb-1 tracking-widest">
-                      CAPITAL
-                    </p>
-                    <p className="font-pixel font-bold text-[1.176rem] text-white">
-                      ₹{fmtINR(capital)}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-pixel font-bold text-[1.176rem] text-zinc-600 mb-1 tracking-widest">
-                      TOTAL PNL
-                    </p>
-                    <p
-                      className="font-pixel font-bold text-[1.176rem]"
-                      style={{ color: pnlColor(pnl) }}
-                    >
-                      {pnlStr(pnl)}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-pixel font-bold text-[1.176rem] text-zinc-600 mb-1 tracking-widest">
-                      TRADES
-                    </p>
-                    <p className="font-pixel font-bold text-[1.176rem] text-zinc-500">
-                      {botPos.length}
-                      {openPos.length > 0 && (
-                        <span style={{ color: "#22c55e" }}>
-                          {" "}({openPos.length} open)
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                </div>
+              {/* Bot name */}
+              <div className="flex items-center gap-2">
+                <div
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ background: cfg.color, boxShadow: `0 0 8px ${cfg.color}` }}
+                />
+                <p className="font-pixel font-bold text-[1.176rem]" style={{ color: cfg.color }}>
+                  {cfg.name} BOT
+                </p>
               </div>
 
-              {/* Trades table */}
-              {sorted.length === 0 ? (
-                <p className="font-pixel text-[6px] text-zinc-800 text-center py-5">
-                  NO TRADES YET
-                </p>
-              ) : (
-                <>
-                  {/* Column headers */}
-                  <div
-                    className="grid px-5 py-2 font-pixel text-[5px] text-zinc-700 tracking-widest"
-                    style={{
-                      gridTemplateColumns: "70px 100px 100px 90px 110px 1fr",
-                      borderBottom: "1px solid rgba(255,255,255,0.03)",
-                    }}
-                  >
-                    <span>STATUS</span>
-                    <span>ENTRY $</span>
-                    <span>EXIT / NOW $</span>
-                    <span>BTC QTY</span>
-                    <span>PNL ₹</span>
-                    <span>OPENED</span>
+              {/* Stats */}
+              <div className="flex flex-col gap-3">
+                {[
+                  { label: "CAPITAL",  value: `₹${fmtINR(capital)}`,                           color: "#ffffff" },
+                  { label: "TOTAL PNL", value: pnlStr(pnl),                                     color: pnlColor(pnl) },
+                  { label: "RETURN",   value: `${retPct >= 0 ? "+" : ""}${retPct.toFixed(2)}%`, color: pnlColor(retPct) },
+                  { label: "TRADES",   value: `${botPos.length} (${openPos.length} open)`,      color: "#a1a1aa" },
+                  { label: "CHARGES",  value: `₹${fmtINR(totalCharges)}`,                       color: "#f59e0b" },
+                ].map((row) => (
+                  <div key={row.label} className="flex justify-between items-baseline">
+                    <p className="font-pixel font-bold text-[1.176rem] text-zinc-600 tracking-widest">
+                      {row.label}
+                    </p>
+                    <p className="font-pixel font-bold text-[1.176rem]" style={{ color: row.color }}>
+                      {row.value}
+                    </p>
                   </div>
+                ))}
+              </div>
 
-                  {/* Rows */}
-                  {sorted.map((pos) => {
-                    const isOpen       = pos.status === "OPEN";
-                    const currentPrice = isOpen ? btcPrice : pos.current_price;
-                    const displayPnl   = isOpen && btcPrice > 0
-                      ? (btcPrice - pos.entry_price) * pos.quantity * USD_TO_INR
-                      : pos.pnl;
-
-                    return (
-                      <div
-                        key={pos.id}
-                        className="grid px-5 py-2.5 items-center"
-                        style={{
-                          gridTemplateColumns: "70px 100px 100px 90px 110px 1fr",
-                          borderBottom: "1px solid rgba(255,255,255,0.02)",
-                          background: isOpen
-                            ? `${cfg.color}07`
-                            : "transparent",
-                        }}
-                      >
-                        {/* Status badge */}
-                        <span>
-                          <span
-                            className="font-pixel text-[5px] px-1.5 py-0.5"
-                            style={
-                              isOpen
-                                ? {
-                                    background: "rgba(34,197,94,0.1)",
-                                    color: "#22c55e",
-                                    border: "1px solid rgba(34,197,94,0.3)",
-                                  }
-                                : {
-                                    background: "rgba(255,255,255,0.03)",
-                                    color: "#52525b",
-                                    border: "1px solid rgba(255,255,255,0.06)",
-                                  }
-                            }
-                          >
-                            {pos.status}
-                          </span>
-                        </span>
-
-                        <span className="font-pixel text-[7px] text-zinc-300">
-                          ${fmtUSD(pos.entry_price)}
-                        </span>
-
-                        <span className="font-pixel text-[7px] text-zinc-500">
-                          {currentPrice > 0 ? `$${fmtUSD(currentPrice)}` : "--"}
-                        </span>
-
-                        <span className="font-pixel text-[7px] text-zinc-500">
-                          {fmtBTC(pos.quantity)}
-                        </span>
-
-                        <span
-                          className="font-pixel text-[7px]"
-                          style={{ color: pnlColor(displayPnl) }}
-                        >
-                          {pnlStr(displayPnl)}
-                        </span>
-
-                        <span className="font-pixel text-[6px] text-zinc-700">
-                          {fmtTime(pos.opened_at)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </>
-              )}
+              {/* Click hint */}
+              <p className="font-pixel text-[0.55rem] text-zinc-700 tracking-widest mt-1">
+                TAP FOR DETAILS →
+              </p>
             </div>
           );
         })}
