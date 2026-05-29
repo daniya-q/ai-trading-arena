@@ -16,11 +16,28 @@ body {
   background: #050508;
   color: var(--foreground);
   font-family: 'Inter', sans-serif;
+  font-size: 14px;
   overflow-x: hidden;
 }
 
+p, span, div, td, th, li {
+  font-size: inherit;
+}
+
+/* Base utility sizes */
+.text-xs   { font-size: 12px !important; }
+.text-sm   { font-size: 13px !important; }
+.text-base { font-size: 14px !important; }
+
+/* Lighten grey shades site-wide */
+.text-zinc-700 { color: #9ca3af !important; }
+.text-zinc-600 { color: #9ca3af !important; }
+.text-zinc-500 { color: #a1a1aa !important; }
+.text-zinc-400 { color: #d4d4d8 !important; }
+
 .font-pixel {
   font-family: 'Inter', sans-serif;
+  font-size: 13px;
   line-height: 1.6;
   letter-spacing: -0.2px;
 }
