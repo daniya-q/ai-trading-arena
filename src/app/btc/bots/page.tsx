@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useBtcStore } from "@/store/btcStore";
 import { startBtcWebSocket } from "@/lib/btc/btcWebSocket";
@@ -86,7 +86,7 @@ function calcSharpe(closedPos: PosRow[]): string {
 
 // ── Page ──────────────────────────────────────────────────────────
 
-export default function BtcBotsPage() {
+function BtcBotsContent() {
   const { btcPrice, update24h } = useBtcStore();
   const searchParams = useSearchParams();
   const highlightBot = searchParams.get("bot");
@@ -324,5 +324,13 @@ export default function BtcBotsPage() {
       </div>
 
     </div>
+  );
+}
+
+export default function BtcBotsPage() {
+  return (
+    <Suspense fallback={<div className="flex-1 p-6 text-white">Loading...</div>}>
+      <BtcBotsContent />
+    </Suspense>
   );
 }
