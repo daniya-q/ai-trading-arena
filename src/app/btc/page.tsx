@@ -206,10 +206,10 @@ export default function BtcArenaPage() {
               borderRight: i < 2 ? "1px solid rgba(255,255,255,0.05)" : undefined,
             }}
           >
-            <p className="font-pixel text-[2.625rem] text-zinc-600 mb-2 tracking-widest">
+            <p className="font-pixel text-[2.1rem] text-zinc-600 mb-2 tracking-widest">
               {item.label}
             </p>
-            <p className="font-pixel text-[2.625rem]" style={{ color: item.color }}>
+            <p className="font-pixel text-[2.1rem]" style={{ color: item.color }}>
               {item.value}
             </p>
           </div>
@@ -226,11 +226,11 @@ export default function BtcArenaPage() {
         }}
       >
         <div>
-          <p className="font-pixel text-[2.625rem] text-zinc-600 mb-2 tracking-widest">
+          <p className="font-pixel text-[2.1rem] text-zinc-600 mb-2 tracking-widest">
             BTC / USD · LIVE
           </p>
           <p
-            className="font-pixel text-[2.625rem]"
+            className="font-pixel text-[2.1rem]"
             style={{ color: btcPrice > 0 ? "#f97316" : "#3f3f46" }}
           >
             {btcPrice > 0 ? `$${fmtUSD(btcPrice)}` : "CONNECTING..."}
@@ -239,7 +239,7 @@ export default function BtcArenaPage() {
 
         {btcChange24h !== 0 && (
           <p
-            className="font-pixel text-[2.625rem] mt-1"
+            className="font-pixel text-[2.1rem] mt-1"
             style={{ color: pnlColor(btcChange24h) }}
           >
             {btcChange24h >= 0 ? "+" : ""}
@@ -252,7 +252,7 @@ export default function BtcArenaPage() {
             className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block"
             style={{ animation: "pulse 2s infinite" }}
           />
-          <span className="font-pixel text-[2.625rem] text-green-400">
+          <span className="font-pixel text-[2.1rem] text-green-400">
             MARKET OPEN 24/7
           </span>
         </div>
@@ -298,7 +298,7 @@ export default function BtcArenaPage() {
                     }}
                   />
                   <p
-                    className="font-pixel text-[2.625rem]"
+                    className="font-pixel text-[2.1rem]"
                     style={{ color: cfg.color }}
                   >
                     {cfg.name} BOT
@@ -307,29 +307,29 @@ export default function BtcArenaPage() {
 
                 <div className="flex items-center gap-8">
                   <div className="text-right">
-                    <p className="font-pixel text-[2.625rem] text-zinc-700 mb-1 tracking-widest">
+                    <p className="font-pixel text-[2.1rem] text-zinc-700 mb-1 tracking-widest">
                       CAPITAL
                     </p>
-                    <p className="font-pixel text-[2.625rem] text-white">
+                    <p className="font-pixel text-[2.1rem] text-white">
                       ₹{fmtINR(capital)}
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="font-pixel text-[2.625rem] text-zinc-700 mb-1 tracking-widest">
+                    <p className="font-pixel text-[2.1rem] text-zinc-700 mb-1 tracking-widest">
                       TOTAL PNL
                     </p>
                     <p
-                      className="font-pixel text-[2.625rem]"
+                      className="font-pixel text-[2.1rem]"
                       style={{ color: pnlColor(pnl) }}
                     >
                       {pnlStr(pnl)}
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="font-pixel text-[2.625rem] text-zinc-700 mb-1 tracking-widest">
+                    <p className="font-pixel text-[2.1rem] text-zinc-700 mb-1 tracking-widest">
                       TRADES
                     </p>
-                    <p className="font-pixel text-[2.625rem] text-zinc-500">
+                    <p className="font-pixel text-[2.1rem] text-zinc-500">
                       {botPos.length}
                       {openPos.length > 0 && (
                         <span style={{ color: "#22c55e" }}>
