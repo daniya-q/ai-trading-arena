@@ -45,7 +45,7 @@ const RANK_CONFIGS = [
   {
     border: "border-zinc-700",
     bg: "",
-    rankColor: "text-zinc-500",
+    rankColor: "text-zinc-300",
     label: "#4",
   },
 ];
@@ -150,14 +150,14 @@ export default function LeaderboardPage() {
             Leaderboard
           </h1>
 
-          <p className="text-zinc-500 text-lg">
+          <p className="text-zinc-300 text-lg">
             Live AI bot rankings by total PnL
           </p>
 
         </div>
 
         {lastUpdated && (
-          <p className="text-zinc-600 text-sm">
+          <p className="text-zinc-400 text-sm">
             Refreshes every 30s · Last updated{" "}
             {lastUpdated.toLocaleTimeString()}
           </p>
@@ -216,7 +216,7 @@ export default function LeaderboardPage() {
                     {bot.botName}
                   </h2>
 
-                  <p className="text-zinc-500 text-sm mt-1">
+                  <p className="text-zinc-300 text-sm mt-1">
                     {bot.totalTrades} trades
                     &nbsp;·&nbsp;
                     Sharpe {bot.sharpeLike.toFixed(2)}
@@ -228,7 +228,7 @@ export default function LeaderboardPage() {
 
                 <div className="text-right shrink-0 min-w-[150px]">
 
-                  <p className="text-zinc-500 text-xs mb-1">
+                  <p className="text-zinc-300 text-sm mb-1">
                     Total PnL
                   </p>
 
@@ -249,7 +249,7 @@ export default function LeaderboardPage() {
 
                 <div className="text-right shrink-0 min-w-[110px]">
 
-                  <p className="text-zinc-500 text-xs mb-1">
+                  <p className="text-zinc-300 text-sm mb-1">
                     Return (₹1L)
                   </p>
 
@@ -270,7 +270,7 @@ export default function LeaderboardPage() {
 
                 <div className="text-right shrink-0 min-w-[90px]">
 
-                  <p className="text-zinc-500 text-xs mb-1">
+                  <p className="text-zinc-300 text-sm mb-1">
                     Win Rate
                   </p>
 
@@ -284,7 +284,7 @@ export default function LeaderboardPage() {
 
                 <div className="text-right shrink-0 min-w-[70px]">
 
-                  <p className="text-zinc-500 text-xs mb-1">
+                  <p className="text-zinc-300 text-sm mb-1">
                     Trades
                   </p>
 

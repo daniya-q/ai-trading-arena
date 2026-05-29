@@ -32,7 +32,7 @@ function NavItem({
   return (
     <Link href={href}>
       <div
-        className="w-full px-3 py-3 cursor-pointer font-pixel text-[8px] leading-relaxed flex items-center gap-2 transition-colors"
+        className="w-full px-3 py-3 cursor-pointer font-pixel text-[13px] leading-relaxed flex items-center gap-2 transition-colors"
         style={
           isActive
             ? {
@@ -42,7 +42,7 @@ function NavItem({
                 paddingLeft: "10px",
               }
             : {
-                color: accent ? `${accent}80` : "#52525b",
+                color: accent ? `${accent}80` : "#a1a1aa",
                 borderLeft: "2px solid transparent",
               }
         }
@@ -80,11 +80,11 @@ export default function Sidebar() {
       {/* Logo */}
       <div className="p-5 border-b border-zinc-900">
 
-        <p className="font-pixel text-[6px] text-zinc-600 mb-2 tracking-widest">
+        <p className="font-pixel text-[13px] text-zinc-400 mb-2 tracking-widest">
           SEASON 1
         </p>
 
-        <h1 className="font-pixel text-[9px] text-white leading-relaxed">
+        <h1 className="font-pixel text-[13px] text-white leading-relaxed">
           AI TRADING
           <br />
           ARENA
@@ -95,7 +95,7 @@ export default function Sidebar() {
       {/* Main nav */}
       <div className="flex-1 py-5 px-2 space-y-1">
 
-        <p className="font-pixel text-[6px] text-zinc-800 px-3 mb-3 tracking-widest">
+        <p className="font-pixel text-[13px] text-zinc-300 px-3 mb-3 tracking-widest">
           ── MAIN ──
         </p>
 
@@ -110,7 +110,7 @@ export default function Sidebar() {
 
         <div className="pt-4">
 
-          <p className="font-pixel text-[6px] text-zinc-800 px-3 mb-3 tracking-widest">
+          <p className="font-pixel text-[13px] text-zinc-300 px-3 mb-3 tracking-widest">
             ── CRYPTO ──
           </p>
 
@@ -130,7 +130,7 @@ export default function Sidebar() {
 
       {/* Footer */}
       <div className="p-5 border-t border-zinc-900">
-        <p className="font-pixel text-[5px] text-zinc-800 leading-loose">
+        <p className="font-pixel text-[13px] text-zinc-300 leading-loose">
           AUTONOMOUS AI
           <br />
           HEDGE FUNDS

@@ -149,7 +149,7 @@ export default function TradesPage() {
             Trades
           </h1>
 
-          <p className="text-zinc-500 text-lg">
+          <p className="text-zinc-300 text-lg">
             {openCount} open &nbsp;·&nbsp;{" "}
             {closedCount} closed
           </p>
@@ -157,7 +157,7 @@ export default function TradesPage() {
         </div>
 
         {lastUpdated && (
-          <p className="text-zinc-600 text-sm">
+          <p className="text-zinc-400 text-sm">
             Refreshes every 15s · Last updated{" "}
             {lastUpdated.toLocaleTimeString()}
           </p>
@@ -199,7 +199,7 @@ export default function TradesPage() {
 
       ) : filtered.length === 0 ? (
 
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-12 text-center text-zinc-600">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-12 text-center text-zinc-400">
 
           No trades found
 
@@ -246,7 +246,7 @@ export default function TradesPage() {
               <div className="shrink-0">
 
                 <span
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold border ${
+                  className={`px-3 py-1 rounded-lg text-sm font-semibold border ${
                     trade.side === "BUY"
                       ? "bg-green-500/10 border-green-500/20 text-green-400"
                       : "bg-red-500/10 border-red-500/20 text-red-400"
@@ -261,7 +261,7 @@ export default function TradesPage() {
 
               <div className="text-right shrink-0 min-w-[100px]">
 
-                <p className="text-zinc-500 text-xs mb-1">
+                <p className="text-zinc-300 text-sm mb-1">
                   Entry
                 </p>
 
@@ -278,7 +278,7 @@ export default function TradesPage() {
 
               <div className="text-right shrink-0 min-w-[100px]">
 
-                <p className="text-zinc-500 text-xs mb-1">
+                <p className="text-zinc-300 text-sm mb-1">
                   {trade.status === "CLOSED"
                     ? "Exit"
                     : "Current"}
@@ -297,7 +297,7 @@ export default function TradesPage() {
 
               <div className="text-right shrink-0 min-w-[110px]">
 
-                <p className="text-zinc-500 text-xs mb-1">
+                <p className="text-zinc-300 text-sm mb-1">
                   PnL
                 </p>
 
@@ -319,7 +319,7 @@ export default function TradesPage() {
               <div className="shrink-0">
 
                 <span
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold border ${
+                  className={`px-3 py-1 rounded-lg text-sm font-semibold border ${
                     trade.status === "OPEN"
                       ? "bg-blue-500/10 border-blue-500/20 text-blue-400"
                       : "bg-zinc-800 border-zinc-700 text-zinc-400"
@@ -334,7 +334,7 @@ export default function TradesPage() {
 
               <div className="text-right shrink-0 min-w-[120px]">
 
-                <p className="text-zinc-500 text-xs">
+                <p className="text-zinc-300 text-sm">
                   {trade.status === "CLOSED" &&
                   trade.closedAt
                     ? formatTime(trade.closedAt)

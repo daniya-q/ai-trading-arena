@@ -130,7 +130,7 @@ function BtcBotsContent() {
 
       {/* Title */}
       <div className="mb-6">
-        <p className="font-pixel text-[6px] text-orange-500/50 mb-2 tracking-widest">
+        <p className="font-pixel text-[13px] text-orange-500/50 mb-2 tracking-widest">
           BTC ARENA · SEASON 1
         </p>
         <h1 className="font-pixel text-lg text-white">
@@ -191,7 +191,7 @@ function BtcBotsContent() {
                   { label: "TRADES",     value: `${botPos.length} total · ${openPos.length} open`, color: "#a1a1aa" },
                 ].map((row) => (
                   <div key={row.label} className={`flex justify-between items-baseline ${row.large ? "mb-3" : "mb-1.5"}`}>
-                    <p className={`font-pixel font-bold tracking-widest text-zinc-500 ${row.large ? "text-[0.65rem]" : "text-[0.55rem]"}`}>
+                    <p className={`font-pixel font-bold tracking-widest text-zinc-300 ${row.large ? "text-[0.65rem]" : "text-[0.55rem]"}`}>
                       {row.label}
                     </p>
                     <p
@@ -207,14 +207,14 @@ function BtcBotsContent() {
               {/* ── Trades table ── */}
               <div className="overflow-y-auto" style={{ maxHeight: "520px" }}>
                 {sorted.length === 0 ? (
-                  <p className="font-pixel text-[6px] text-zinc-800 text-center py-6">
+                  <p className="font-pixel text-[13px] text-zinc-300 text-center py-6">
                     NO TRADES YET
                   </p>
                 ) : (
                   <>
                     {/* Column headers */}
                     <div
-                      className="grid px-3 py-1.5 font-pixel text-[0.45rem] text-zinc-700 tracking-widest sticky top-0"
+                      className="grid px-3 py-1.5 font-pixel text-[0.45rem] text-zinc-400 tracking-widest sticky top-0"
                       style={{
                         gridTemplateColumns: "44px 72px 72px 56px 76px 64px 76px 1fr",
                         borderBottom: "1px solid rgba(255,255,255,0.04)",
@@ -262,7 +262,7 @@ function BtcBotsContent() {
                               style={
                                 isOpen
                                   ? { background: "rgba(34,197,94,0.1)", color: "#22c55e", border: "1px solid rgba(34,197,94,0.3)" }
-                                  : { background: "rgba(255,255,255,0.03)", color: "#52525b", border: "1px solid rgba(255,255,255,0.06)" }
+                                  : { background: "rgba(255,255,255,0.03)", color: "#a1a1aa", border: "1px solid rgba(255,255,255,0.06)" }
                               }
                             >
                               {pos.status}
@@ -273,11 +273,11 @@ function BtcBotsContent() {
                             ${fmtUSD(pos.entry_price)}
                           </span>
 
-                          <span className="font-pixel text-[0.5rem] text-zinc-500">
+                          <span className="font-pixel text-[0.5rem] text-zinc-300">
                             {currentPrice > 0 ? `$${fmtUSD(currentPrice)}` : "--"}
                           </span>
 
-                          <span className="font-pixel text-[0.5rem] text-zinc-500">
+                          <span className="font-pixel text-[0.5rem] text-zinc-300">
                             {fmtBTC(pos.quantity)}
                           </span>
 
@@ -295,7 +295,7 @@ function BtcBotsContent() {
 
                           {/* Reasoning */}
                           <span
-                            className="font-pixel text-[0.45rem] text-zinc-600 cursor-pointer leading-relaxed"
+                            className="font-pixel text-[0.45rem] text-zinc-400 cursor-pointer leading-relaxed"
                             onClick={() =>
                               setExpandedReasoning((prev) => ({ ...prev, [reasonKey]: !prev[reasonKey] }))
                             }
@@ -315,7 +315,7 @@ function BtcBotsContent() {
               </div>
 
               {/* Opened label */}
-              <p className="font-pixel text-[0.4rem] text-zinc-800 text-center py-2">
+              <p className="font-pixel text-[0.4rem] text-zinc-300 text-center py-2">
                 {fmtTime(sorted[0]?.opened_at ?? null)} → LATEST
               </p>
             </div>

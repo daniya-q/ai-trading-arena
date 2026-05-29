@@ -20,7 +20,7 @@ export default function PortfolioRisk() {
 
         <div className="bg-black border border-zinc-800 rounded-2xl p-5">
 
-          <p className="text-zinc-500 mb-3">
+          <p className="text-zinc-300 mb-3">
             Open Positions
           </p>
 
@@ -34,7 +34,7 @@ export default function PortfolioRisk() {
 
         <div className="bg-black border border-zinc-800 rounded-2xl p-5">
 
-          <p className="text-zinc-500 mb-3">
+          <p className="text-zinc-300 mb-3">
             BUY Exposure
           </p>
 
@@ -49,7 +49,7 @@ export default function PortfolioRisk() {
 
         <div className="bg-black border border-zinc-800 rounded-2xl p-5">
 
-          <p className="text-zinc-500 mb-3">
+          <p className="text-zinc-300 mb-3">
             SELL Exposure
           </p>
 
@@ -64,7 +64,7 @@ export default function PortfolioRisk() {
 
         <div className="bg-black border border-zinc-800 rounded-2xl p-5">
 
-          <p className="text-zinc-500 mb-3">
+          <p className="text-zinc-300 mb-3">
             Net Exposure
           </p>
 

@@ -43,7 +43,7 @@ export default function SoundToggle() {
         border: "1px solid rgba(255,255,255,0.1)",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
-        color: on ? "#a78bfa" : "#52525b",
+        color: on ? "#a78bfa" : "#a1a1aa",
         fontSize: 18,
         transition: "color 0.2s, border-color 0.2s",
         borderColor: on

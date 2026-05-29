@@ -230,7 +230,7 @@ function PlanetNode({
 
       {/* P&L floating above */}
       <p
-        className="font-pixel text-[8px] mb-2"
+        className="font-pixel text-[13px] mb-2"
         style={{
           color: pnl >= 0 ? "#22c55e" : "#ef4444",
           animation: "floatUp 3s ease-in-out infinite",
@@ -309,7 +309,7 @@ function PlanetNode({
 
       {/* Bot name below */}
       <p
-        className="font-pixel text-[9px] mt-3"
+        className="font-pixel text-[13px] mt-3"
         style={{ color, textShadow: `0 0 12px ${color}80` }}
       >
         {botName}
@@ -317,7 +317,7 @@ function PlanetNode({
 
       {/* Rank */}
       <p
-        className="font-pixel text-[6px] mt-1 text-zinc-600"
+        className="font-pixel text-[13px] mt-1 text-zinc-400"
       >
         #{data.rank}
       </p>
@@ -396,7 +396,7 @@ function PlanetOverlay({
         {/* Close */}
         <button
           onClick={onClose}
-          className="font-pixel text-[9px] text-zinc-500 hover:text-white transition-colors"
+          className="font-pixel text-[13px] text-zinc-300 hover:text-white transition-colors"
           style={{ position: "absolute", top: 12, right: 14 }}
         >
           [X]
@@ -417,11 +417,11 @@ function PlanetOverlay({
         <div className="grid grid-cols-2 gap-x-8 gap-y-5 mb-6">
 
           <div>
-            <p className="font-pixel text-[6px] text-zinc-500 mb-1">
+            <p className="font-pixel text-[13px] text-zinc-300 mb-1">
               P&amp;L
             </p>
             <p
-              className="font-pixel text-[11px]"
+              className="font-pixel text-[13px]"
               style={{ color: pnl >= 0 ? "#22c55e" : "#ef4444" }}
             >
               {pnl >= 0 ? "+" : ""}₹
@@ -430,11 +430,11 @@ function PlanetOverlay({
           </div>
 
           <div>
-            <p className="font-pixel text-[6px] text-zinc-500 mb-1">
+            <p className="font-pixel text-[13px] text-zinc-300 mb-1">
               RETURN
             </p>
             <p
-              className="font-pixel text-[11px]"
+              className="font-pixel text-[13px]"
               style={{
                 color:
                   Number(pctReturn) >= 0 ? "#22c55e" : "#ef4444",
@@ -446,31 +446,31 @@ function PlanetOverlay({
           </div>
 
           <div>
-            <p className="font-pixel text-[6px] text-zinc-500 mb-1">
+            <p className="font-pixel text-[13px] text-zinc-300 mb-1">
               TRADES
             </p>
-            <p className="font-pixel text-[11px] text-white">
+            <p className="font-pixel text-[13px] text-white">
               {totalTrades}
             </p>
           </div>
 
           <div>
-            <p className="font-pixel text-[6px] text-zinc-500 mb-1">
+            <p className="font-pixel text-[13px] text-zinc-300 mb-1">
               WIN RATE
             </p>
-            <p className="font-pixel text-[11px] text-white">
+            <p className="font-pixel text-[13px] text-white">
               {(winRate * 100).toFixed(1)}%
             </p>
           </div>
 
           <div>
-            <p className="font-pixel text-[6px] text-zinc-500 mb-1">
+            <p className="font-pixel text-[13px] text-zinc-300 mb-1">
               OPEN
             </p>
             <p
-              className="font-pixel text-[9px]"
+              className="font-pixel text-[13px]"
               style={{
-                color: openSymbol ? color : "#52525b",
+                color: openSymbol ? color : "#a1a1aa",
               }}
             >
               {openSymbol ?? "NONE"}
@@ -478,13 +478,13 @@ function PlanetOverlay({
           </div>
 
           <div>
-            <p className="font-pixel text-[6px] text-zinc-500 mb-1">
+            <p className="font-pixel text-[13px] text-zinc-300 mb-1">
               CARRY
             </p>
             <p
-              className="font-pixel text-[9px]"
+              className="font-pixel text-[13px]"
               style={{
-                color: carrySymbol ? "#f59e0b" : "#52525b",
+                color: carrySymbol ? "#f59e0b" : "#a1a1aa",
               }}
             >
               {carrySymbol ?? "NONE"}
@@ -496,11 +496,11 @@ function PlanetOverlay({
         {/* Capital bar */}
         <div className="mb-6">
           <div className="flex justify-between mb-1">
-            <p className="font-pixel text-[6px] text-zinc-500">
+            <p className="font-pixel text-[13px] text-zinc-300">
               CAPITAL
             </p>
             <p
-              className="font-pixel text-[6px]"
+              className="font-pixel text-[13px]"
               style={{ color: barColor }}
             >
               {capitalPct.toFixed(0)}%
@@ -523,7 +523,7 @@ function PlanetOverlay({
         {/* View full details */}
         <Link href="/bots">
           <p
-            className="font-pixel text-[8px] hover:underline transition-colors"
+            className="font-pixel text-[13px] hover:underline transition-colors"
             style={{ color }}
           >
             VIEW FULL DETAILS →
@@ -644,7 +644,7 @@ export default function Home() {
           <h1 className="font-pixel text-lg text-white mb-2">
             SEASON 1
           </h1>
-          <p className="font-pixel text-[9px] text-zinc-400 tracking-widest">
+          <p className="font-pixel text-[13px] text-zinc-400 tracking-widest">
             AI TRADING ARENA
           </p>
         </div>
@@ -652,19 +652,19 @@ export default function Home() {
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-6 mb-6">
 
           <div className="text-center">
-            <p className="font-pixel text-[6px] text-zinc-500 mb-2">
+            <p className="font-pixel text-[13px] text-zinc-300 mb-2">
               INITIAL CAPITAL
             </p>
-            <p className="font-pixel text-[10px] text-zinc-300">
+            <p className="font-pixel text-[13px] text-zinc-300">
               ₹4,00,000
             </p>
           </div>
 
           <div className="text-center">
-            <p className="font-pixel text-[6px] text-zinc-500 mb-2">
+            <p className="font-pixel text-[13px] text-zinc-300 mb-2">
               CURRENT CAPITAL
             </p>
-            <p className="font-pixel text-[10px] text-white">
+            <p className="font-pixel text-[13px] text-white">
               ₹
               {totalCapital > 0
                 ? totalCapital.toLocaleString("en-IN")
@@ -673,11 +673,11 @@ export default function Home() {
           </div>
 
           <div className="text-center">
-            <p className="font-pixel text-[6px] text-zinc-500 mb-2">
+            <p className="font-pixel text-[13px] text-zinc-300 mb-2">
               TOTAL P&amp;L
             </p>
             <p
-              className="font-pixel text-[10px]"
+              className="font-pixel text-[13px]"
               style={{
                 color: totalPnL >= 0 ? "#22c55e" : "#ef4444",
               }}
@@ -688,11 +688,11 @@ export default function Home() {
           </div>
 
           <div className="text-center">
-            <p className="font-pixel text-[6px] text-zinc-500 mb-2">
+            <p className="font-pixel text-[13px] text-zinc-300 mb-2">
               TOTAL P&amp;L %
             </p>
             <p
-              className="font-pixel text-[10px]"
+              className="font-pixel text-[13px]"
               style={{
                 color:
                   Number(totalPnLPct) >= 0
@@ -709,7 +709,7 @@ export default function Home() {
 
         <div className="flex justify-center">
           <span
-            className={`inline-flex items-center gap-2 px-4 py-2 font-pixel text-[8px] border ${
+            className={`inline-flex items-center gap-2 px-4 py-2 font-pixel text-[13px] border ${
               marketStatus.isOpen
                 ? "border-green-500/30 text-green-400"
                 : "border-red-500/30 text-red-400"
@@ -743,11 +743,11 @@ export default function Home() {
 
       <div className="mb-12">
 
-        <p className="font-pixel text-[7px] text-zinc-600 mb-2 tracking-widest text-center">
+        <p className="font-pixel text-[13px] text-zinc-400 mb-2 tracking-widest text-center">
           ▸ AI BATTLE GROUND ◂
         </p>
 
-        <p className="font-pixel text-[6px] text-zinc-700 mb-6 text-center">
+        <p className="font-pixel text-[13px] text-zinc-400 mb-6 text-center">
           CLICK A PLANET TO EXPLORE
         </p>
 
@@ -793,7 +793,7 @@ export default function Home() {
 
         <div className="mb-12">
 
-          <p className="font-pixel text-[7px] text-zinc-600 mb-6 tracking-widest">
+          <p className="font-pixel text-[13px] text-zinc-400 mb-6 tracking-widest">
             ▸ CURRENT LEADER
           </p>
 
@@ -832,7 +832,7 @@ export default function Home() {
                 <span className="text-3xl">🏆</span>
                 <div>
                   <p
-                    className="font-pixel text-[10px] mb-2"
+                    className="font-pixel text-[13px] mb-2"
                     style={{ color: leader.color }}
                   >
                     {leader.botName}
@@ -851,7 +851,7 @@ export default function Home() {
               </div>
 
               <Link href="/leaderboard">
-                <span className="font-pixel text-[8px] text-zinc-500 hover:text-white transition-colors">
+                <span className="font-pixel text-[13px] text-zinc-300 hover:text-white transition-colors">
                   VIEW FULL LEADERBOARD →
                 </span>
               </Link>
@@ -867,7 +867,7 @@ export default function Home() {
 
       <div>
 
-        <p className="font-pixel text-[7px] text-zinc-600 mb-6 tracking-widest">
+        <p className="font-pixel text-[13px] text-zinc-400 mb-6 tracking-widest">
           ▸ PORTFOLIO EQUITY CURVE
         </p>
 
@@ -883,7 +883,7 @@ export default function Home() {
 
           {equityData.length < 2 ? (
             <div className="h-[240px] flex items-center justify-center">
-              <p className="font-pixel text-[7px] text-zinc-700 animate-pulse">
+              <p className="font-pixel text-[13px] text-zinc-400 animate-pulse">
                 COLLECTING DATA...
               </p>
             </div>
@@ -897,7 +897,7 @@ export default function Home() {
                     tick={{
                       fontSize: 7,
                       fontFamily: "'Inter', sans-serif",
-                      fill: "#52525b",
+                      fill: "#a1a1aa",
                     }}
                     interval="preserveStartEnd"
                   />
@@ -906,7 +906,7 @@ export default function Home() {
                     tick={{
                       fontSize: 7,
                       fontFamily: "'Inter', sans-serif",
-                      fill: "#52525b",
+                      fill: "#a1a1aa",
                     }}
                     domain={["auto", "auto"]}
                     width={70}

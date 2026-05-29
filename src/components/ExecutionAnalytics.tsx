@@ -55,7 +55,7 @@ export default function ExecutionAnalytics() {
 
                   </div>
 
-                  <p className="text-zinc-500">
+                  <p className="text-zinc-300">
                     {
                       execution.symbol
                     }
@@ -65,7 +65,7 @@ export default function ExecutionAnalytics() {
 
                 <div className="text-right">
 
-                  <p className="text-zinc-500 text-sm">
+                  <p className="text-zinc-300 text-sm">
                     Latency
                   </p>
 
@@ -84,7 +84,7 @@ export default function ExecutionAnalytics() {
 
                 <div className="bg-zinc-900 rounded-xl p-4">
 
-                  <p className="text-zinc-500 text-sm mb-2">
+                  <p className="text-zinc-300 text-sm mb-2">
                     Requested
                   </p>
 
@@ -99,7 +99,7 @@ export default function ExecutionAnalytics() {
 
                 <div className="bg-zinc-900 rounded-xl p-4">
 
-                  <p className="text-zinc-500 text-sm mb-2">
+                  <p className="text-zinc-300 text-sm mb-2">
                     Executed
                   </p>
 
@@ -114,7 +114,7 @@ export default function ExecutionAnalytics() {
 
                 <div className="bg-zinc-900 rounded-xl p-4">
 
-                  <p className="text-zinc-500 text-sm mb-2">
+                  <p className="text-zinc-300 text-sm mb-2">
                     Slippage
                   </p>
 
@@ -129,7 +129,7 @@ export default function ExecutionAnalytics() {
 
                 <div className="bg-zinc-900 rounded-xl p-4">
 
-                  <p className="text-zinc-500 text-sm mb-2">
+                  <p className="text-zinc-300 text-sm mb-2">
                     Fees
                   </p>
 
@@ -150,7 +150,7 @@ export default function ExecutionAnalytics() {
 
         {executions.length ===
           0 && (
-          <div className="text-center text-zinc-500 py-10">
+          <div className="text-center text-zinc-300 py-10">
             No executions yet
           </div>
         )}

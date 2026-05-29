@@ -58,7 +58,7 @@ export default function AIThoughts() {
 
                 <div className="text-right">
 
-                  <p className="text-zinc-500 text-sm">
+                  <p className="text-zinc-300 text-sm">
                     Confidence
                   </p>
 
@@ -81,7 +81,7 @@ export default function AIThoughts() {
                 "
               </p>
 
-              <div className="flex items-center justify-between text-sm text-zinc-500">
+              <div className="flex items-center justify-between text-sm text-zinc-300">
 
                 <span>
                   Market Regime:{" "}

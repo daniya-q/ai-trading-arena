@@ -50,7 +50,7 @@ export default function CapitalAllocation() {
 
                     <div className="flex items-center gap-3 mb-2">
 
-                      <span className="text-zinc-500 text-xl font-bold">
+                      <span className="text-zinc-300 text-xl font-bold">
                         #
                         {index +
                           1}
@@ -64,7 +64,7 @@ export default function CapitalAllocation() {
 
                     </div>
 
-                    <p className="text-zinc-500">
+                    <p className="text-zinc-300">
                       Dynamic Institutional Capital Allocation
                     </p>
 
@@ -72,7 +72,7 @@ export default function CapitalAllocation() {
 
                   <div className="text-right">
 
-                    <p className="text-zinc-500 mb-2">
+                    <p className="text-zinc-300 mb-2">
                       Allocated Capital
                     </p>
 
@@ -91,7 +91,7 @@ export default function CapitalAllocation() {
 
                   <div className="bg-zinc-900 rounded-xl p-4">
 
-                    <p className="text-zinc-500 text-sm mb-2">
+                    <p className="text-zinc-300 text-sm mb-2">
                       P&L
                     </p>
 
@@ -113,7 +113,7 @@ export default function CapitalAllocation() {
 
                   <div className="bg-zinc-900 rounded-xl p-4">
 
-                    <p className="text-zinc-500 text-sm mb-2">
+                    <p className="text-zinc-300 text-sm mb-2">
                       Win Rate
                     </p>
 
@@ -128,7 +128,7 @@ export default function CapitalAllocation() {
 
                   <div className="bg-zinc-900 rounded-xl p-4">
 
-                    <p className="text-zinc-500 text-sm mb-2">
+                    <p className="text-zinc-300 text-sm mb-2">
                       Sharpe-Like
                     </p>
 
@@ -142,7 +142,7 @@ export default function CapitalAllocation() {
 
                   <div className="bg-zinc-900 rounded-xl p-4">
 
-                    <p className="text-zinc-500 text-sm mb-2">
+                    <p className="text-zinc-300 text-sm mb-2">
                       Capital Growth
                     </p>
 

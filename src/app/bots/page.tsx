@@ -168,13 +168,13 @@ function BotSection({
           <div className="flex items-center gap-4">
 
             <h2
-              className="font-pixel text-[11px]"
+              className="font-pixel text-[13px]"
               style={{ color }}
             >
               {botName}
             </h2>
 
-            <span className="font-pixel text-[6px] text-zinc-600">
+            <span className="font-pixel text-[13px] text-zinc-400">
               {totalTrades} TRADES
             </span>
 
@@ -183,11 +183,11 @@ function BotSection({
           <div className="flex items-center gap-8">
 
             <div className="text-right">
-              <p className="font-pixel text-[6px] text-zinc-500 mb-1">
+              <p className="font-pixel text-[13px] text-zinc-300 mb-1">
                 PNL
               </p>
               <p
-                className="font-pixel text-[10px]"
+                className="font-pixel text-[13px]"
                 style={{
                   color: pnl >= 0 ? "#22c55e" : "#ef4444",
                 }}
@@ -197,11 +197,11 @@ function BotSection({
             </div>
 
             <div className="text-right">
-              <p className="font-pixel text-[6px] text-zinc-500 mb-1">
+              <p className="font-pixel text-[13px] text-zinc-300 mb-1">
                 RETURN
               </p>
               <p
-                className="font-pixel text-[10px]"
+                className="font-pixel text-[13px]"
                 style={{
                   color:
                     Number(pctReturn) >= 0
@@ -215,7 +215,7 @@ function BotSection({
             </div>
 
             <span
-              className="font-pixel text-[8px]"
+              className="font-pixel text-[13px]"
               style={{ color }}
             >
               {expanded ? "▲" : "▼"}
@@ -239,32 +239,32 @@ function BotSection({
           >
 
             <div>
-              <p className="font-pixel text-[6px] text-zinc-500 mb-2">
+              <p className="font-pixel text-[13px] text-zinc-300 mb-2">
                 WIN RATE
               </p>
-              <p className="font-pixel text-[10px] text-white">
+              <p className="font-pixel text-[13px] text-white">
                 {(winRate * 100).toFixed(1)}%
               </p>
-              <p className="font-pixel text-[5px] text-zinc-600 mt-1">
+              <p className="font-pixel text-[13px] text-zinc-400 mt-1">
                 {winningTrades}W / {losingTrades}L
               </p>
             </div>
 
             <div>
-              <p className="font-pixel text-[6px] text-zinc-500 mb-2">
+              <p className="font-pixel text-[13px] text-zinc-300 mb-2">
                 SHARPE RATIO
               </p>
-              <p className="font-pixel text-[10px] text-white">
+              <p className="font-pixel text-[13px] text-white">
                 {sharpeLike.toFixed(2)}
               </p>
             </div>
 
             <div>
-              <p className="font-pixel text-[6px] text-zinc-500 mb-2">
+              <p className="font-pixel text-[13px] text-zinc-300 mb-2">
                 MAX DRAWDOWN
               </p>
               <p
-                className="font-pixel text-[10px]"
+                className="font-pixel text-[13px]"
                 style={{
                   color:
                     maxDrawdown > 10
@@ -277,11 +277,11 @@ function BotSection({
             </div>
 
             <div>
-              <p className="font-pixel text-[6px] text-zinc-500 mb-2">
+              <p className="font-pixel text-[13px] text-zinc-300 mb-2">
                 PROFIT FACTOR
               </p>
               <p
-                className="font-pixel text-[10px]"
+                className="font-pixel text-[13px]"
                 style={{
                   color:
                     profitFactor >= 1.5
@@ -298,20 +298,20 @@ function BotSection({
             </div>
 
             <div>
-              <p className="font-pixel text-[6px] text-zinc-500 mb-2">
+              <p className="font-pixel text-[13px] text-zinc-300 mb-2">
                 CAPITAL
               </p>
-              <p className="font-pixel text-[10px] text-white">
+              <p className="font-pixel text-[13px] text-white">
                 ₹{formatINR(allocatedCapital)}
               </p>
             </div>
 
             <div>
-              <p className="font-pixel text-[6px] text-zinc-500 mb-2">
+              <p className="font-pixel text-[13px] text-zinc-300 mb-2">
                 OPEN POSITIONS
               </p>
               <p
-                className="font-pixel text-[10px]"
+                className="font-pixel text-[13px]"
                 style={{ color }}
               >
                 {openPos.length}
@@ -319,19 +319,19 @@ function BotSection({
             </div>
 
             <div>
-              <p className="font-pixel text-[6px] text-zinc-500 mb-2">
+              <p className="font-pixel text-[13px] text-zinc-300 mb-2">
                 CLOSED TRADES
               </p>
-              <p className="font-pixel text-[10px] text-zinc-300">
+              <p className="font-pixel text-[13px] text-zinc-300">
                 {closedPos.length}
               </p>
             </div>
 
             <div>
-              <p className="font-pixel text-[6px] text-zinc-500 mb-2">
+              <p className="font-pixel text-[13px] text-zinc-300 mb-2">
                 TOTAL TRADES
               </p>
-              <p className="font-pixel text-[10px] text-zinc-300">
+              <p className="font-pixel text-[13px] text-zinc-300">
                 {totalTrades}
               </p>
             </div>
@@ -345,7 +345,7 @@ function BotSection({
               className="p-6 text-center"
               style={{ border: `1px solid ${color}20` }}
             >
-              <p className="font-pixel text-[7px] text-zinc-600">
+              <p className="font-pixel text-[13px] text-zinc-400">
                 NO TRADES YET
               </p>
             </div>
@@ -357,7 +357,7 @@ function BotSection({
             >
 
               {/* Table header */}
-              <div className="grid grid-cols-6 px-4 py-3 font-pixel text-[5px] text-zinc-600 uppercase tracking-wider bg-zinc-900/50">
+              <div className="grid grid-cols-6 px-4 py-3 font-pixel text-[13px] text-zinc-400 uppercase tracking-wider bg-zinc-900/50">
                 <span>SYMBOL</span>
                 <span>SIDE</span>
                 <span className="text-right">ENTRY</span>
@@ -385,13 +385,13 @@ function BotSection({
                     }}
                   >
 
-                    <span className="font-pixel text-[7px] text-white">
+                    <span className="font-pixel text-[13px] text-white">
                       {pos.symbol}
                     </span>
 
                     <span>
                       <span
-                        className="font-pixel text-[5px] px-2 py-0.5"
+                        className="font-pixel text-[13px] px-2 py-0.5"
                         style={{
                           color:
                             pos.side === "BUY"
@@ -408,16 +408,16 @@ function BotSection({
                       </span>
                     </span>
 
-                    <span className="font-pixel text-[6px] text-zinc-400 text-right">
+                    <span className="font-pixel text-[13px] text-zinc-400 text-right">
                       ₹{formatINR(pos.entry_price)}
                     </span>
 
-                    <span className="font-pixel text-[6px] text-zinc-400 text-right">
+                    <span className="font-pixel text-[13px] text-zinc-400 text-right">
                       ₹{formatINR(pos.current_price)}
                     </span>
 
                     <span
-                      className="font-pixel text-[7px] text-right"
+                      className="font-pixel text-[13px] text-right"
                       style={{
                         color:
                           pos.pnl >= 0
@@ -429,7 +429,7 @@ function BotSection({
                       {formatINR(pos.pnl)}
                     </span>
 
-                    <span className="font-pixel text-[5px] text-zinc-600 text-right">
+                    <span className="font-pixel text-[13px] text-zinc-400 text-right">
                       {pos.status === "CLOSED" &&
                       pos.closed_at
                         ? formatTime(pos.closed_at)
@@ -592,19 +592,19 @@ export default function BotsPage() {
       <div className="flex items-end justify-between mb-8">
 
         <div>
-          <p className="font-pixel text-[6px] text-zinc-600 mb-3 tracking-widest">
+          <p className="font-pixel text-[13px] text-zinc-400 mb-3 tracking-widest">
             SEASON 1
           </p>
           <h1 className="font-pixel text-base text-white mb-2">
             BOTS
           </h1>
-          <p className="font-pixel text-[7px] text-zinc-500">
+          <p className="font-pixel text-[13px] text-zinc-300">
             FULL PERFORMANCE BREAKDOWN
           </p>
         </div>
 
         {lastUpdated && (
-          <p className="font-pixel text-[6px] text-zinc-700">
+          <p className="font-pixel text-[13px] text-zinc-400">
             UPDATED {lastUpdated.toLocaleTimeString()}
           </p>
         )}
@@ -628,7 +628,7 @@ export default function BotsPage() {
 
               {/* Rank label */}
               <p
-                className="font-pixel text-[6px] mb-4 tracking-widest"
+                className="font-pixel text-[13px] mb-4 tracking-widest"
                 style={{ color: profile.color }}
               >
                 ▸ #{i + 1} RANKED BOT

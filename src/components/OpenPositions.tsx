@@ -101,7 +101,7 @@ export default function OpenPositions() {
 
               <div className="text-right">
 
-                <p className="text-zinc-500 mb-2">
+                <p className="text-zinc-300 mb-2">
                   Live P&L
                 </p>
 
@@ -119,7 +119,7 @@ export default function OpenPositions() {
                   )}
                 </h3>
 
-                <p className="text-zinc-500 mt-2 text-sm">
+                <p className="text-zinc-300 mt-2 text-sm">
                   OPEN
                 </p>
 
@@ -131,7 +131,7 @@ export default function OpenPositions() {
 
         {openPositions.length ===
           0 && (
-          <div className="text-zinc-500 text-center py-10">
+          <div className="text-zinc-300 text-center py-10">
             No open positions
           </div>
         )}

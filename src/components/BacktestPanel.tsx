@@ -24,7 +24,7 @@ export default function BacktestPanel() {
             Historical Backtesting Engine
           </h2>
 
-          <p className="text-zinc-500">
+          <p className="text-zinc-300">
             Institutional-grade AI strategy validation
           </p>
 
@@ -50,7 +50,7 @@ export default function BacktestPanel() {
 
         <div className="bg-black border border-zinc-800 rounded-2xl p-5">
 
-          <p className="text-zinc-500 mb-2">
+          <p className="text-zinc-300 mb-2">
             Simulated Trades
           </p>
 
@@ -64,7 +64,7 @@ export default function BacktestPanel() {
 
         <div className="bg-black border border-zinc-800 rounded-2xl p-5">
 
-          <p className="text-zinc-500 mb-2">
+          <p className="text-zinc-300 mb-2">
             AI Agents
           </p>
 
@@ -78,7 +78,7 @@ export default function BacktestPanel() {
 
         <div className="bg-black border border-zinc-800 rounded-2xl p-5">
 
-          <p className="text-zinc-500 mb-2">
+          <p className="text-zinc-300 mb-2">
             Engine Status
           </p>
 
@@ -98,7 +98,7 @@ export default function BacktestPanel() {
 
         <div className="bg-black border border-zinc-800 rounded-2xl p-5">
 
-          <p className="text-zinc-500 mb-2">
+          <p className="text-zinc-300 mb-2">
             Historical Dataset
           </p>
 
@@ -132,7 +132,7 @@ export default function BacktestPanel() {
                     }
                   </h3>
 
-                  <p className="text-zinc-500">
+                  <p className="text-zinc-300">
                     AI Backtest Analytics
                   </p>
 
@@ -162,7 +162,7 @@ export default function BacktestPanel() {
 
                 <div className="bg-zinc-900 rounded-xl p-4">
 
-                  <p className="text-zinc-500 text-sm mb-2">
+                  <p className="text-zinc-300 text-sm mb-2">
                     Win Rate
                   </p>
 
@@ -177,7 +177,7 @@ export default function BacktestPanel() {
 
                 <div className="bg-zinc-900 rounded-xl p-4">
 
-                  <p className="text-zinc-500 text-sm mb-2">
+                  <p className="text-zinc-300 text-sm mb-2">
                     Trades
                   </p>
 
@@ -191,7 +191,7 @@ export default function BacktestPanel() {
 
                 <div className="bg-zinc-900 rounded-xl p-4">
 
-                  <p className="text-zinc-500 text-sm mb-2">
+                  <p className="text-zinc-300 text-sm mb-2">
                     Max Drawdown
                   </p>
 
@@ -206,7 +206,7 @@ export default function BacktestPanel() {
 
                 <div className="bg-zinc-900 rounded-xl p-4">
 
-                  <p className="text-zinc-500 text-sm mb-2">
+                  <p className="text-zinc-300 text-sm mb-2">
                     Sharpe-like
                   </p>
 

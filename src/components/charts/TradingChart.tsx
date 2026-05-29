@@ -59,11 +59,11 @@ export default function TradingChart() {
 
           <XAxis
             dataKey="time"
-            stroke="#71717a"
+            stroke="#a1a1aa"
           />
 
           <YAxis
-            stroke="#71717a"
+            stroke="#a1a1aa"
           />
 
           <Tooltip />

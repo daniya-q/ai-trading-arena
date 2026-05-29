@@ -30,10 +30,14 @@ p, span, div, td, th, li {
 .text-base { font-size: 14px !important; }
 
 /* Lighten grey shades site-wide */
-.text-zinc-700 { color: #9ca3af !important; }
-.text-zinc-600 { color: #9ca3af !important; }
-.text-zinc-500 { color: #a1a1aa !important; }
-.text-zinc-400 { color: #d4d4d8 !important; }
+.text-zinc-800 { color: #a1a1aa !important; }
+.text-zinc-700 { color: #a1a1aa !important; }
+.text-zinc-600 { color: #a1a1aa !important; }
+.text-zinc-500 { color: #d4d4d8 !important; }
+.text-zinc-400 { color: #e4e4e7 !important; }
+.text-gray-700 { color: #a1a1aa !important; }
+.text-gray-600 { color: #a1a1aa !important; }
+.text-gray-500 { color: #d4d4d8 !important; }
 
 .font-pixel {
   font-family: 'Inter', sans-serif;

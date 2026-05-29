@@ -78,7 +78,7 @@ export default function Leaderboard() {
 
                   <div className="flex items-center gap-3 mb-2">
 
-                    <span className="text-zinc-500 text-xl font-bold">
+                    <span className="text-zinc-300 text-xl font-bold">
                       #
                       {index +
                         1}
@@ -92,7 +92,7 @@ export default function Leaderboard() {
 
                   </div>
 
-                  <p className="text-zinc-500">
+                  <p className="text-zinc-300">
                     Institutional AI Strategy Evaluation
                   </p>
 
@@ -100,7 +100,7 @@ export default function Leaderboard() {
 
                 <div className="text-right">
 
-                  <p className="text-zinc-500 mb-2">
+                  <p className="text-zinc-300 mb-2">
                     Total P&L
                   </p>
 
@@ -126,7 +126,7 @@ export default function Leaderboard() {
 
                 <div className="bg-zinc-900 rounded-xl p-4">
 
-                  <p className="text-zinc-500 text-sm mb-2">
+                  <p className="text-zinc-300 text-sm mb-2">
                     Trades
                   </p>
 
@@ -140,7 +140,7 @@ export default function Leaderboard() {
 
                 <div className="bg-zinc-900 rounded-xl p-4">
 
-                  <p className="text-zinc-500 text-sm mb-2">
+                  <p className="text-zinc-300 text-sm mb-2">
                     Win Rate
                   </p>
 
@@ -155,7 +155,7 @@ export default function Leaderboard() {
 
                 <div className="bg-zinc-900 rounded-xl p-4">
 
-                  <p className="text-zinc-500 text-sm mb-2">
+                  <p className="text-zinc-300 text-sm mb-2">
                     Avg P&L
                   </p>
 
@@ -170,7 +170,7 @@ export default function Leaderboard() {
 
                 <div className="bg-zinc-900 rounded-xl p-4">
 
-                  <p className="text-zinc-500 text-sm mb-2">
+                  <p className="text-zinc-300 text-sm mb-2">
                     Profit Factor
                   </p>
 
@@ -184,7 +184,7 @@ export default function Leaderboard() {
 
                 <div className="bg-zinc-900 rounded-xl p-4">
 
-                  <p className="text-zinc-500 text-sm mb-2">
+                  <p className="text-zinc-300 text-sm mb-2">
                     Max DD
                   </p>
 
@@ -199,7 +199,7 @@ export default function Leaderboard() {
 
                 <div className="bg-zinc-900 rounded-xl p-4">
 
-                  <p className="text-zinc-500 text-sm mb-2">
+                  <p className="text-zinc-300 text-sm mb-2">
                     Expectancy
                   </p>
 
@@ -213,7 +213,7 @@ export default function Leaderboard() {
 
                 <div className="bg-zinc-900 rounded-xl p-4">
 
-                  <p className="text-zinc-500 text-sm mb-2">
+                  <p className="text-zinc-300 text-sm mb-2">
                     Sharpe-Like
                   </p>
 
@@ -227,7 +227,7 @@ export default function Leaderboard() {
 
                 <div className="bg-zinc-900 rounded-xl p-4">
 
-                  <p className="text-zinc-500 text-sm mb-2">
+                  <p className="text-zinc-300 text-sm mb-2">
                     Rating
                   </p>
 

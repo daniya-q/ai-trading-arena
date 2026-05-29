@@ -37,7 +37,7 @@ export default function MultiAssetDashboard() {
                     }
                   </h3>
 
-                  <p className="text-zinc-500 text-sm">
+                  <p className="text-zinc-300 text-sm">
                     Live Market
                   </p>
 
@@ -62,7 +62,7 @@ export default function MultiAssetDashboard() {
 
                 <div>
 
-                  <p className="text-zinc-500 text-sm mb-1">
+                  <p className="text-zinc-300 text-sm mb-1">
                     Price
                   </p>
 
@@ -77,7 +77,7 @@ export default function MultiAssetDashboard() {
 
                 <div>
 
-                  <p className="text-zinc-500 text-sm mb-1">
+                  <p className="text-zinc-300 text-sm mb-1">
                     Daily Change
                   </p>
 
@@ -99,7 +99,7 @@ export default function MultiAssetDashboard() {
 
                 <div>
 
-                  <p className="text-zinc-500 text-sm mb-1">
+                  <p className="text-zinc-300 text-sm mb-1">
                     Volatility
                   </p>
 
@@ -120,7 +120,7 @@ export default function MultiAssetDashboard() {
 
                 <div>
 
-                  <p className="text-zinc-500 text-sm mb-1">
+                  <p className="text-zinc-300 text-sm mb-1">
                     Volume
                   </p>
 

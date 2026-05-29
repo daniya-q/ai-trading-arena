@@ -46,7 +46,7 @@ export default function PerformanceAttribution() {
 
         <div className="bg-black border border-zinc-800 rounded-2xl p-5">
 
-          <p className="text-zinc-500 mb-2">
+          <p className="text-zinc-300 mb-2">
             Total PnL
           </p>
 
@@ -67,7 +67,7 @@ export default function PerformanceAttribution() {
 
         <div className="bg-black border border-zinc-800 rounded-2xl p-5">
 
-          <p className="text-zinc-500 mb-2">
+          <p className="text-zinc-300 mb-2">
             Win Rate
           </p>
 
@@ -79,7 +79,7 @@ export default function PerformanceAttribution() {
 
         <div className="bg-black border border-zinc-800 rounded-2xl p-5">
 
-          <p className="text-zinc-500 mb-2">
+          <p className="text-zinc-300 mb-2">
             Closed Trades
           </p>
 
@@ -125,7 +125,7 @@ export default function PerformanceAttribution() {
 
                   </div>
 
-                  <p className="text-zinc-500">
+                  <p className="text-zinc-300">
                     {
                       record.marketRegime
                     }{" "}
@@ -164,7 +164,7 @@ export default function PerformanceAttribution() {
 
         {records.length ===
           0 && (
-          <div className="text-center text-zinc-500 py-10">
+          <div className="text-center text-zinc-300 py-10">
             No performance data yet
           </div>
         )}

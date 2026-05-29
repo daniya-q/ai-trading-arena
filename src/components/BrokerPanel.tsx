@@ -24,7 +24,7 @@ export default function BrokerPanel() {
             Broker Infrastructure
           </h2>
 
-          <p className="text-zinc-500">
+          <p className="text-zinc-300">
             Real brokerage AI execution system
           </p>
 

@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)",
+      "WebSearch",
+      "WebFetch(domain:community.upstox.com)",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:upstox.com)",
+      "Bash(curl:*)",
+      "Bash(taskkill:*)",
+      "Bash(cmd:*)",
+      "Bash(node:*)",
+      "Bash(python3:*)",
+      "Bash(grep:*)",
+      "Bash(npx:*)",
+      "Bash(rm:*)",
+      "Bash(railway version:*)",
+      "Bash(RAILWAY_API_TOKEN=\"389d467d-ec7b-4540-b590-c622db2dc24b\" railway list:*)"
+    ]
+  }
+}

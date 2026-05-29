@@ -41,7 +41,7 @@ export default function AIMemoryPanel() {
                     {bot}
                   </h3>
 
-                  <p className="text-zinc-500">
+                  <p className="text-zinc-300">
                     Adaptive Trading Intelligence
                   </p>
 
@@ -49,7 +49,7 @@ export default function AIMemoryPanel() {
 
                 <div className="text-right">
 
-                  <p className="text-zinc-500 text-sm mb-2">
+                  <p className="text-zinc-300 text-sm mb-2">
                     Confidence Score
                   </p>
 
@@ -105,7 +105,7 @@ export default function AIMemoryPanel() {
 
         {entries.length ===
           0 && (
-          <div className="text-center text-zinc-500 py-10">
+          <div className="text-center text-zinc-300 py-10">
             No AI memories yet
           </div>
         )}

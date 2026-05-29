@@ -136,7 +136,7 @@ export default function BtcArenaPage() {
 
       {/* ── Page title ─────────────────────────────────────── */}
       <div className="mb-6">
-        <p className="font-pixel text-[6px] text-orange-500/50 mb-2 tracking-widest">
+        <p className="font-pixel text-[13px] text-orange-500/50 mb-2 tracking-widest">
           BTC ARENA · SEASON 1
         </p>
         <h1 className="font-pixel text-lg text-white">
@@ -147,7 +147,7 @@ export default function BtcArenaPage() {
       {/* ── Error banner ───────────────────────────────────── */}
       {fetchError && (
         <div
-          className="mb-6 px-4 py-3 font-pixel text-[6px] leading-relaxed"
+          className="mb-6 px-4 py-3 font-pixel text-[13px] leading-relaxed"
           style={{
             background: "rgba(239,68,68,0.08)",
             border: "1px solid rgba(239,68,68,0.35)",
@@ -156,7 +156,7 @@ export default function BtcArenaPage() {
         >
           ▸ SUPABASE FETCH ERROR: {fetchError}
           <br />
-          <span className="text-zinc-600">
+          <span className="text-zinc-400">
             Check NEXT_PUBLIC_SUPABASE_URL · NEXT_PUBLIC_SUPABASE_ANON_KEY · RLS on btc_capital / btc_positions
           </span>
         </div>
@@ -195,7 +195,7 @@ export default function BtcArenaPage() {
               borderRight: i < 2 ? "1px solid rgba(255,255,255,0.05)" : undefined,
             }}
           >
-            <p className="font-pixel font-bold text-[1.176rem] text-zinc-500 mb-2 tracking-widest">
+            <p className="font-pixel font-bold text-[1.176rem] text-zinc-300 mb-2 tracking-widest">
               {item.label}
             </p>
             <p className="font-pixel font-bold text-[1.176rem]" style={{ color: item.color }}>
@@ -215,12 +215,12 @@ export default function BtcArenaPage() {
         }}
       >
         <div>
-          <p className="font-pixel font-bold text-[1.176rem] text-zinc-500 mb-2 tracking-widest">
+          <p className="font-pixel font-bold text-[1.176rem] text-zinc-300 mb-2 tracking-widest">
             BTC / USD · LIVE
           </p>
           <p
             className="font-pixel font-bold text-[1.176rem]"
-            style={{ color: btcPrice > 0 ? "#f97316" : "#3f3f46" }}
+            style={{ color: btcPrice > 0 ? "#f97316" : "#71717a" }}
           >
             {btcPrice > 0 ? `$${fmtUSD(btcPrice)}` : "CONNECTING..."}
           </p>
@@ -293,7 +293,7 @@ export default function BtcArenaPage() {
                   { label: "CHARGES",  value: `₹${fmtINR(totalCharges)}`,                       color: "#f59e0b" },
                 ].map((row) => (
                   <div key={row.label} className="flex justify-between items-baseline">
-                    <p className="font-pixel font-bold text-[1.176rem] text-zinc-600 tracking-widest">
+                    <p className="font-pixel font-bold text-[1.176rem] text-zinc-400 tracking-widest">
                       {row.label}
                     </p>
                     <p className="font-pixel font-bold text-[1.176rem]" style={{ color: row.color }}>
@@ -304,7 +304,7 @@ export default function BtcArenaPage() {
               </div>
 
               {/* Click hint */}
-              <p className="font-pixel text-[0.55rem] text-zinc-700 tracking-widest mt-1">
+              <p className="font-pixel text-[0.55rem] text-zinc-400 tracking-widest mt-1">
                 TAP FOR DETAILS →
               </p>
             </div>
@@ -314,7 +314,7 @@ export default function BtcArenaPage() {
 
       {/* ── Footer ─────────────────────────────────────────── */}
       {lastUpdated && (
-        <p className="font-pixel text-[5px] text-zinc-800 text-center mt-8">
+        <p className="font-pixel text-[13px] text-zinc-300 text-center mt-8">
           UPDATED {lastUpdated.toLocaleTimeString()} · AUTO-REFRESH 15s
         </p>
       )}

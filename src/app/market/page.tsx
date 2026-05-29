@@ -226,7 +226,7 @@ export default function MarketPage() {
           Market
         </h1>
 
-        <p className="text-zinc-500 text-lg">
+        <p className="text-zinc-300 text-lg">
           Live Indian market overview
         </p>
 
@@ -238,7 +238,7 @@ export default function MarketPage() {
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
 
-          <p className="text-zinc-500 mb-2">
+          <p className="text-zinc-300 mb-2">
             NIFTY 50
           </p>
 
@@ -250,7 +250,7 @@ export default function MarketPage() {
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
 
-          <p className="text-zinc-500 mb-2">
+          <p className="text-zinc-300 mb-2">
             BANKNIFTY
           </p>
 
@@ -264,7 +264,7 @@ export default function MarketPage() {
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
 
-          <p className="text-zinc-500 mb-2">
+          <p className="text-zinc-300 mb-2">
             SENSEX
           </p>
 
@@ -304,7 +304,7 @@ export default function MarketPage() {
 
         {!marketStatus.isOpen &&
           marketStatus.timeUntilOpen && (
-            <span className="text-zinc-500 text-sm">
+            <span className="text-zinc-300 text-sm">
               Opens in{" "}
               {marketStatus.timeUntilOpen}
             </span>
@@ -334,7 +334,7 @@ export default function MarketPage() {
 
               {expiries.nifty.length === 0 ? (
 
-                <div className="text-zinc-600 text-sm">
+                <div className="text-zinc-400 text-sm">
                   Loading...
                 </div>
 
@@ -352,7 +352,7 @@ export default function MarketPage() {
                       </span>
 
                       <span
-                        className={`text-xs font-semibold px-2 py-0.5 rounded-md ${
+                        className={`text-sm font-semibold px-2 py-0.5 rounded-md ${
                           dte <= 1
                             ? "bg-red-500/20 text-red-400"
                             : dte <= 3
@@ -387,7 +387,7 @@ export default function MarketPage() {
 
               {expiries.sensex.length === 0 ? (
 
-                <div className="text-zinc-600 text-sm">
+                <div className="text-zinc-400 text-sm">
                   Loading...
                 </div>
 
@@ -405,7 +405,7 @@ export default function MarketPage() {
                       </span>
 
                       <span
-                        className={`text-xs font-semibold px-2 py-0.5 rounded-md ${
+                        className={`text-sm font-semibold px-2 py-0.5 rounded-md ${
                           dte <= 1
                             ? "bg-red-500/20 text-red-400"
                             : dte <= 3
@@ -440,7 +440,7 @@ export default function MarketPage() {
 
               {expiries.banknifty.length === 0 ? (
 
-                <div className="text-zinc-600 text-sm">
+                <div className="text-zinc-400 text-sm">
                   Loading...
                 </div>
 
@@ -458,7 +458,7 @@ export default function MarketPage() {
                       </span>
 
                       <span
-                        className={`text-xs font-semibold px-2 py-0.5 rounded-md ${
+                        className={`text-sm font-semibold px-2 py-0.5 rounded-md ${
                           dte <= 5
                             ? "bg-yellow-500/20 text-yellow-400"
                             : "bg-zinc-800 text-zinc-400"
@@ -510,7 +510,7 @@ export default function MarketPage() {
 
           ) : stocks.length === 0 ? (
 
-            <div className="p-6 text-zinc-600 text-sm">
+            <div className="p-6 text-zinc-400 text-sm">
               No stock data available
             </div>
 
@@ -520,7 +520,7 @@ export default function MarketPage() {
 
               {/* Table header */}
 
-              <div className="grid grid-cols-3 px-6 py-3 border-b border-zinc-800 text-xs text-zinc-500 font-semibold uppercase tracking-wider">
+              <div className="grid grid-cols-3 px-6 py-3 border-b border-zinc-800 text-sm text-zinc-300 font-semibold uppercase tracking-wider">
 
                 <span>Symbol</span>
 
