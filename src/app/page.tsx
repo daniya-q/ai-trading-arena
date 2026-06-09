@@ -255,16 +255,17 @@ function StrategyCard({
         display: "flex",
         flexDirection: "column",
         cursor: "pointer",
+        aspectRatio: "1",
       }}
       onMouseEnter={e => (e.currentTarget.style.background = "#0f1420")}
       onMouseLeave={e => (e.currentTarget.style.background = "#0B0E17")}
     >
       {/* Header */}
-      <div style={{ padding: "12px 14px 10px", borderBottom: "1px solid #111827" }}>
+      <div style={{ padding: "20px 20px 16px", borderBottom: "1px solid #111827", flex: 1 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: accent }}>{strategy.name}</div>
-            <div style={{ fontSize: 10, color: "#4b5563", marginTop: 2 }}>{strategy.description}</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: accent }}>{strategy.name}</div>
+            <div style={{ fontSize: 11, color: "#4b5563", marginTop: 4, lineHeight: 1.5 }}>{strategy.description}</div>
           </div>
           <div style={{ fontSize: 9, color: "#374151", letterSpacing: "0.06em", marginTop: 2, whiteSpace: "nowrap" }}>
             VIEW →
@@ -283,12 +284,12 @@ function StrategyCard({
           { label: "LIFETIME",  value: String(life),        color: "#9ca3af" },
         ].map((s, i) => (
           <div key={s.label} style={{
-            padding: "8px 10px",
+            padding: "12px 14px",
             borderRight: i % 3 < 2 ? "1px solid #111827" : undefined,
             borderTop:   i >= 3    ? "1px solid #111827" : undefined,
           }}>
-            <div style={{ fontSize: 8, color: "#374151", letterSpacing: "0.1em", marginBottom: 3 }}>{s.label}</div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
+            <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 5 }}>{s.label}</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
           </div>
         ))}
       </div>
@@ -737,7 +738,7 @@ export default function DashboardPage() {
         <div style={{
           display: "grid",
           gridTemplateColumns: "repeat(3, 1fr)",
-          gap: 1,
+          gap: 16,
         }}>
           {active.map(s => (
             <StrategyCard
@@ -755,8 +756,8 @@ export default function DashboardPage() {
         <div style={{
           display: "grid",
           gridTemplateColumns: `repeat(${Math.min(locked.length, 4)}, 1fr)`,
-          gap: 1,
-          marginTop: 1,
+          gap: 16,
+          marginTop: 16,
         }}>
           {locked.map(s => <LockedCard key={s.id} strategy={s} />)}
         </div>

@@ -29,13 +29,13 @@ function NavItem({
       <div
         style={{
           padding: "10px 12px",
-          fontSize: 12,
+          fontSize: 13,
           fontWeight: 600,
-          letterSpacing: "0.08em",
+          letterSpacing: "0.06em",
           color: isActive
             ? (accent || "#ffffff")
-            : (accent ? `${accent}70` : "#6b7280"),
-          background: isActive ? "rgba(255,255,255,0.04)" : "transparent",
+            : (accent ? `${accent}cc` : "#d1d5db"),
+          background: isActive ? "rgba(255,255,255,0.05)" : "transparent",
           borderLeft: `2px solid ${isActive ? (accent || "#ffffff") : "transparent"}`,
           paddingLeft: isActive ? 10 : 12,
           transition: "color 0.15s",
@@ -68,10 +68,10 @@ export default function Sidebar() {
           borderBottom: "1px solid rgba(255,255,255,0.05)",
         }}
       >
-        <div style={{ fontSize: 10, color: "#374151", letterSpacing: "0.15em", marginBottom: 6 }}>
+        <div style={{ fontSize: 11, color: "#6b7280", letterSpacing: "0.15em", marginBottom: 6 }}>
           SEASON 1
         </div>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "#ffffff", lineHeight: 1.4 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "#ffffff", lineHeight: 1.4 }}>
           AI TRADING
           <br />
           ARENA
@@ -80,7 +80,7 @@ export default function Sidebar() {
 
       {/* Main nav */}
       <div style={{ padding: "16px 4px 8px" }}>
-        <div style={{ fontSize: 10, color: "#374151", letterSpacing: "0.15em", padding: "0 12px", marginBottom: 6 }}>
+        <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.15em", padding: "0 12px", marginBottom: 6 }}>
           STRATEGIES
         </div>
         {NAV_MAIN.map((item) => (
@@ -90,7 +90,7 @@ export default function Sidebar() {
 
       {/* Crypto nav */}
       <div style={{ padding: "8px 4px" }}>
-        <div style={{ fontSize: 10, color: "#374151", letterSpacing: "0.15em", padding: "0 12px", marginBottom: 6 }}>
+        <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.15em", padding: "0 12px", marginBottom: 6 }}>
           CRYPTO
         </div>
         {NAV_CRYPTO.map((item) => (
@@ -111,7 +111,7 @@ export default function Sidebar() {
           padding: "16px",
           borderTop: "1px solid rgba(255,255,255,0.04)",
           fontSize: 10,
-          color: "#374151",
+          color: "#6b7280",
           lineHeight: 1.8,
           letterSpacing: "0.05em",
         }}
