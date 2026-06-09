@@ -1,98 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --background: #050505;
+  --background: #0A0D14;
   --foreground: #ffffff;
 }
 
-html {
-  scroll-behavior: smooth;
-}
-
-html,
-body {
+html, body {
   margin: 0;
   padding: 0;
-  background: #050508;
-  color: var(--foreground);
-  font-family: 'Inter', sans-serif;
+  background: #0A0D14;
+  color: #ffffff;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
   overflow-x: hidden;
-}
-
-p, span, div, td, th, li {
-  font-size: inherit;
-}
-
-/* Base utility sizes */
-.text-xs   { font-size: 12px !important; }
-.text-sm   { font-size: 13px !important; }
-.text-base { font-size: 14px !important; }
-
-/* Lighten grey shades site-wide */
-.text-zinc-800 { color: #a1a1aa !important; }
-.text-zinc-700 { color: #a1a1aa !important; }
-.text-zinc-600 { color: #a1a1aa !important; }
-.text-zinc-500 { color: #d4d4d8 !important; }
-.text-zinc-400 { color: #e4e4e7 !important; }
-.text-gray-700 { color: #a1a1aa !important; }
-.text-gray-600 { color: #a1a1aa !important; }
-.text-gray-500 { color: #d4d4d8 !important; }
-
-.font-pixel {
-  font-family: 'Inter', sans-serif;
-  font-size: 13px;
-  line-height: 1.6;
-  letter-spacing: -0.2px;
-}
-
-.font-mono {
-  font-family: 'JetBrains Mono', monospace;
-}
-
-/* ── Space theme: glass card overrides ────────────────────── */
-
-/* Page wrappers (bg-black) become fully transparent so space shows */
-.bg-black {
-  background: transparent !important;
-}
-
-/* Cards become glass panels */
-.bg-zinc-900 {
-  background: rgba(10, 10, 22, 0.72) !important;
-  backdrop-filter: blur(14px) !important;
-  -webkit-backdrop-filter: blur(14px) !important;
-}
-
-.bg-zinc-950 {
-  background: rgba(5, 5, 16, 0.78) !important;
-  backdrop-filter: blur(14px) !important;
-  -webkit-backdrop-filter: blur(14px) !important;
-}
-
-/* Card borders become subtle white */
-.border-zinc-800 {
-  border-color: rgba(255, 255, 255, 0.08) !important;
-}
-
-.border-zinc-700 {
-  border-color: rgba(255, 255, 255, 0.1) !important;
-}
-
-/* Table rows */
-.bg-zinc-800 {
-  background: rgba(15, 15, 30, 0.6) !important;
-}
-
-body {
-  background:
-    radial-gradient(circle at top left, #111827 0%, #050505 40%),
-    #050505;
-
-  color: white;
-
-  min-height: 100vh;
-
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -101,134 +21,21 @@ body {
   box-sizing: border-box;
 }
 
-button {
-  transition:
-    all 0.2s ease-in-out;
-}
-
 a {
   text-decoration: none;
   color: inherit;
 }
 
-::selection {
-  background: #22c55e;
-  color: black;
+button {
+  cursor: pointer;
 }
 
-.glass-card {
-  background: rgba(24, 24, 27, 0.7);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(63, 63, 70, 0.4);
+/* Pulse animation for open trade status indicators */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
 }
 
-.hover-lift {
-  transition:
-    transform 0.2s ease,
-    box-shadow 0.2s ease;
-}
-
-.hover-lift:hover {
-  transform: translateY(-4px);
-
-  box-shadow:
-    0 10px 30px rgba(0, 0, 0, 0.35);
-}
-
-.fade-in {
-  animation: fadeIn 0.6s ease forwards;
-}
-
-.slide-up {
-  animation: slideUp 0.5s ease forwards;
-}
-
-.pulse-green {
-  animation: pulseGreen 2s infinite;
-}
-
-@keyframes ticker {
-  0% {
-    transform: translateX(100%);
-  }
-
-  100% {
-    transform: translateX(-100%);
-  }
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes slideUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes pulseGreen {
-  0% {
-    box-shadow: 0 0 0 rgba(34, 197, 94, 0.5);
-  }
-
-  50% {
-    box-shadow: 0 0 20px rgba(34, 197, 94, 0.5);
-  }
-
-  100% {
-    box-shadow: 0 0 0 rgba(34, 197, 94, 0.5);
-  }
-}
-
-/* ── Space / planet animations ───────────────────────────── */
-
-@keyframes planetGlow {
-  0%, 100% {
-    filter: brightness(1) saturate(1);
-  }
-  50% {
-    filter: brightness(1.3) saturate(1.15);
-  }
-}
-
-@keyframes slowSpin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes scaleIn {
-  from {
-    opacity: 0;
-    transform: scale(0.88);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-@keyframes floatUp {
-  0%, 100% {
-    transform: translateY(0px);
-  }
-  50% {
-    transform: translateY(-6px);
-  }
+.pulse {
+  animation: pulse 2s infinite;
 }

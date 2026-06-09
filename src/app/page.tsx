@@ -1,952 +1,378 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-
-import Link from "next/link";
-
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-} from "recharts";
-
+import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase/client";
 
-import { bots } from "@/data/bots";
+// ── Types ──────────────────────────────────────────────────────
 
-import { useCapitalStore } from "@/store/capitalStore";
-
-import { usePositionStore } from "@/store/positionStore";
-
-import { useAIMemoryStore } from "@/store/aiMemoryStore";
-
-import { startLiveAITrading } from "@/lib/agents/liveTradingAgent";
-
-import {
-  startMarketWebSocket,
-  startRestPolling,
-} from "@/lib/upstox/startMarketWebSocket";
-
-// ── Constants ─────────────────────────────────────────────────
-
-const INITIAL_CAPITAL = 400000;
-
-const PER_BOT_CAPITAL = 100000;
-
-const BOT_CONFIG: Record<string, { name: string; color: string }> = {
-  gpt: { name: "GPT", color: "#00A67E" },
-  claude: { name: "Claude", color: "#CC785C" },
-  gemini: { name: "Gemini", color: "#4285F4" },
-  groq: { name: "Groq", color: "#F55036" },
+type Strategy = {
+  id: string;
+  name: string;
+  description: string;
+  status: "active" | "paused" | "placeholder";
+  slot_number: number;
 };
 
-// Solar system positions (top + left percentages, centered via translateX)
-const PLANET_POS: Record<
-  string,
-  { top?: number; bottom?: number; left: string }
-> = {
-  gpt: { top: 60, left: "16%" },
-  claude: { top: 60, left: "84%" },
-  gemini: { top: 320, left: "16%" },
-  groq: { top: 320, left: "84%" },
+type Capital = {
+  strategy_id: string;
+  allocated_capital: number;
+  current_value: number;
+  total_pnl: number;
+  win_rate: number;
+  sharpe_ratio: number;
+  today_trades: number;
+  lifetime_trades: number;
 };
 
-// ── Types ─────────────────────────────────────────────────────
-
-type BotCardData = {
-  botId: string;
-  botName: string;
-  color: string;
-  rank: number;
-  allocatedCapital: number;
+type Position = {
+  id: string;
+  strategy_id: string;
+  symbol: string;
+  type: string;
+  entry_price: number;
+  current_price: number;
+  exit_price: number | null;
+  quantity: number;
   pnl: number;
-  winRate: number;
-  sharpeLike: number;
-  totalTrades: number;
-  openSymbol: string | null;
-  carrySymbol: string | null;
+  status: "OPEN" | "CLOSED";
+  opened_at: string;
+  closed_at: string | null;
+  exit_reason: string | null;
 };
 
-// ── Color helpers ──────────────────────────────────────────────
+// ── Formatters ─────────────────────────────────────────────────
 
-function hexToRgb(hex: string) {
-  const r = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return r
-    ? {
-        r: parseInt(r[1], 16),
-        g: parseInt(r[2], 16),
-        b: parseInt(r[3], 16),
-      }
-    : { r: 255, g: 255, b: 255 };
+function fmtINR(n: number): string {
+  return Math.abs(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
 
-function lighten(hex: string, amt = 55): string {
-  const { r, g, b } = hexToRgb(hex);
-  return `rgb(${Math.min(255, r + amt)},${Math.min(255, g + amt)},${Math.min(255, b + amt)})`;
+function pnlStr(n: number): string {
+  return `${n >= 0 ? "+" : "-"}₹${fmtINR(n)}`;
 }
 
-function darken(hex: string, amt = 45): string {
-  const { r, g, b } = hexToRgb(hex);
-  return `rgb(${Math.max(0, r - amt)},${Math.max(0, g - amt)},${Math.max(0, b - amt)})`;
+function pnlColor(n: number): string {
+  if (n === 0) return "#6b7280";
+  return n > 0 ? "#22c55e" : "#ef4444";
 }
 
-// ── IST helpers ────────────────────────────────────────────────
-
-function getISTDate(): Date {
-  const now = new Date();
-  return new Date(
-    now.getTime() +
-      now.getTimezoneOffset() * 60000 +
-      5.5 * 60 * 60 * 1000
-  );
-}
-
-function getTodayMarketOpenUTC(): Date {
-  const ist = getISTDate();
-  const o = new Date(ist);
-  o.setHours(9, 15, 0, 0);
-  return new Date(o.getTime() - 5.5 * 60 * 60 * 1000);
-}
-
-function getMarketStatus(): {
-  isOpen: boolean;
-  timeUntilOpen: string;
-} {
-  const ist = getISTDate();
-  const day = ist.getDay();
-  const total = ist.getHours() * 60 + ist.getMinutes();
-  const open = 9 * 60 + 15;
-  const close = 15 * 60 + 30;
-  const weekday = day >= 1 && day <= 5;
-  const isOpen = weekday && total >= open && total < close;
-
-  if (isOpen) return { isOpen: true, timeUntilOpen: "" };
-
-  let mins = 0;
-  if (weekday && total < open) {
-    mins = open - total;
-  } else {
-    const ahead =
-      day === 5 && total >= close ? 3 : day === 6 ? 2 : 1;
-    mins =
-      24 * 60 - total + (ahead - 1) * 24 * 60 + open;
-  }
-
-  const d = Math.floor(mins / (24 * 60));
-  const h = Math.floor((mins % (24 * 60)) / 60);
-  const m = mins % 60;
-  let s = "";
-  if (d > 0) s += `${d}d `;
-  if (h > 0 || d > 0) s += `${h}h `;
-  s += `${m}m`;
-  return { isOpen: false, timeUntilOpen: s.trim() };
-}
-
-// ── Data fetcher ───────────────────────────────────────────────
-
-async function fetchBotCardData(): Promise<BotCardData[]> {
-  const todayOpen = getTodayMarketOpenUTC();
-
-  const [capRes, openRes, allRes] = await Promise.all([
-    supabase.from("capital").select("*"),
-    supabase
-      .from("positions")
-      .select("bot_id, symbol, opened_at")
-      .eq("status", "OPEN"),
-    supabase.from("positions").select("bot_id"),
-  ]);
-
-  const counts: Record<string, number> = {};
-  (allRes.data || []).forEach((r) => {
-    counts[r.bot_id] = (counts[r.bot_id] || 0) + 1;
+function fmtTime(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
   });
-
-  const openPos = openRes.data || [];
-  const capital = capRes.data || [];
-
-  const data = bots.map((bot) => {
-    const cap = capital.find((c) => c.bot_id === bot.id);
-    const botOpen = openPos.filter((p) => p.bot_id === bot.id);
-    const carry = botOpen.find(
-      (p) => new Date(p.opened_at) < todayOpen
-    );
-    const cfg = BOT_CONFIG[bot.id] ?? {
-      name: bot.id,
-      color: "#fff",
-    };
-    return {
-      botId: bot.id,
-      botName: cfg.name,
-      color: cfg.color,
-      rank: 0,
-      allocatedCapital:
-        Number(cap?.allocated_capital) || PER_BOT_CAPITAL,
-      pnl: Number(cap?.pnl) || 0,
-      winRate: Number(cap?.win_rate) || 0,
-      sharpeLike: Number(cap?.sharpe_like) || 0,
-      totalTrades: counts[bot.id] || 0,
-      openSymbol: botOpen[0]?.symbol ?? null,
-      carrySymbol: carry?.symbol ?? null,
-    };
-  });
-
-  data.sort((a, b) => b.pnl - a.pnl);
-  data.forEach((d, i) => {
-    d.rank = i + 1;
-  });
-  return data;
 }
 
-// ── Planet node ────────────────────────────────────────────────
+function fmtPct(n: number): string {
+  return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+}
 
-function PlanetNode({
-  data,
-  pos,
-  onClick,
-}: {
-  data: BotCardData;
-  pos: { top?: number; bottom?: number; left: string };
-  onClick: () => void;
-}) {
-  const { color, botName, pnl } = data;
-  const posStyle: React.CSSProperties = {
-    position: "absolute",
-    left: pos.left,
-    transform: "translateX(-50%)",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    cursor: "pointer",
-    zIndex: 10,
-  };
-  if (pos.top !== undefined) posStyle.top = pos.top;
-  if (pos.bottom !== undefined) posStyle.bottom = pos.bottom;
+// ── LockedCard ─────────────────────────────────────────────────
 
+function LockedCard({ strategy }: { strategy: Strategy }) {
   return (
-    <div style={posStyle} onClick={onClick}>
-
-      {/* P&L floating above */}
-      <p
-        className="font-pixel text-[13px] mb-2"
-        style={{
-          color: pnl >= 0 ? "#22c55e" : "#ef4444",
-          animation: "floatUp 3s ease-in-out infinite",
-          textShadow:
-            pnl >= 0
-              ? "0 0 12px rgba(34,197,94,0.6)"
-              : "0 0 12px rgba(239,68,68,0.6)",
-        }}
-      >
-        {pnl >= 0 ? "+" : ""}₹
-        {Math.abs(pnl).toLocaleString("en-IN")}
-      </p>
-
-      {/* Orbit ring + planet */}
-      <div
-        style={{
-          position: "relative",
-          width: 180,
-          height: 180,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-
-        {/* Spinning orbit ring */}
-        <div
-          style={{
-            position: "absolute",
-            width: 180,
-            height: 180,
-            borderRadius: "50%",
-            border: `1px dashed ${color}50`,
-            animation: "slowSpin 20s linear infinite",
-          }}
-        />
-
-        {/* Atmospheric glow (static, behind planet) */}
-        <div
-          style={{
-            position: "absolute",
-            width: 160,
-            height: 160,
-            borderRadius: "50%",
-            background: `radial-gradient(circle, ${color}22 0%, transparent 70%)`,
-            filter: "blur(18px)",
-          }}
-        />
-
-        {/* Planet */}
-        <div
-          className="group-hover:scale-110"
-          style={{
-            width: 120,
-            height: 120,
-            borderRadius: "50%",
-            background: `radial-gradient(circle at 35% 32%, ${lighten(color)}, ${color} 52%, ${darken(color)})`,
-            boxShadow: `0 0 28px ${color}70, 0 0 56px ${color}28`,
-            animation: "planetGlow 4s ease-in-out infinite",
-            transition: "transform 0.25s ease",
-            zIndex: 2,
-          }}
-        >
-          {/* Surface shading overlay */}
-          <div
-            style={{
-              width: "100%",
-              height: "100%",
-              borderRadius: "50%",
-              background: `radial-gradient(circle at 68% 68%, ${darken(color, 60)}60 0%, transparent 55%)`,
-            }}
-          />
-        </div>
-
+    <div
+      style={{
+        background: "#080B12",
+        border: "1px solid #0f1520",
+        padding: "20px 16px",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        minHeight: 90,
+        gap: 6,
+      }}
+    >
+      <div style={{ fontSize: 16, color: "#1a2030" }}>⬡</div>
+      <div style={{ fontSize: 10, fontWeight: 700, color: "#1a2030", letterSpacing: "0.12em" }}>
+        SLOT {strategy.slot_number}
       </div>
-
-      {/* Bot name below */}
-      <p
-        className="font-pixel text-[13px] mt-3"
-        style={{ color, textShadow: `0 0 12px ${color}80` }}
-      >
-        {botName}
-      </p>
-
-      {/* Rank */}
-      <p
-        className="font-pixel text-[13px] mt-1 text-zinc-400"
-      >
-        #{data.rank}
-      </p>
-
+      <div style={{ fontSize: 10, color: "#1a2030" }}>COMING SOON</div>
     </div>
   );
 }
 
-// ── Planet expanded overlay ────────────────────────────────────
+// ── TradeRow ───────────────────────────────────────────────────
 
-function PlanetOverlay({
-  data,
-  onClose,
+function TradeRow({ pos }: { pos: Position }) {
+  const isOpen     = pos.status === "OPEN";
+  const dispPrice  = isOpen ? pos.current_price : (pos.exit_price ?? pos.current_price);
+  const pnlVal     = pos.pnl ?? 0;
+
+  return (
+    <tr style={{ borderTop: "1px solid #0f1520", background: isOpen ? "rgba(245,213,71,0.015)" : "transparent" }}>
+      <td style={{ padding: "6px 8px", fontSize: 11, color: "#c9d1d9", whiteSpace: "nowrap" }}>
+        {pos.symbol}
+      </td>
+      <td style={{ padding: "6px 6px", fontSize: 11, fontWeight: 700, color: pos.type === "CE" ? "#22c55e" : "#ef4444" }}>
+        {pos.type}
+      </td>
+      <td style={{ padding: "6px 6px", fontSize: 11, color: "#6b7280", fontFamily: "monospace" }}>
+        ₹{(pos.entry_price ?? 0).toFixed(2)}
+      </td>
+      <td style={{ padding: "6px 6px", fontSize: 11, fontFamily: "monospace", color: isOpen ? "#f5d547" : "#4b5563" }}>
+        ₹{(dispPrice ?? 0).toFixed(2)}
+      </td>
+      <td style={{ padding: "6px 6px", fontSize: 11, color: "#6b7280" }}>
+        {pos.quantity}
+      </td>
+      <td style={{ padding: "6px 6px", fontSize: 11, fontFamily: "monospace", fontWeight: 600, color: isOpen ? "#f5d547" : pnlColor(pnlVal) }}>
+        {pnlStr(pnlVal)}
+      </td>
+      <td style={{ padding: "6px 6px", fontSize: 10, whiteSpace: "nowrap" }}>
+        {isOpen ? (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#f5d547" }}>
+            <span
+              className="pulse"
+              style={{ display: "inline-block", width: 5, height: 5, borderRadius: "50%", background: "#f5d547" }}
+            />
+            Open
+          </span>
+        ) : (
+          <span style={{ color: "#374151" }}>Closed</span>
+        )}
+      </td>
+      <td style={{ padding: "6px 6px", fontSize: 10, color: "#374151" }}>
+        {fmtTime(pos.opened_at)}
+      </td>
+    </tr>
+  );
+}
+
+// ── StrategyCard ───────────────────────────────────────────────
+
+function StrategyCard({
+  strategy,
+  capital,
+  positions,
 }: {
-  data: BotCardData;
-  onClose: () => void;
+  strategy: Strategy;
+  capital: Capital | undefined;
+  positions: Position[];
 }) {
-  const overlayRef = useRef<HTMLDivElement>(null);
-  const { color, botName, pnl, winRate, totalTrades,
-          allocatedCapital, openSymbol, carrySymbol } = data;
+  const pnl    = capital?.total_pnl ?? 0;
+  const retPct = (pnl / 100000) * 100;
+  const sharpe = capital?.sharpe_ratio ?? 0;
+  const today  = capital?.today_trades ?? 0;
+  const life   = capital?.lifetime_trades ?? 0;
 
-  const pctReturn = ((pnl / PER_BOT_CAPITAL) * 100).toFixed(2);
-  const capitalPct = (allocatedCapital / PER_BOT_CAPITAL) * 100;
-  const barColor = allocatedCapital >= PER_BOT_CAPITAL ? "#22c55e" : "#ef4444";
+  const recentPos = positions.slice(0, 30);
 
   return (
     <div
-      ref={overlayRef}
-      onClick={(e) => {
-        if (e.target === overlayRef.current) onClose();
-      }}
       style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 100,
+        background: "#0B0E17",
+        border: "1px solid #111827",
         display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "rgba(0,0,0,0.65)",
-        backdropFilter: "blur(6px)",
-        WebkitBackdropFilter: "blur(6px)",
+        flexDirection: "column",
+        overflow: "hidden",
       }}
     >
-      <div
-        style={{
-          position: "relative",
-          maxWidth: 440,
-          width: "90%",
-          padding: "28px",
-          background: "rgba(8,8,20,0.96)",
-          border: `2px solid ${color}`,
-          boxShadow: `0 0 60px ${color}30`,
-          animation: "scaleIn 0.2s ease-out",
-        }}
-      >
+      {/* Header */}
+      <div style={{ padding: "12px 14px 10px", borderBottom: "1px solid #111827" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#ffffff" }}>{strategy.name}</div>
+            <div style={{ fontSize: 10, color: "#374151", marginTop: 2 }}>{strategy.description}</div>
+          </div>
+          <div style={{ fontSize: 9, color: "#1f2937", letterSpacing: "0.1em" }}>#{strategy.slot_number}</div>
+        </div>
+      </div>
 
-        {/* Corner squares */}
+      {/* Stats grid */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderBottom: "1px solid #111827" }}>
         {[
-          { top: -4, left: -4 },
-          { top: -4, right: -4 },
-          { bottom: -4, left: -4 },
-          { bottom: -4, right: -4 },
-        ].map((pos, i) => (
+          { label: "CAPITAL",  value: "₹1,00,000",          color: "#6b7280" },
+          { label: "TOTAL PNL",value: pnlStr(pnl),           color: pnlColor(pnl) },
+          { label: "RETURN",   value: fmtPct(retPct),        color: pnlColor(retPct) },
+          { label: "SHARPE",   value: sharpe.toFixed(2),     color: "#6b7280" },
+          { label: "TODAY",    value: String(today),          color: "#6b7280" },
+          { label: "LIFETIME", value: String(life),           color: "#6b7280" },
+        ].map((s, i) => (
           <div
-            key={i}
+            key={s.label}
             style={{
-              position: "absolute",
-              width: 8,
-              height: 8,
-              backgroundColor: color,
-              ...pos,
+              padding: "8px 10px",
+              borderRight: i % 3 < 2 ? "1px solid #111827" : undefined,
+              borderTop: i >= 3 ? "1px solid #111827" : undefined,
             }}
-          />
+          >
+            <div style={{ fontSize: 8, color: "#1f2937", letterSpacing: "0.1em", marginBottom: 3 }}>{s.label}</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
+          </div>
         ))}
+      </div>
 
-        {/* Close */}
-        <button
-          onClick={onClose}
-          className="font-pixel text-[13px] text-zinc-300 hover:text-white transition-colors"
-          style={{ position: "absolute", top: 12, right: 14 }}
-        >
-          [X]
-        </button>
-
-        {/* Bot name */}
-        <h2
-          className="font-pixel text-sm mb-6"
-          style={{
-            color,
-            textShadow: `0 0 20px ${color}80`,
-          }}
-        >
-          {botName}
-        </h2>
-
-        {/* Stats grid */}
-        <div className="grid grid-cols-2 gap-x-8 gap-y-5 mb-6">
-
-          <div>
-            <p className="font-pixel text-[13px] text-zinc-300 mb-1">
-              P&amp;L
-            </p>
-            <p
-              className="font-pixel text-[13px]"
-              style={{ color: pnl >= 0 ? "#22c55e" : "#ef4444" }}
-            >
-              {pnl >= 0 ? "+" : ""}₹
-              {Math.abs(pnl).toLocaleString("en-IN")}
-            </p>
+      {/* Trade log */}
+      <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: 240, flex: 1 }}>
+        {recentPos.length === 0 ? (
+          <div style={{ padding: "18px 14px", fontSize: 11, color: "#1f2937", textAlign: "center" }}>
+            No trades yet
           </div>
-
-          <div>
-            <p className="font-pixel text-[13px] text-zinc-300 mb-1">
-              RETURN
-            </p>
-            <p
-              className="font-pixel text-[13px]"
-              style={{
-                color:
-                  Number(pctReturn) >= 0 ? "#22c55e" : "#ef4444",
-              }}
-            >
-              {Number(pctReturn) >= 0 ? "+" : ""}
-              {pctReturn}%
-            </p>
-          </div>
-
-          <div>
-            <p className="font-pixel text-[13px] text-zinc-300 mb-1">
-              TRADES
-            </p>
-            <p className="font-pixel text-[13px] text-white">
-              {totalTrades}
-            </p>
-          </div>
-
-          <div>
-            <p className="font-pixel text-[13px] text-zinc-300 mb-1">
-              WIN RATE
-            </p>
-            <p className="font-pixel text-[13px] text-white">
-              {(winRate * 100).toFixed(1)}%
-            </p>
-          </div>
-
-          <div>
-            <p className="font-pixel text-[13px] text-zinc-300 mb-1">
-              OPEN
-            </p>
-            <p
-              className="font-pixel text-[13px]"
-              style={{
-                color: openSymbol ? color : "#a1a1aa",
-              }}
-            >
-              {openSymbol ?? "NONE"}
-            </p>
-          </div>
-
-          <div>
-            <p className="font-pixel text-[13px] text-zinc-300 mb-1">
-              CARRY
-            </p>
-            <p
-              className="font-pixel text-[13px]"
-              style={{
-                color: carrySymbol ? "#f59e0b" : "#a1a1aa",
-              }}
-            >
-              {carrySymbol ?? "NONE"}
-            </p>
-          </div>
-
-        </div>
-
-        {/* Capital bar */}
-        <div className="mb-6">
-          <div className="flex justify-between mb-1">
-            <p className="font-pixel text-[13px] text-zinc-300">
-              CAPITAL
-            </p>
-            <p
-              className="font-pixel text-[13px]"
-              style={{ color: barColor }}
-            >
-              {capitalPct.toFixed(0)}%
-            </p>
-          </div>
-          <div
-            className="w-full h-2"
-            style={{ background: "rgba(255,255,255,0.06)" }}
-          >
-            <div
-              className="h-full transition-all"
-              style={{
-                width: `${Math.min(capitalPct, 100)}%`,
-                backgroundColor: barColor,
-              }}
-            />
-          </div>
-        </div>
-
-        {/* View full details */}
-        <Link href="/bots">
-          <p
-            className="font-pixel text-[13px] hover:underline transition-colors"
-            style={{ color }}
-          >
-            VIEW FULL DETAILS →
-          </p>
-        </Link>
-
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
+            <thead>
+              <tr style={{ background: "#070A11", position: "sticky", top: 0 }}>
+                {["Symbol", "Type", "Entry", "Cur/Exit", "Qty", "PnL", "Status", "Time"].map((h) => (
+                  <th
+                    key={h}
+                    style={{
+                      padding: "5px 6px 5px 8px",
+                      fontSize: 9,
+                      fontWeight: 600,
+                      color: "#1f2937",
+                      letterSpacing: "0.08em",
+                      textAlign: "left",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {recentPos.map((pos) => (
+                <TradeRow key={pos.id} pos={pos} />
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
 }
 
-// ── Page ──────────────────────────────────────────────────────
+// ── Dashboard Page ─────────────────────────────────────────────
 
-export default function Home() {
+export default function DashboardPage() {
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [capitals,   setCapitals]   = useState<Capital[]>([]);
+  const [positions,  setPositions]  = useState<Position[]>([]);
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [error,      setError]      = useState<string | null>(null);
 
-  const { capitals } = useCapitalStore();
+  const refresh = useCallback(async () => {
+    const [sRes, cRes, pRes] = await Promise.all([
+      supabase.from("strategies").select("*").order("slot_number"),
+      supabase.from("strategy_capital").select("*"),
+      supabase
+        .from("strategy_positions")
+        .select("*")
+        .order("opened_at", { ascending: false })
+        .limit(300),
+    ]);
 
-  const [botCards, setBotCards] =
-    useState<BotCardData[]>([]);
+    if (sRes.error || cRes.error || pRes.error) {
+      const msg =
+        sRes.error?.message ?? cRes.error?.message ?? pRes.error?.message ?? "Unknown";
+      setError(msg);
+      return;
+    }
 
-  const [selected, setSelected] =
-    useState<string | null>(null);
-
-  const [equityData, setEquityData] =
-    useState<{ t: string; v: number }[]>([]);
-
-  const [marketStatus, setMarketStatus] =
-    useState(getMarketStatus);
-
-  const [mounted, setMounted] = useState(false);
-
-  const totalCapital = capitals.reduce(
-    (s, b) => s + b.allocatedCapital,
-    0
-  );
-  const totalPnL = capitals.reduce((s, b) => s + b.pnl, 0);
-  const totalPnLPct = (
-    (totalPnL / INITIAL_CAPITAL) *
-    100
-  ).toFixed(2);
-
-  async function refreshBotCards() {
-    const data = await fetchBotCardData();
-    setBotCards(data);
-  }
-
-  useEffect(() => {
-    setMounted(true);
-
-    Promise.all([
-      useCapitalStore
-        .getState()
-        .initializeBots(bots.map((b) => b.id)),
-      usePositionStore.getState().loadFromSupabase(),
-      useAIMemoryStore.getState().loadFromSupabase(),
-    ]).then(() => startLiveAITrading());
-
-    startMarketWebSocket();
-    startRestPolling();
-    refreshBotCards();
-
-    const eq = setInterval(() => {
-      const caps = useCapitalStore.getState().capitals;
-      const total = caps.reduce(
-        (s, b) => s + b.allocatedCapital,
-        0
-      );
-      if (total > 0) {
-        setEquityData((prev) => [
-          ...prev.slice(-59),
-          {
-            t: new Date().toLocaleTimeString("en-IN", {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-            v: total,
-          },
-        ]);
-      }
-    }, 3000);
-
-    const cards = setInterval(refreshBotCards, 30000);
-
-    const status = setInterval(() => {
-      setMarketStatus(getMarketStatus());
-    }, 30000);
-
-    return () => {
-      clearInterval(eq);
-      clearInterval(cards);
-      clearInterval(status);
-    };
+    setError(null);
+    setStrategies((sRes.data ?? []) as Strategy[]);
+    setCapitals((cRes.data ?? []) as Capital[]);
+    setPositions((pRes.data ?? []) as Position[]);
+    setLastUpdate(new Date());
   }, []);
 
-  if (!mounted) return null;
+  useEffect(() => {
+    refresh();
+    const iv = setInterval(refresh, 15_000);
+    return () => clearInterval(iv);
+  }, [refresh]);
 
-  const leader = botCards[0];
-  const selectedData = botCards.find(
-    (b) => b.botId === selected
-  );
+  const active = strategies.filter((s) => s.status !== "placeholder").sort((a, b) => a.slot_number - b.slot_number);
+  const locked = strategies.filter((s) => s.status === "placeholder").sort((a, b) => a.slot_number - b.slot_number);
+
+  const activeCols = Math.min(active.length, 6) || 1;
 
   return (
-    <div className="flex-1 p-6 min-h-screen text-white fade-in">
-
-      {/* ── Section 1: Competition Header ─────────────────── */}
-
-      <div
-        className="mb-10 p-6"
-        style={{
-          border: "2px dashed rgba(255,255,255,0.08)",
-          background: "rgba(10,10,22,0.55)",
-          backdropFilter: "blur(12px)",
-          WebkitBackdropFilter: "blur(12px)",
-        }}
-      >
-
-        <div className="text-center mb-6">
-          <h1 className="font-pixel text-lg text-white mb-2">
-            SEASON 1
+    <div style={{ background: "#0A0D14", minHeight: "100vh", padding: "18px 16px 32px" }}>
+      {/* Page header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16 }}>
+        <div>
+          <div style={{ fontSize: 9, color: "#1f2937", letterSpacing: "0.15em", marginBottom: 4 }}>
+            AI TRADING ARENA · SEASON 1 · PAPER TRADING
+          </div>
+          <h1 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: "#e5e7eb" }}>
+            Strategy Dashboard
           </h1>
-          <p className="font-pixel text-[13px] text-zinc-400 tracking-widest">
-            AI TRADING ARENA
-          </p>
         </div>
-
-        <div className="grid grid-cols-2 xl:grid-cols-4 gap-6 mb-6">
-
-          <div className="text-center">
-            <p className="font-pixel text-[13px] text-zinc-300 mb-2">
-              INITIAL CAPITAL
-            </p>
-            <p className="font-pixel text-[13px] text-zinc-300">
-              ₹4,00,000
-            </p>
-          </div>
-
-          <div className="text-center">
-            <p className="font-pixel text-[13px] text-zinc-300 mb-2">
-              CURRENT CAPITAL
-            </p>
-            <p className="font-pixel text-[13px] text-white">
-              ₹
-              {totalCapital > 0
-                ? totalCapital.toLocaleString("en-IN")
-                : "4,00,000"}
-            </p>
-          </div>
-
-          <div className="text-center">
-            <p className="font-pixel text-[13px] text-zinc-300 mb-2">
-              TOTAL P&amp;L
-            </p>
-            <p
-              className="font-pixel text-[13px]"
-              style={{
-                color: totalPnL >= 0 ? "#22c55e" : "#ef4444",
-              }}
-            >
-              {totalPnL >= 0 ? "+" : ""}₹
-              {Math.abs(totalPnL).toLocaleString("en-IN")}
-            </p>
-          </div>
-
-          <div className="text-center">
-            <p className="font-pixel text-[13px] text-zinc-300 mb-2">
-              TOTAL P&amp;L %
-            </p>
-            <p
-              className="font-pixel text-[13px]"
-              style={{
-                color:
-                  Number(totalPnLPct) >= 0
-                    ? "#22c55e"
-                    : "#ef4444",
-              }}
-            >
-              {Number(totalPnLPct) >= 0 ? "+" : ""}
-              {totalPnLPct}%
-            </p>
-          </div>
-
+        <div style={{ fontSize: 9, color: "#374151" }}>
+          {lastUpdate
+            ? `UPDATED ${lastUpdate.toLocaleTimeString()} · AUTO-REFRESH 15s`
+            : "CONNECTING..."}
         </div>
+      </div>
 
-        <div className="flex justify-center">
-          <span
-            className={`inline-flex items-center gap-2 px-4 py-2 font-pixel text-[13px] border ${
-              marketStatus.isOpen
-                ? "border-green-500/30 text-green-400"
-                : "border-red-500/30 text-red-400"
-            }`}
-            style={{
-              background: marketStatus.isOpen
-                ? "rgba(34,197,94,0.06)"
-                : "rgba(239,68,68,0.06)",
-            }}
-          >
-            <span
-              className={`w-2 h-2 inline-block ${
-                marketStatus.isOpen
-                  ? "bg-green-400 animate-pulse"
-                  : "bg-red-500"
-              }`}
-            />
-            {marketStatus.isOpen
-              ? "MARKET OPEN"
-              : `MARKET CLOSED${
-                  marketStatus.timeUntilOpen
-                    ? ` · OPENS IN ${marketStatus.timeUntilOpen.toUpperCase()}`
-                    : ""
-                }`}
+      {/* Error banner */}
+      {error && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: "9px 12px",
+            background: "rgba(239,68,68,0.05)",
+            border: "1px solid rgba(239,68,68,0.15)",
+            color: "#ef4444",
+            fontSize: 11,
+          }}
+        >
+          Supabase error: {error} —{" "}
+          <span style={{ color: "#4b5563" }}>
+            Run migration 003_strategy_tables.sql in your Supabase dashboard first.
           </span>
         </div>
+      )}
 
-      </div>
-
-      {/* ── Section 2: Solar System ───────────────────────── */}
-
-      <div className="mb-12">
-
-        <p className="font-pixel text-[13px] text-zinc-400 mb-2 tracking-widest text-center">
-          ▸ AI BATTLE GROUND ◂
-        </p>
-
-        <p className="font-pixel text-[13px] text-zinc-400 mb-6 text-center">
-          CLICK A PLANET TO EXPLORE
-        </p>
-
-        {/* Solar system canvas */}
+      {/* Active strategy cards */}
+      {active.length > 0 && (
         <div
           style={{
-            position: "relative",
-            minHeight: 560,
-            width: "100%",
+            display: "grid",
+            gridTemplateColumns: `repeat(${activeCols}, 1fr)`,
+            gap: 1,
           }}
         >
-
-          {botCards.length === 0 ? (
-
-            <div className="flex items-center justify-center h-[560px]">
-              <div className="w-10 h-10 border-2 border-zinc-700 border-t-zinc-300 rounded-full animate-spin" />
-            </div>
-
-          ) : (
-
-            botCards.map((card) => {
-              const pos = PLANET_POS[card.botId];
-              if (!pos) return null;
-              return (
-                <PlanetNode
-                  key={card.botId}
-                  data={card}
-                  pos={pos}
-                  onClick={() => setSelected(card.botId)}
-                />
-              );
-            })
-
-          )}
-
+          {active.map((s) => (
+            <StrategyCard
+              key={s.id}
+              strategy={s}
+              capital={capitals.find((c) => c.strategy_id === s.id)}
+              positions={positions.filter((p) => p.strategy_id === s.id)}
+            />
+          ))}
         </div>
+      )}
 
-      </div>
+      {/* Locked cards */}
+      {locked.length > 0 && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${Math.min(locked.length, 4)}, 1fr)`,
+            gap: 1,
+            marginTop: 1,
+          }}
+        >
+          {locked.map((s) => (
+            <LockedCard key={s.id} strategy={s} />
+          ))}
+        </div>
+      )}
 
-      {/* ── Section 3: Leader Glimpse ─────────────────────── */}
-
-      {leader && (
-
-        <div className="mb-12">
-
-          <p className="font-pixel text-[13px] text-zinc-400 mb-6 tracking-widest">
-            ▸ CURRENT LEADER
-          </p>
-
-          <div
-            style={{
-              position: "relative",
-              border: `2px solid ${leader.color}`,
-              background: "rgba(8,8,20,0.75)",
-              backdropFilter: "blur(14px)",
-              WebkitBackdropFilter: "blur(14px)",
-              padding: "20px",
-            }}
-          >
-            {/* Corner squares */}
-            {[
-              { top: -4, left: -4 },
-              { top: -4, right: -4 },
-              { bottom: -4, left: -4 },
-              { bottom: -4, right: -4 },
-            ].map((pos, i) => (
-              <div
-                key={i}
-                style={{
-                  position: "absolute",
-                  width: 8,
-                  height: 8,
-                  backgroundColor: leader.color,
-                  ...pos,
-                }}
-              />
-            ))}
-
-            <div className="flex items-center justify-between flex-wrap gap-4">
-
-              <div className="flex items-center gap-4">
-                <span className="text-3xl">🏆</span>
-                <div>
-                  <p
-                    className="font-pixel text-[13px] mb-2"
-                    style={{ color: leader.color }}
-                  >
-                    {leader.botName}
-                  </p>
-                  <p
-                    className="font-pixel text-sm"
-                    style={{
-                      color:
-                        leader.pnl >= 0 ? "#22c55e" : "#ef4444",
-                    }}
-                  >
-                    {leader.pnl >= 0 ? "+" : ""}₹
-                    {Math.abs(leader.pnl).toLocaleString("en-IN")}
-                  </p>
-                </div>
-              </div>
-
-              <Link href="/leaderboard">
-                <span className="font-pixel text-[13px] text-zinc-300 hover:text-white transition-colors">
-                  VIEW FULL LEADERBOARD →
-                </span>
-              </Link>
-
-            </div>
+      {/* Empty state */}
+      {strategies.length === 0 && !error && (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 300, gap: 8 }}>
+          <div style={{ fontSize: 12, color: "#374151" }}>Waiting for data...</div>
+          <div style={{ fontSize: 10, color: "#1f2937" }}>
+            If tables are missing, run supabase/migrations/003_strategy_tables.sql
           </div>
-
         </div>
-
       )}
-
-      {/* ── Section 4: Equity Curve ───────────────────────── */}
-
-      <div>
-
-        <p className="font-pixel text-[13px] text-zinc-400 mb-6 tracking-widest">
-          ▸ PORTFOLIO EQUITY CURVE
-        </p>
-
-        <div
-          style={{
-            padding: 16,
-            background: "rgba(10,10,22,0.6)",
-            backdropFilter: "blur(12px)",
-            WebkitBackdropFilter: "blur(12px)",
-            border: "1px solid rgba(255,255,255,0.07)",
-          }}
-        >
-
-          {equityData.length < 2 ? (
-            <div className="h-[240px] flex items-center justify-center">
-              <p className="font-pixel text-[13px] text-zinc-400 animate-pulse">
-                COLLECTING DATA...
-              </p>
-            </div>
-          ) : (
-            <div className="h-[240px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={equityData}>
-                  <XAxis
-                    dataKey="t"
-                    stroke="#27272a"
-                    tick={{
-                      fontSize: 7,
-                      fontFamily: "'Inter', sans-serif",
-                      fill: "#a1a1aa",
-                    }}
-                    interval="preserveStartEnd"
-                  />
-                  <YAxis
-                    stroke="#27272a"
-                    tick={{
-                      fontSize: 7,
-                      fontFamily: "'Inter', sans-serif",
-                      fill: "#a1a1aa",
-                    }}
-                    domain={["auto", "auto"]}
-                    width={70}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      background: "rgba(8,8,20,0.95)",
-                      border: "1px solid rgba(255,255,255,0.1)",
-                      borderRadius: 0,
-                      fontFamily: "'Inter', sans-serif",
-                      fontSize: 7,
-                      color: "#fff",
-                    }}
-                  />
-                  <Line
-                    type="stepAfter"
-                    dataKey="v"
-                    stroke="#22c55e"
-                    strokeWidth={2}
-                    dot={false}
-                    name="Portfolio Value"
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-
-        </div>
-
-      </div>
-
-      {/* ── Planet expanded overlay ───────────────────────── */}
-
-      {selected && selectedData && (
-        <PlanetOverlay
-          data={selectedData}
-          onClose={() => setSelected(null)}
-        />
-      )}
-
     </div>
   );
 }
