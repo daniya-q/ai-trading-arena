@@ -1,9 +1,8 @@
-// RAILWAY_CACHE_BUST: 2026-06-09
+// RAILWAY_CACHE_BUST: 2026-06-10
 /**
  * AI Trading Arena — Strategy-based Trading Server
  *
- * Rule-based strategy execution for 6 quantitative strategies.
- * BTC trading (Kraken WS + AI bots) unchanged.
+ * Rule-based strategy execution for 6 equity strategies + 4 BTC strategies.
  *
  * Start:
  *   npx ts-node --project server/tsconfig.json server/trading-server.ts
@@ -28,17 +27,6 @@ const supabase: SupabaseClient = createClient(
 );
 
 // ══════════════════════════════════════════════════════════════
-// BTC bots (unchanged)
-// ══════════════════════════════════════════════════════════════
-
-const BOTS = [
-  { id: "gpt",    name: "GPT Bot",    provider: "openai" },
-  { id: "claude", name: "Claude Bot", provider: "claude" },
-  { id: "gemini", name: "Gemini Bot", provider: "gemini" },
-  { id: "groq",   name: "Groq Bot",   provider: "groq"   },
-];
-
-// ══════════════════════════════════════════════════════════════
 // Types
 // ══════════════════════════════════════════════════════════════
 
@@ -48,25 +36,6 @@ interface Candle {
   low:   number;
   close: number;
   time:  number; // ms epoch
-}
-
-interface BtcPosition {
-  id:        string;
-  bot_id:    string;
-  entry_price: number;
-  quantity:  number;
-  pnl:       number;
-  charges?:  number;
-  leverage?: number;
-  direction?: string;
-  stop_loss?: number;
-  take_profit?: number;
-  status:    "OPEN" | "CLOSED";
-}
-
-interface BtcCapitalRow {
-  allocated_capital: number;
-  pnl: number;
 }
 
 interface OptionChainRow {
@@ -131,11 +100,6 @@ interface CandleStore {
 
 const candleStores: Record<string, CandleStore> = {};
 const MAX_CANDLES = 500;
-
-// BTC 1s candle store
-const btcCandles: Candle[]    = [];
-let btcCurrentCandle: Candle | null = null;
-let btcCurrentBucket = 0;
 
 // ── Option chain cache ───────────────────────────────────────
 // Key: "NIFTY" | "BANKNIFTY" | "SENSEX"
@@ -245,27 +209,6 @@ function getCandles(symbol: string, interval: string): Candle[] {
   const all = [...store.candles];
   if (store.current) all.push({ ...store.current });
   return all;
-}
-
-// BTC 1s candle (unchanged)
-function processBtcTick(price: number, timestamp: number): void {
-  const CANDLE_DURATION = 1_000;
-  const bucket = Math.floor(timestamp / CANDLE_DURATION) * CANDLE_DURATION;
-  if (!btcCurrentCandle) {
-    btcCurrentCandle = { open: price, high: price, low: price, close: price, time: bucket };
-    btcCurrentBucket = bucket;
-    return;
-  }
-  if (bucket !== btcCurrentBucket) {
-    btcCandles.push({ ...btcCurrentCandle });
-    if (btcCandles.length > MAX_CANDLES) btcCandles.shift();
-    btcCurrentCandle = { open: price, high: price, low: price, close: price, time: bucket };
-    btcCurrentBucket = bucket;
-    return;
-  }
-  btcCurrentCandle.high  = Math.max(btcCurrentCandle.high, price);
-  btcCurrentCandle.low   = Math.min(btcCurrentCandle.low,  price);
-  btcCurrentCandle.close = price;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1522,235 +1465,450 @@ function getUsdToInr(): number {
 }
 
 // ══════════════════════════════════════════════════════════════
-// AI providers (for BTC bots — unchanged)
+// BTC Rule-based Strategies
 // ══════════════════════════════════════════════════════════════
 
-async function runAI(provider: string, prompt: string): Promise<string> {
-  try {
-    if (provider === "openai") {
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-        body:    JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }], temperature: 0.7 }),
-      });
-      const d = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-      return d?.choices?.[0]?.message?.content ?? "No response";
-    }
-    if (provider === "claude") {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY ?? "", "anthropic-version": "2023-06-01" },
-        body:    JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 500, messages: [{ role: "user", content: prompt }] }),
-      });
-      const d = await res.json() as { content?: Array<{ text?: string }> };
-      return d?.content?.[0]?.text ?? "No response";
-    }
-    if (provider === "gemini") {
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) }
-      );
-      const d = await res.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-      return d?.candidates?.[0]?.content?.parts?.[0]?.text ?? "No response";
-    }
-    if (provider === "groq") {
-      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
-        body:    JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "user", content: prompt }], temperature: 0.7, response_format: { type: "json_object" } }),
-      });
-      if (!res.ok) return "No response";
-      const d = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-      return d?.choices?.[0]?.message?.content ?? "No response";
-    }
-    return "Unknown provider";
-  } catch (err) {
-    console.error(`[AI:${provider}] Error:`, err);
-    return `Error: ${String(err)}`;
+interface BtcStrategyPosition {
+  id:                string;
+  strategy_id:       string;
+  side:              "LONG" | "SHORT";
+  entry_price_usd:   number;
+  current_price_usd: number;
+  exit_price_usd:    number | null;
+  qty_inr:           number;
+  pnl_inr:           number;
+  stop_loss:         number | null;
+  trail_sl:          number | null;
+  status:            "OPEN" | "CLOSED";
+}
+
+// BTC strategy state
+let btcOrbHigh    = 0;
+let btcOrbLow     = 0;
+let btcOrbSet     = false;
+const btcPeakPrices: Record<string, number>       = {}; // posId → peak price
+const btcDailyTradeCounts: Record<string, number> = {};
+let btcTradeDateStr = "";
+
+function checkBtcDailyReset(): void {
+  const today = todayIST();
+  if (btcTradeDateStr !== today) {
+    btcTradeDateStr = today;
+    for (const k of Object.keys(btcDailyTradeCounts)) btcDailyTradeCounts[k] = 0;
+    btcOrbHigh = 0;
+    btcOrbLow  = 0;
+    btcOrbSet  = false;
+    console.log(`[BTC Daily] Reset for ${today}`);
   }
 }
 
-// ══════════════════════════════════════════════════════════════
-// BTC prompt builder (unchanged)
-// ══════════════════════════════════════════════════════════════
-
-function buildBtcPrompt(params: {
-  botName: string;
-  botProvider: string;
-  btcPrice: number;
-  capitalInr: number;
-  freeCash: number;
-  totalPnl: number;
-  openPositions: BtcPosition[];
-}): string {
-  const { btcPrice, capitalInr, freeCash, totalPnl, openPositions } = params;
-  const posStr = openPositions.length === 0
-    ? "none"
-    : openPositions.map(p =>
-        `${p.direction ?? "LONG"} ${p.quantity.toFixed(6)}BTC @ $${p.entry_price} ${p.leverage ?? 1}x leverage (SL:${p.stop_loss} TP:${p.take_profit})`
-      ).join(", ");
-  return `You are an aggressive BTC/USDT futures trader competing against 3 other AIs for maximum ₹ profit. You have ₹${capitalInr.toFixed(2)} total capital. Free cash: ₹${freeCash.toFixed(2)}. Current BTC price: $${btcPrice.toFixed(2)}. Open positions: ${posStr}. Total PnL so far: ₹${totalPnl.toFixed(2)}.
-
-You can:
-- Go LONG (profit if price goes up)
-- Go SHORT (profit if price goes down)
-- Use leverage from 1x to 100x
-- Set your own Stop Loss and Take Profit levels
-
-Rules:
-- OPEN opens a new position (LONG or SHORT)
-- CLOSE closes ALL your open positions
-- HOLD does nothing
-- Max 10% of free cash per trade (before leverage)
-- Be aggressive, use leverage wisely
-
-Respond ONLY in JSON:
-{
-  "action": "OPEN"|"CLOSE"|"HOLD",
-  "direction": "LONG"|"SHORT",
-  "leverage": <number 1-100>,
-  "quantity_inr": <INR amount to use as margin>,
-  "stop_loss": <price in USD>,
-  "take_profit": <price in USD>,
-  "reasoning": "<your detailed trade logic>"
-}`;
+function calcBtcVWAP(candles: Candle[]): number {
+  const now = new Date();
+  const utcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const todayCandles = candles.filter(c => c.time >= utcMidnight);
+  if (!todayCandles.length) return candles[candles.length - 1]?.close ?? btcPrice;
+  const sum = todayCandles.reduce((s, c) => s + (c.high + c.low + c.close) / 3, 0);
+  return sum / todayCandles.length;
 }
 
-// ══════════════════════════════════════════════════════════════
-// BTC Supabase helpers (unchanged)
-// ══════════════════════════════════════════════════════════════
-
-async function getBtcCapital(botId: string): Promise<BtcCapitalRow> {
-  const { data } = await supabase
-    .from("btc_capital")
-    .select("allocated_capital,pnl")
-    .eq("bot_id", botId)
-    .single();
-  return (data as BtcCapitalRow) ?? { allocated_capital: 100000, pnl: 0 };
+function generateBtcExitDetail(
+  reason: string,
+  side: string,
+  entryPrice: number,
+  exitPrice: number,
+  pnlInr: number,
+  stopLoss: number | null,
+  trailSl: number | null,
+): string {
+  const pnlStr = pnlInr >= 0 ? `+₹${pnlInr.toFixed(2)}` : `-₹${Math.abs(pnlInr).toFixed(2)}`;
+  const ts = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" });
+  switch (reason) {
+    case "SL_HIT":
+      return `Stop-loss hit at $${exitPrice.toFixed(2)} (entry $${entryPrice.toFixed(2)}, SL $${stopLoss?.toFixed(2) ?? "N/A"}) — ${pnlStr} at ${ts}`;
+    case "TRAIL_SL":
+      return `Trail SL triggered at $${exitPrice.toFixed(2)} (entry $${entryPrice.toFixed(2)}, trail $${trailSl?.toFixed(2) ?? "N/A"}) — ${pnlStr} at ${ts}`;
+    case "CROSSOVER":
+      return `Opposite EMA crossover at $${exitPrice.toFixed(2)} — ${pnlStr} at ${ts}`;
+    case "SUPERTREND_FLIP":
+      return `Supertrend flipped direction at $${exitPrice.toFixed(2)} — ${pnlStr} at ${ts}`;
+    case "HARD_CLOSE":
+      return `Hard close at $${exitPrice.toFixed(2)} — ${pnlStr} at ${ts}`;
+    default:
+      return `Closed at $${exitPrice.toFixed(2)} — ${pnlStr} at ${ts}`;
+  }
 }
 
-async function getOpenBtcPositions(botId: string): Promise<BtcPosition[]> {
-  const { data } = await supabase
-    .from("btc_positions")
-    .select("*")
-    .eq("bot_id", botId)
-    .eq("status", "OPEN");
-  return (data ?? []) as BtcPosition[];
-}
+const BTC_QTY_INR = 5000; // ₹5,000 per trade
 
-// ══════════════════════════════════════════════════════════════
-// BTC trading cycle — every 15 min, 24/7 (unchanged)
-// ══════════════════════════════════════════════════════════════
-
-let btcCycleRunning = false;
-
-async function runBtcTradingCycle(): Promise<void> {
-  if (btcCycleRunning) return;
-  btcCycleRunning = true;
+async function openBtcPosition(
+  strategyId: string,
+  side: "LONG" | "SHORT",
+  entryPriceUsd: number,
+  stopLoss: number,
+  entryReason: string,
+): Promise<string | null> {
   try {
-    if (btcCandles.length < 60) { console.log(`[BTC Cycle] Waiting for candles (${btcCandles.length}/60)...`); return; }
-    if (!btcPrice)               { console.log("[BTC Cycle] No BTC price yet — skipping"); return; }
+    const { data, error } = await supabase
+      .from("btc_strategy_positions")
+      .insert({
+        strategy_id:       strategyId,
+        side,
+        entry_price_usd:   entryPriceUsd,
+        current_price_usd: entryPriceUsd,
+        qty_inr:           BTC_QTY_INR,
+        pnl_inr:           0,
+        stop_loss:         stopLoss,
+        status:            "OPEN",
+        entry_reason:      entryReason,
+      })
+      .select("id")
+      .single();
+    if (error) { console.error(`[BTC] Open error:`, error.message); return null; }
+    const posId = (data as { id: string }).id;
+    btcPeakPrices[posId] = entryPriceUsd;
+    console.log(`[BTC ${strategyId}] Opened ${side} @ $${entryPriceUsd.toFixed(2)}, SL $${stopLoss.toFixed(2)}`);
+    return posId;
+  } catch (err) {
+    console.error(`[BTC] openBtcPosition failed:`, err);
+    return null;
+  }
+}
 
-    for (const bot of BOTS) {
-      try {
-        console.log(`[BTC:${bot.id}] Starting cycle...`);
-        const capital       = await getBtcCapital(bot.id);
-        const openPositions = await getOpenBtcPositions(bot.id);
-        const deployed      = openPositions.reduce((sum, p) => sum + p.quantity * p.entry_price, 0);
-        const freeCash      = capital.allocated_capital - deployed;
-        console.log(`[BTC:${bot.id}] capital=₹${capital.allocated_capital} freeCash=₹${freeCash.toFixed(2)} openPos=${openPositions.length}`);
+async function closeBtcPosition(posId: string, exitPriceUsd: number, reason: string): Promise<void> {
+  try {
+    const { data: pos, error: fetchErr } = await supabase
+      .from("btc_strategy_positions")
+      .select("strategy_id, side, entry_price_usd, qty_inr, stop_loss, trail_sl")
+      .eq("id", posId)
+      .single();
+    if (fetchErr || !pos) return;
 
-        const prompt      = buildBtcPrompt({ botName: bot.name, botProvider: bot.provider, btcPrice, capitalInr: capital.allocated_capital, freeCash, totalPnl: capital.pnl, openPositions });
-        const rawResponse = await runAI(bot.provider, prompt);
-        console.log(`[BTC:${bot.id}] ── RAW RESPONSE (${rawResponse.length} chars) ──`);
-        console.log(rawResponse);
-        console.log(`[BTC:${bot.id}] ── END RAW RESPONSE ──`);
+    const p = pos as {
+      strategy_id: string; side: string;
+      entry_price_usd: number; qty_inr: number;
+      stop_loss: number | null; trail_sl: number | null;
+    };
 
-        let action: "OPEN" | "CLOSE" | "HOLD" = "HOLD";
-        let quantity_inr = 0, reasoning = "No reasoning";
-        let direction: "LONG" | "SHORT" = "LONG";
-        let leverage = 1, stop_loss = 0, take_profit = 0;
+    const pnlInr = p.side === "LONG"
+      ? ((exitPriceUsd - p.entry_price_usd) / p.entry_price_usd) * p.qty_inr
+      : ((p.entry_price_usd - exitPriceUsd) / p.entry_price_usd) * p.qty_inr;
 
-        try {
-          const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
-          const cleaned   = jsonMatch ? jsonMatch[0] : rawResponse.replace(/```json/g,"").replace(/```/g,"").trim();
-          console.log(`[BTC:${bot.id}] Cleaned JSON: ${cleaned}`);
-          const parsed = JSON.parse(cleaned) as { action?: string; direction?: string; leverage?: number; quantity_inr?: number; stop_loss?: number; take_profit?: number; reasoning?: string };
-          console.log(`[BTC:${bot.id}] Parsed — action: "${parsed.action}" dir: ${parsed.direction} lev: ${parsed.leverage} qty_inr: ${parsed.quantity_inr}`);
-          const rawAct = (parsed.action ?? "HOLD").toString().toUpperCase();
-          const actMap: Record<string, "OPEN" | "CLOSE" | "HOLD"> = { OPEN:"OPEN", BUY:"OPEN", CLOSE:"CLOSE", SELL:"CLOSE", HOLD:"HOLD" };
-          action       = actMap[rawAct] ?? "HOLD";
-          quantity_inr = Math.max(0, Number(parsed.quantity_inr) || 0);
-          reasoning    = parsed.reasoning ?? "No reasoning";
-          direction    = (parsed.direction ?? "LONG").toString().toUpperCase() === "SHORT" ? "SHORT" : "LONG";
-          leverage     = Math.min(100, Math.max(1, Number(parsed.leverage) || 1));
-          stop_loss    = Number(parsed.stop_loss)   || 0;
-          take_profit  = Number(parsed.take_profit) || 0;
-        } catch (parseErr) {
-          console.error(`[BTC:${bot.id}] JSON parse FAILED:`, parseErr);
-          action = "HOLD";
+    const detail = generateBtcExitDetail(
+      reason, p.side, p.entry_price_usd, exitPriceUsd, pnlInr, p.stop_loss, p.trail_sl
+    );
+
+    await supabase.from("btc_strategy_positions").update({
+      exit_price_usd:    exitPriceUsd,
+      current_price_usd: exitPriceUsd,
+      pnl_inr:           pnlInr,
+      status:            "CLOSED",
+      exit_reason:       reason,
+      exit_reason_detail: detail,
+      closed_at:         new Date().toISOString(),
+    }).eq("id", posId);
+
+    delete btcPeakPrices[posId];
+    await updateBtcCapital(p.strategy_id, pnlInr);
+    console.log(`[BTC ${p.strategy_id}] Closed ${p.side} @ $${exitPriceUsd.toFixed(2)} (${reason}) PnL ₹${pnlInr.toFixed(2)}`);
+  } catch (err) {
+    console.error(`[BTC] closeBtcPosition failed:`, err);
+  }
+}
+
+async function updateBtcCapital(strategyId: string, pnlInr: number): Promise<void> {
+  try {
+    const { data } = await supabase
+      .from("btc_strategy_capital")
+      .select("total_pnl_inr, total_trades, winning_trades")
+      .eq("strategy_id", strategyId)
+      .single();
+    const cap = data as { total_pnl_inr: number; total_trades: number; winning_trades: number } | null;
+    await supabase.from("btc_strategy_capital").update({
+      total_pnl_inr:  (cap?.total_pnl_inr  ?? 0) + pnlInr,
+      total_trades:   (cap?.total_trades   ?? 0) + 1,
+      winning_trades: (cap?.winning_trades ?? 0) + (pnlInr > 0 ? 1 : 0),
+      updated_at:     new Date().toISOString(),
+    }).eq("strategy_id", strategyId);
+  } catch (err) {
+    console.error(`[BTC] updateBtcCapital failed:`, err);
+  }
+}
+
+// ── Monitor BTC positions (SL / Trail SL) — every 5s ─────────
+
+async function monitorBtcPositions(): Promise<void> {
+  if (!btcPrice) return;
+  try {
+    // Store live BTC price in config for frontend
+    await supabase.from("config").upsert({ key: "BTC_PRICE_USD", value: btcPrice.toFixed(2) }, { onConflict: "key" });
+
+    const { data, error } = await supabase
+      .from("btc_strategy_positions")
+      .select("id, strategy_id, side, entry_price_usd, qty_inr, stop_loss, trail_sl")
+      .eq("status", "OPEN");
+    if (error || !data) return;
+
+    for (const row of data as Array<{
+      id: string; strategy_id: string; side: string;
+      entry_price_usd: number; qty_inr: number;
+      stop_loss: number | null; trail_sl: number | null;
+    }>) {
+      const pnlInr = row.side === "LONG"
+        ? ((btcPrice - row.entry_price_usd) / row.entry_price_usd) * row.qty_inr
+        : ((row.entry_price_usd - btcPrice) / row.entry_price_usd) * row.qty_inr;
+
+      await supabase.from("btc_strategy_positions")
+        .update({ current_price_usd: btcPrice, pnl_inr: pnlInr })
+        .eq("id", row.id);
+
+      // Update peak price for trail SL
+      if (row.side === "LONG") {
+        if (!btcPeakPrices[row.id] || btcPrice > btcPeakPrices[row.id])
+          btcPeakPrices[row.id] = btcPrice;
+      } else {
+        if (!btcPeakPrices[row.id] || btcPrice < btcPeakPrices[row.id])
+          btcPeakPrices[row.id] = btcPrice;
+      }
+
+      // Trail SL ratchet
+      const trailPct = btcTrailPct(row.strategy_id);
+      if (row.side === "LONG") {
+        const newTrail = btcPeakPrices[row.id] * (1 - trailPct);
+        if (!row.trail_sl || newTrail > row.trail_sl) {
+          await supabase.from("btc_strategy_positions").update({ trail_sl: newTrail }).eq("id", row.id);
+          row.trail_sl = newTrail;
         }
-
-        console.log(`[BTC:${bot.id}] ── DECISION: ${action} ${direction} × ${leverage}x | qty_inr=₹${quantity_inr} | SL:$${stop_loss} TP:$${take_profit}`);
-        console.log(`[BTC:${bot.id}] Reasoning: ${reasoning.slice(0, 200)}`);
-        if (action === "HOLD") { console.log(`[BTC:${bot.id}] HOLD — skipping`); continue; }
-
-        // CLOSE
-        if (action === "CLOSE") {
-          if (!openPositions.length) { console.log(`[BTC:${bot.id}] CLOSE — no open positions`); continue; }
-          const usdInr = getUsdToInr();
-          let totalRealised = 0;
-          for (const pos of openPositions) {
-            const lev = pos.leverage ?? 1;
-            const dir = pos.direction ?? "LONG";
-            const grossPnl     = dir === "SHORT" ? (pos.entry_price - btcPrice) * pos.quantity * lev * usdInr : (btcPrice - pos.entry_price) * pos.quantity * lev * usdInr;
-            const sellValue    = btcPrice * pos.quantity * usdInr;
-            const closeCharges = Number((sellValue * lev * 0.001 * 1.18 + sellValue * 0.01).toFixed(2));
-            const netPnl       = Number((grossPnl - closeCharges - (pos.charges ?? 0)).toFixed(2));
-            totalRealised     += netPnl;
-            console.log(`[BTC:${bot.id}] ${dir} × ${lev}x grossPnl: ₹${grossPnl.toFixed(2)} | netPnl: ₹${netPnl.toFixed(2)}`);
-            const { error } = await supabase.from("btc_positions").update({ status: "CLOSED", current_price: Number(btcPrice.toFixed(2)), pnl: netPnl, closed_at: new Date().toISOString() }).eq("id", pos.id);
-            if (error) console.error(`[BTC:${bot.id}] Close failed:`, error.message);
-            else console.log(`[BTC:${bot.id}] CLOSED ${dir} @ $${btcPrice.toFixed(2)}  Net PnL: ${netPnl >= 0?"+":""}₹${netPnl.toFixed(2)}`);
-          }
-          void totalRealised;
-          const { data: allClosed } = await supabase.from("btc_positions").select("pnl,charges").eq("bot_id", bot.id).eq("status","CLOSED");
-          const allClosedArr = (allClosed ?? []) as Array<{ pnl: number; charges: number }>;
-          const totalPnl2    = allClosedArr.reduce((s, p) => s + Number(p.pnl), 0);
-          const wins2        = allClosedArr.filter(p => Number(p.pnl) > 0).length;
-          const winRate2     = allClosedArr.length > 0 ? wins2 / allClosedArr.length : 0;
-          const newCapital   = Number((100000 + totalPnl2).toFixed(2));
-          const { error: capErr } = await supabase.from("btc_capital").update({ allocated_capital: newCapital, pnl: Number(totalPnl2.toFixed(2)), win_rate: Number(winRate2.toFixed(4)), updated_at: new Date().toISOString() }).eq("bot_id", bot.id);
-          if (capErr) console.error(`[BTC:${bot.id}] btc_capital update failed:`, capErr.message);
-          else console.log(`[BTC:${bot.id}] Capital updated to ₹${newCapital.toFixed(2)}`);
-          continue;
+      } else {
+        const newTrail = btcPeakPrices[row.id] * (1 + trailPct);
+        if (!row.trail_sl || newTrail < row.trail_sl) {
+          await supabase.from("btc_strategy_positions").update({ trail_sl: newTrail }).eq("id", row.id);
+          row.trail_sl = newTrail;
         }
+      }
 
-        // OPEN
-        if (action === "OPEN") {
-          let spendInr = Math.min(quantity_inr, freeCash * 0.1);
-          if (spendInr > freeCash) spendInr = freeCash;
-          if (spendInr < 100) { console.warn(`[BTC:${bot.id}] Insufficient cash ₹${freeCash.toFixed(2)} — skipping`); continue; }
-          const usdInr      = getUsdToInr();
-          const btcPriceInr = btcPrice * usdInr;
-          const btcQty      = spendInr / btcPriceInr;
-          const openCharges = Number((spendInr * leverage * 0.001 * 1.18).toFixed(2));
-          console.log(`[BTC:${bot.id}] OPEN ${direction} × ${leverage}x | ₹${spendInr.toFixed(2)} margin = ${btcQty.toFixed(8)} BTC | charges: ₹${openCharges}`);
-          const insertPayload = { bot_id: bot.id, symbol: "BTC/USDT", side: direction === "LONG" ? "BUY" : "SELL", direction, leverage, quantity: Number(btcQty.toFixed(8)), entry_price: Number(btcPrice.toFixed(2)), current_price: Number(btcPrice.toFixed(2)), stop_loss, take_profit, pnl: 0, charges: openCharges, reasoning: reasoning.slice(0, 1000), status: "OPEN", opened_at: new Date().toISOString() };
-          console.log(`[BTC:${bot.id}] Inserting btc_positions...`);
-          const { error, data: inserted } = await supabase.from("btc_positions").insert(insertPayload).select();
-          if (error) console.error(`[BTC:${bot.id}] Insert FAILED — ${error.message}`);
-          else console.log(`[BTC:${bot.id}] OPENED ${direction} ${btcQty.toFixed(6)} BTC × ${leverage}x @ $${btcPrice.toFixed(2)} | id: ${(inserted as Array<{id: string}>)?.[0]?.id}`);
-        }
-      } catch (botErr) {
-        console.error(`[BTC:${bot.id}] Error:`, botErr);
+      // Hard SL
+      if (row.stop_loss !== null) {
+        if (row.side === "LONG"  && btcPrice <= row.stop_loss) { await closeBtcPosition(row.id, btcPrice, "SL_HIT");   continue; }
+        if (row.side === "SHORT" && btcPrice >= row.stop_loss) { await closeBtcPosition(row.id, btcPrice, "SL_HIT");   continue; }
+      }
+      // Trail SL
+      if (row.trail_sl !== null) {
+        if (row.side === "LONG"  && btcPrice <= row.trail_sl)  { await closeBtcPosition(row.id, btcPrice, "TRAIL_SL"); continue; }
+        if (row.side === "SHORT" && btcPrice >= row.trail_sl)  { await closeBtcPosition(row.id, btcPrice, "TRAIL_SL"); continue; }
       }
     }
-    console.log(`[BTC Cycle] Done — $${btcPrice.toFixed(2)} | candles: ${btcCandles.length}`);
   } catch (err) {
-    console.error("[BTC Cycle] Fatal:", err);
+    console.error("[BTC Monitor] Error:", err);
+  }
+}
+
+function btcTrailPct(strategyId: string): number {
+  const map: Record<string, number> = {
+    btc_ema_crossover:  0.010,
+    btc_orion:          0.005,
+    btc_ema_confluence: 0.015,
+    btc_supertrend:     0.008,
+  };
+  return map[strategyId] ?? 0.01;
+}
+
+// ── BTC Strategy 1: EMA Crossover ────────────────────────────
+
+async function strategyBtcEmaCrossover(): Promise<void> {
+  const candles = getCandles("BTC", "30s");
+  if (candles.length < 25) return;
+
+  const closes   = candles.map(c => c.close);
+  const fastEmas = emaValues(closes, 9);
+  const slowEmas = emaValues(closes, 21);
+  if (fastEmas.length < 2 || slowEmas.length < 2) return;
+
+  const fastNow  = fastEmas[fastEmas.length - 1];
+  const slowNow  = slowEmas[slowEmas.length - 1];
+  const fastPrev = fastEmas[fastEmas.length - 2];
+  const slowPrev = slowEmas[slowEmas.length - 2];
+  const atr      = calcATR(candles, 14);
+  if (!atr) return;
+
+  const { data: openPos } = await supabase
+    .from("btc_strategy_positions")
+    .select("id, side")
+    .eq("strategy_id", "btc_ema_crossover")
+    .eq("status", "OPEN");
+
+  // Close on opposite cross
+  if (openPos && openPos.length > 0) {
+    for (const pos of openPos as Array<{ id: string; side: string }>) {
+      if (pos.side === "LONG"  && fastNow < slowNow && fastPrev >= slowPrev) await closeBtcPosition(pos.id, btcPrice, "CROSSOVER");
+      if (pos.side === "SHORT" && fastNow > slowNow && fastPrev <= slowPrev) await closeBtcPosition(pos.id, btcPrice, "CROSSOVER");
+    }
+    return;
+  }
+
+  const longs  = btcDailyTradeCounts["btc_ema_crossover_LONG"]  ?? 0;
+  const shorts = btcDailyTradeCounts["btc_ema_crossover_SHORT"] ?? 0;
+
+  if (fastNow > slowNow && fastPrev <= slowPrev && longs < 1) {
+    await openBtcPosition("btc_ema_crossover", "LONG", btcPrice, btcPrice - 1.5 * atr,
+      `EMA9(${fastNow.toFixed(0)}) crossed above EMA21(${slowNow.toFixed(0)})`);
+    btcDailyTradeCounts["btc_ema_crossover_LONG"] = longs + 1;
+  } else if (fastNow < slowNow && fastPrev >= slowPrev && shorts < 1) {
+    await openBtcPosition("btc_ema_crossover", "SHORT", btcPrice, btcPrice + 1.5 * atr,
+      `EMA9(${fastNow.toFixed(0)}) crossed below EMA21(${slowNow.toFixed(0)})`);
+    btcDailyTradeCounts["btc_ema_crossover_SHORT"] = shorts + 1;
+  }
+}
+
+// ── BTC Strategy 2: Orion (ORB) ──────────────────────────────
+
+async function strategyBtcOrion(): Promise<void> {
+  const now     = new Date();
+  const utcMins = now.getUTCHours() * 60 + now.getUTCMinutes();
+
+  if (utcMins < 30) {
+    // Build ORB from UTC midnight candles
+    const candles       = getCandles("BTC", "30s");
+    const utcMidnight   = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const orbCandles    = candles.filter(c => c.time >= utcMidnight && c.time < utcMidnight + 30 * 60_000);
+    if (orbCandles.length > 0) {
+      btcOrbHigh = Math.max(...orbCandles.map(c => c.high));
+      btcOrbLow  = Math.min(...orbCandles.map(c => c.low));
+    }
+    btcOrbSet = false;
+    return;
+  }
+
+  if (!btcOrbSet && btcOrbHigh > 0 && btcOrbLow > 0) {
+    btcOrbSet = true;
+    console.log(`[BTC Orion] ORB locked — High $${btcOrbHigh.toFixed(0)} Low $${btcOrbLow.toFixed(0)}`);
+  }
+  if (!btcOrbSet) return;
+
+  const total = (btcDailyTradeCounts["btc_orion_LONG"] ?? 0) + (btcDailyTradeCounts["btc_orion_SHORT"] ?? 0);
+  if (total >= 2) return;
+
+  const { data: openPos } = await supabase
+    .from("btc_strategy_positions")
+    .select("id")
+    .eq("strategy_id", "btc_orion")
+    .eq("status", "OPEN");
+  if (openPos && openPos.length > 0) return;
+
+  const longs  = btcDailyTradeCounts["btc_orion_LONG"]  ?? 0;
+  const shorts = btcDailyTradeCounts["btc_orion_SHORT"] ?? 0;
+
+  if (btcPrice > btcOrbHigh && longs < 1) {
+    await openBtcPosition("btc_orion", "LONG", btcPrice, btcOrbLow,
+      `Price ($${btcPrice.toFixed(0)}) broke above ORB High ($${btcOrbHigh.toFixed(0)})`);
+    btcDailyTradeCounts["btc_orion_LONG"] = longs + 1;
+  } else if (btcPrice < btcOrbLow && shorts < 1) {
+    await openBtcPosition("btc_orion", "SHORT", btcPrice, btcOrbHigh,
+      `Price ($${btcPrice.toFixed(0)}) broke below ORB Low ($${btcOrbLow.toFixed(0)})`);
+    btcDailyTradeCounts["btc_orion_SHORT"] = shorts + 1;
+  }
+}
+
+// ── BTC Strategy 3: EMA Confluence ───────────────────────────
+
+async function strategyBtcEmaConfluence(): Promise<void> {
+  const candles5m = getCandles("BTC", "5m");
+  if (candles5m.length < 52) return;
+
+  const ema20   = calcEMA(candles5m, 20);
+  const ema50   = calcEMA(candles5m, 50);
+  const rsi     = calcRSI(candles5m, 14);
+  const atr     = calcATR(candles5m, 14);
+  const vwap    = calcBtcVWAP(candles5m);
+  if (!atr) return;
+
+  const slice9  = candles5m.slice(-15).map(c => c.close);
+  const ema9arr = emaValues(slice9, 9);
+  const slope   = ema9arr.length >= 2 ? ema9arr[ema9arr.length - 1] - ema9arr[ema9arr.length - 2] : 0;
+  const atrPct  = (atr / btcPrice) * 100;
+
+  const bullish = ema20 > ema50 && rsi > 40 && rsi < 60 && btcPrice > vwap && atrPct > 0.5 && slope > 0;
+  const bearish = ema20 < ema50 && rsi > 40 && rsi < 60 && btcPrice < vwap && atrPct > 0.5 && slope < 0;
+
+  const { data: openPos } = await supabase
+    .from("btc_strategy_positions")
+    .select("id")
+    .eq("strategy_id", "btc_ema_confluence")
+    .eq("status", "OPEN");
+  if (openPos && openPos.length > 0) return;
+
+  const longs  = btcDailyTradeCounts["btc_ema_confluence_LONG"]  ?? 0;
+  const shorts = btcDailyTradeCounts["btc_ema_confluence_SHORT"] ?? 0;
+
+  if (bullish && longs < 1) {
+    await openBtcPosition("btc_ema_confluence", "LONG", btcPrice, btcPrice - 2 * atr,
+      `5-filter bullish: EMA20>EMA50, RSI ${rsi.toFixed(0)}, P>VWAP, ATR ${atrPct.toFixed(1)}%, slope+`);
+    btcDailyTradeCounts["btc_ema_confluence_LONG"] = longs + 1;
+  } else if (bearish && shorts < 1) {
+    await openBtcPosition("btc_ema_confluence", "SHORT", btcPrice, btcPrice + 2 * atr,
+      `5-filter bearish: EMA20<EMA50, RSI ${rsi.toFixed(0)}, P<VWAP, ATR ${atrPct.toFixed(1)}%, slope-`);
+    btcDailyTradeCounts["btc_ema_confluence_SHORT"] = shorts + 1;
+  }
+}
+
+// ── BTC Strategy 4: Supertrend ────────────────────────────────
+
+async function strategyBtcSupertrend(): Promise<void> {
+  const candles5m = getCandles("BTC", "5m");
+  if (candles5m.length < 20) return;
+
+  const stSeries = calcSupertrendSeries(candles5m, 7, 3);
+  if (stSeries.length < 2) return;
+
+  const stNow  = stSeries[stSeries.length - 1];
+  const stPrev = stSeries[stSeries.length - 2];
+  const crossUp   = stPrev.dir === "down" && stNow.dir === "up";
+  const crossDown = stPrev.dir === "up"   && stNow.dir === "down";
+
+  const { data: openPos } = await supabase
+    .from("btc_strategy_positions")
+    .select("id, side")
+    .eq("strategy_id", "btc_supertrend")
+    .eq("status", "OPEN");
+
+  if (openPos && openPos.length > 0) {
+    for (const pos of openPos as Array<{ id: string; side: string }>) {
+      if (pos.side === "LONG"  && crossDown) await closeBtcPosition(pos.id, btcPrice, "SUPERTREND_FLIP");
+      if (pos.side === "SHORT" && crossUp)   await closeBtcPosition(pos.id, btcPrice, "SUPERTREND_FLIP");
+    }
+    return;
+  }
+
+  const total = (btcDailyTradeCounts["btc_supertrend_LONG"] ?? 0) + (btcDailyTradeCounts["btc_supertrend_SHORT"] ?? 0);
+  if (total >= 2) return;
+
+  if (crossUp) {
+    await openBtcPosition("btc_supertrend", "LONG", btcPrice, stNow.value,
+      `Supertrend flipped bullish (line $${stNow.value.toFixed(0)})`);
+    btcDailyTradeCounts["btc_supertrend_LONG"] = (btcDailyTradeCounts["btc_supertrend_LONG"] ?? 0) + 1;
+  } else if (crossDown) {
+    await openBtcPosition("btc_supertrend", "SHORT", btcPrice, stNow.value,
+      `Supertrend flipped bearish (line $${stNow.value.toFixed(0)})`);
+    btcDailyTradeCounts["btc_supertrend_SHORT"] = (btcDailyTradeCounts["btc_supertrend_SHORT"] ?? 0) + 1;
+  }
+}
+
+// ── Run all BTC strategies (every 30s) ───────────────────────
+
+let btcStrategiesRunning = false;
+
+async function runBtcStrategies(): Promise<void> {
+  if (btcStrategiesRunning || !btcPrice) return;
+  btcStrategiesRunning = true;
+  try {
+    checkBtcDailyReset();
+    await strategyBtcEmaCrossover();
+    await strategyBtcOrion();
+    await strategyBtcEmaConfluence();
+    await strategyBtcSupertrend();
+  } catch (err) {
+    console.error("[BTC Strategies] Error:", err);
   } finally {
-    btcCycleRunning = false;
+    btcStrategiesRunning = false;
   }
 }
 
@@ -1773,7 +1931,7 @@ function connectBinanceWS(): void {
       const price = parseFloat(trades[0][0]);
       if (!price) return;
       btcPrice = price;
-      processBtcTick(price, Date.now());
+      processTick(price, "BTC", Date.now());
       if (Date.now() - lastBtcLogTime > 5_000) {
         console.log(`[BTC] Price: $${btcPrice.toFixed(2)}`);
         lastBtcLogTime = Date.now();
@@ -1866,7 +2024,11 @@ app.get("/candles", (_req, res) => {
 });
 
 app.get("/btc/status", (_req, res) => {
-  res.json({ btcPrice, btcCandles: btcCandles.length, activeBots: BOTS.length });
+  res.json({
+    btcPrice,
+    btcCandles_30s: getCandles("BTC", "30s").length,
+    btcCandles_5m:  getCandles("BTC", "5m").length,
+  });
 });
 
 app.post("/api/upstox/token-webhook", async (req, res) => {
@@ -1922,5 +2084,6 @@ setInterval(runEquityStrategies, 30_000);
 
 // BTC
 connectBinanceWS();
-runBtcTradingCycle();
-setInterval(runBtcTradingCycle, 15 * 60_000);
+runBtcStrategies();
+setInterval(runBtcStrategies, 30_000);
+setInterval(monitorBtcPositions, 5_000);

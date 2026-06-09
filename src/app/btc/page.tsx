@@ -1,344 +1,742 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { useBtcStore } from "@/store/btcStore";
-import { startBtcWebSocket } from "@/lib/btc/btcWebSocket";
+import { Fragment, useEffect, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase/client";
 
-// ── Constants ─────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────
 
-const BOT_CONFIG: Record<string, { name: string; color: string }> = {
-  gpt:    { name: "GPT",    color: "#00A67E" },
-  claude: { name: "Claude", color: "#CC785C" },
-  gemini: { name: "Gemini", color: "#4285F4" },
-  groq:   { name: "Groq",   color: "#F55036" },
-};
-
-const BOT_IDS = ["gpt", "claude", "gemini", "groq"];
-const TOTAL_STARTING_CAPITAL = 400_000; // 4 × ₹1,00,000
-const USD_TO_INR = 95.82;               // used for live unrealised PnL display
-
-// ── Types ─────────────────────────────────────────────────────────
-
-type CapRow = {
-  bot_id: string;
-  allocated_capital: number;
-  pnl: number;
-};
-
-type PosRow = {
+type BtcStrategy = {
   id: string;
-  bot_id: string;
-  quantity: number;
-  entry_price: number;
-  current_price: number;
-  pnl: number;
-  charges: number | null;
-  direction: string | null;
-  leverage: number | null;
-  status: "OPEN" | "CLOSED";
-  opened_at: string | null;
-  closed_at: string | null;
+  name: string;
+  description: string;
+  is_active: boolean;
+  sort_order: number;
 };
 
-// ── Formatters ────────────────────────────────────────────────────
+type BtcCapital = {
+  strategy_id: string;
+  allocated_inr: number;
+  total_pnl_inr: number;
+  total_trades: number;
+  winning_trades: number;
+  sharpe_ratio: number;
+};
+
+type BtcPosition = {
+  id: string;
+  strategy_id: string;
+  side: "LONG" | "SHORT";
+  entry_price_usd: number;
+  current_price_usd: number;
+  exit_price_usd: number | null;
+  qty_inr: number;
+  pnl_inr: number;
+  stop_loss: number | null;
+  trail_sl: number | null;
+  status: "OPEN" | "CLOSED";
+  opened_at: string;
+  closed_at: string | null;
+  entry_reason: string | null;
+  exit_reason: string | null;
+  exit_reason_detail: string | null;
+};
+
+// ── BTC Strategy Config ────────────────────────────────────────
+
+const ACCENT: Record<string, string> = {
+  btc_ema_crossover:  "#F59E0B",
+  btc_orion:          "#6366F1",
+  btc_ema_confluence: "#10B981",
+  btc_supertrend:     "#EF4444",
+};
+
+const RULES: Record<string, string[]> = {
+  btc_ema_crossover: [
+    "Instrument: BTC/USD · 24/7 perpetual",
+    "Timeframe: 30-second candles",
+    "Entry LONG: EMA9 crosses above EMA21 (golden cross)",
+    "Entry SHORT: EMA9 crosses below EMA21 (death cross)",
+    "On opposite cross — existing position closed, new one opens in next cycle",
+    "Stop loss: 1.5× ATR(14) from entry price",
+    "Trail SL: 1% ratchet trail, activates immediately on open",
+    "Max 1 trade per direction per day",
+    "₹5,000 INR allocation per trade (paper trading)",
+  ],
+  btc_orion: [
+    "Instrument: BTC/USD · 24/7 perpetual",
+    "Opening Range: built from 00:00–00:30 UTC candles each day",
+    "Entry LONG: price breaks above ORB High (after 00:30 UTC)",
+    "Entry SHORT: price breaks below ORB Low (after 00:30 UTC)",
+    "Stop loss LONG: ORB Low · Stop loss SHORT: ORB High",
+    "Trail SL: 0.5% ratchet trail",
+    "Max 2 trades per day (1 long + 1 short)",
+    "₹5,000 INR allocation per trade (paper trading)",
+  ],
+  btc_ema_confluence: [
+    "Instrument: BTC/USD · 24/7 perpetual",
+    "Timeframe: 5-minute candles",
+    "All 5 filters must align simultaneously:",
+    "  1. EMA20 vs EMA50 — trend direction (bullish > / bearish <)",
+    "  2. RSI(14) — must be 40–60 (trending, not extreme)",
+    "  3. VWAP (UTC day) — price above for long, below for short",
+    "  4. ATR volatility — ATR must exceed 0.5% of price",
+    "  5. EMA9 slope — positive for long, negative for short",
+    "Stop loss: 2× ATR(14) from entry",
+    "Trail SL: 1.5% ratchet trail",
+    "Max 1 trade per direction per day",
+    "₹5,000 INR allocation per trade (paper trading)",
+  ],
+  btc_supertrend: [
+    "Instrument: BTC/USD · 24/7 perpetual",
+    "Timeframe: 5-minute candles",
+    "Indicator: Supertrend(period=7, multiplier=3)",
+    "Entry LONG: Supertrend flips bullish (down→up direction change)",
+    "Entry SHORT: Supertrend flips bearish (up→down direction change)",
+    "On opposite flip — existing position closed, new one opens next cycle",
+    "Stop loss: Supertrend line value at entry",
+    "Trail SL: 0.8% ratchet trail",
+    "Max 2 trades per day",
+    "₹5,000 INR allocation per trade (paper trading)",
+  ],
+};
+
+// ── Formatters ─────────────────────────────────────────────────
 
 function fmtUSD(n: number): string {
-  return n.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-
 function fmtINR(n: number): string {
-  return Math.abs(n).toLocaleString("en-IN", { maximumFractionDigits: 0 });
+  return Math.abs(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }
-
-
-function pnlColor(n: number): string {
-  if (n === 0) return "#888888";
-  return n > 0 ? "#00ff88" : "#ff4444";
-}
-
 function pnlStr(n: number): string {
   return `${n >= 0 ? "+" : "-"}₹${fmtINR(n)}`;
 }
+function pnlColor(n: number): string {
+  if (n === 0) return "#6b7280";
+  return n > 0 ? "#22c55e" : "#ef4444";
+}
+function fmtTime(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" }) + " UTC";
+}
+function fmtPct(n: number): string {
+  return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+}
+function winRate(cap: BtcCapital | undefined): string {
+  if (!cap || cap.total_trades === 0) return "—";
+  return `${((cap.winning_trades / cap.total_trades) * 100).toFixed(0)}%`;
+}
 
-// ── Page ──────────────────────────────────────────────────────────
+// ── BtcStrategyCard ────────────────────────────────────────────
 
-export default function BtcArenaPage() {
-  const { btcPrice, btcChange24h, update24h } = useBtcStore();
-  const router = useRouter();
+function BtcStrategyCard({
+  strategy,
+  capital,
+  openPositions,
+  onClick,
+}: {
+  strategy: BtcStrategy;
+  capital: BtcCapital | undefined;
+  openPositions: BtcPosition[];
+  onClick: () => void;
+}) {
+  const accent  = ACCENT[strategy.id] ?? "#6b7280";
+  const pnl     = capital?.total_pnl_inr ?? 0;
+  const alloc   = capital?.allocated_inr ?? 10000;
+  const retPct  = (pnl / alloc) * 100;
+  const trades  = capital?.total_trades ?? 0;
 
-  const [caps, setCaps]             = useState<CapRow[]>([]);
-  const [positions, setPositions]   = useState<PosRow[]>([]);
-  const [fetchError, setFetchError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-
-  const refresh = useCallback(async () => {
-    const [capRes, posRes] = await Promise.all([
-      supabase
-        .from("btc_capital")
-        .select("bot_id,allocated_capital,pnl"),
-      supabase
-        .from("btc_positions")
-        .select("id,bot_id,quantity,entry_price,current_price,pnl,charges,direction,leverage,status,opened_at,closed_at")
-        .order("opened_at", { ascending: false }),
-    ]);
-
-    if (capRes.error) {
-      console.error("[BTC Page] btc_capital error:", capRes.error);
-      setFetchError(`btc_capital: ${capRes.error.message}`);
-      return;
-    }
-    if (posRes.error) {
-      console.error("[BTC Page] btc_positions error:", posRes.error);
-      setFetchError(`btc_positions: ${posRes.error.message}`);
-      return;
-    }
-
-    setFetchError(null);
-    setCaps((capRes.data ?? []) as CapRow[]);
-    setPositions((posRes.data ?? []) as PosRow[]);
-    setLastUpdated(new Date());
-  }, []);
-
-  useEffect(() => {
-    startBtcWebSocket();
-
-    fetch("https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT")
-      .then((r) => r.json())
-      .then((d) =>
-        update24h(
-          parseFloat((d as { priceChangePercent?: string }).priceChangePercent ?? "0"),
-          parseFloat((d as { highPrice?: string }).highPrice ?? "0"),
-          parseFloat((d as { lowPrice?: string }).lowPrice ?? "0"),
-        )
-      )
-      .catch(() => {});
-
-    refresh();
-    const interval = setInterval(refresh, 15_000);
-    return () => clearInterval(interval);
-  }, [refresh]);
-
-  // ── Derived pool totals ────────────────────────────────────────
-  const totalCapital  = caps.reduce((s, c) => s + c.allocated_capital, 0);
-  const realisedPnl   = caps.reduce((s, c) => s + c.pnl, 0);
-  const unrealisedPnl = positions
-    .filter((p) => p.status === "OPEN")
-    .reduce((s, p) => s + (btcPrice - p.entry_price) * p.quantity * USD_TO_INR, 0);
-  const totalPnl      = realisedPnl + unrealisedPnl;
-  const totalPnlPct   = (totalPnl / TOTAL_STARTING_CAPITAL) * 100;
-
-  // ── Render ────────────────────────────────────────────────────
   return (
-    <div className="flex-1 p-6 min-h-screen text-white fade-in">
-
-      {/* ── Page title ─────────────────────────────────────── */}
-      <div className="mb-6">
-        <p className="font-pixel text-[13px] text-orange-500/50 mb-2 tracking-widest">
-          BTC ARENA · SEASON 1
-        </p>
-        <h1 className="font-pixel text-lg text-white">
-          BITCOIN TRADING
-        </h1>
+    <div
+      onClick={onClick}
+      style={{
+        background: "#0B0E17",
+        border: `1px solid ${accent}99`,
+        borderTop: `3px solid ${accent}`,
+        borderRadius: 12,
+        display: "flex",
+        flexDirection: "column",
+        cursor: "pointer",
+        overflow: "hidden",
+      }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = accent; e.currentTarget.style.borderTopColor = accent; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = `${accent}99`; e.currentTarget.style.borderTopColor = accent; }}
+    >
+      {/* Header */}
+      <div style={{ padding: "16px 16px 14px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#ffffff" }}>{strategy.name}</div>
+            <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4, lineHeight: 1.5 }}>{strategy.description}</div>
+          </div>
+          <div style={{ fontSize: 10, color: "#9ca3af", letterSpacing: "0.06em", marginTop: 3, whiteSpace: "nowrap" }}>
+            VIEW →
+          </div>
+        </div>
+        {openPositions.length > 0 && (
+          <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {openPositions.map(p => (
+              <span key={p.id} style={{
+                fontSize: 10, fontWeight: 700, color: p.side === "LONG" ? "#22c55e" : "#ef4444",
+                background: p.side === "LONG" ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)",
+                padding: "2px 7px", borderRadius: 4,
+              }}>
+                {p.side} @ ${p.entry_price_usd.toFixed(0)}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* ── Error banner ───────────────────────────────────── */}
-      {fetchError && (
-        <div
-          className="mb-6 px-4 py-3 font-pixel text-[13px] leading-relaxed"
-          style={{
-            background: "rgba(239,68,68,0.08)",
-            border: "1px solid rgba(239,68,68,0.35)",
-            color: "#ef4444",
-          }}
-        >
-          ▸ SUPABASE FETCH ERROR: {fetchError}
-          <br />
-          <span className="text-zinc-400">
-            Check NEXT_PUBLIC_SUPABASE_URL · NEXT_PUBLIC_SUPABASE_ANON_KEY · RLS on btc_capital / btc_positions
-          </span>
-        </div>
-      )}
-
-      {/* ── Pool summary ───────────────────────────────────── */}
-      <div
-        className="grid grid-cols-3 gap-0 mb-6"
-        style={{
-          background: "rgba(10,10,22,0.85)",
-          border: "1px solid rgba(255,255,255,0.07)",
-          backdropFilter: "blur(12px)",
-        }}
-      >
+      {/* Stats grid */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderTop: `1px solid ${accent}30` }}>
         {[
-          {
-            label: "POOL CAPITAL",
-            value: `₹${fmtINR(totalCapital)}`,
-            color: "#ffffff",
-          },
-          {
-            label: "TOTAL PNL",
-            value: pnlStr(totalPnl),
-            color: pnlColor(totalPnl),
-          },
-          {
-            label: "RETURN",
-            value: `${totalPnlPct >= 0 ? "+" : ""}${totalPnlPct.toFixed(3)}%`,
-            color: pnlColor(totalPnlPct),
-          },
-        ].map((item, i) => (
-          <div
-            key={item.label}
-            className="px-6 py-4"
-            style={{
-              borderRight: i < 2 ? "1px solid rgba(255,255,255,0.05)" : undefined,
-            }}
-          >
-            <p className="font-pixel font-bold text-[1.176rem] text-zinc-300 mb-2 tracking-widest">
-              {item.label}
-            </p>
-            <p className="font-pixel font-bold text-[1.176rem]" style={{ color: item.color }}>
-              {item.value}
-            </p>
+          { label: "CAPITAL",  value: `₹${fmtINR(alloc)}`,    color: "#ffffff",        weight: 600 },
+          { label: "TOTAL PnL", value: pnlStr(pnl),            color: accent,           weight: 700 },
+          { label: "RETURN",   value: fmtPct(retPct),          color: pnlColor(retPct), weight: 600 },
+          { label: "WIN RATE", value: winRate(capital),        color: "#ffffff",        weight: 600 },
+          { label: "TRADES",   value: String(trades),           color: "#ffffff",        weight: 600 },
+          { label: "OPEN",     value: String(openPositions.length), color: openPositions.length > 0 ? "#f5d547" : "#4b5563", weight: 600 },
+        ].map((s, i) => (
+          <div key={s.label} style={{
+            padding: "12px 14px",
+            borderRight: i % 3 < 2 ? `1px solid ${accent}25` : undefined,
+            borderTop:   i >= 3    ? `1px solid ${accent}25` : undefined,
+          }}>
+            <div style={{ fontSize: 11, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 5, textTransform: "uppercase" as const }}>{s.label}</div>
+            <div style={{ fontSize: 16, fontWeight: s.weight, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
           </div>
         ))}
       </div>
+    </div>
+  );
+}
 
-      {/* ── BTC price ──────────────────────────────────────── */}
+// ── BtcTradePopup ──────────────────────────────────────────────
+
+function BtcTradePopup({
+  strategy,
+  capital,
+  positions,
+  onClose,
+}: {
+  strategy: BtcStrategy;
+  capital: BtcCapital | undefined;
+  positions: BtcPosition[];
+  onClose: () => void;
+}) {
+  const accent = ACCENT[strategy.id] ?? "#6b7280";
+  const rules  = RULES[strategy.id] ?? [];
+
+  const [rulesOpen,     setRulesOpen]     = useState(false);
+  const [expandedTrade, setExpandedTrade] = useState<string | null>(null);
+
+  const pnl    = capital?.total_pnl_inr ?? 0;
+  const alloc  = capital?.allocated_inr ?? 10000;
+  const retPct = (pnl / alloc) * 100;
+  const trades = capital?.total_trades ?? 0;
+
+  const openTrades   = positions.filter(p => p.status === "OPEN");
+  const closedTrades = positions
+    .filter(p => p.status === "CLOSED")
+    .sort((a, b) => new Date(b.closed_at ?? 0).getTime() - new Date(a.closed_at ?? 0).getTime());
+
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+
+  const toggleTrade = (id: string) =>
+    setExpandedTrade(prev => (prev === id ? null : id));
+
+  const thStyle: React.CSSProperties = {
+    padding: "6px 10px",
+    fontSize: 9,
+    fontWeight: 600,
+    color: "#374151",
+    textAlign: "left",
+    letterSpacing: "0.08em",
+    whiteSpace: "nowrap",
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 9999,
+        background: "rgba(0,0,0,0.8)",
+        overflowY: "auto",
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        padding: "24px 16px 40px",
+      }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
       <div
-        className="flex items-center gap-6 mb-8 px-6 py-4"
         style={{
-          background: "rgba(10,10,22,0.85)",
-          border: "1px solid rgba(249,115,22,0.2)",
-          backdropFilter: "blur(12px)",
+          background: "#0B0E17",
+          border: `1px solid ${accent}25`,
+          borderTop: `3px solid ${accent}`,
+          width: "100%",
+          maxWidth: 1120,
         }}
+        onClick={e => e.stopPropagation()}
       >
-        <div>
-          <p className="font-pixel font-bold text-[1.176rem] text-zinc-300 mb-2 tracking-widest">
-            BTC / USD · LIVE
-          </p>
-          <p
-            className="font-pixel font-bold text-[1.176rem]"
-            style={{ color: btcPrice > 0 ? "#f97316" : "#71717a" }}
+        {/* Header */}
+        <div style={{
+          padding: "16px 20px",
+          borderBottom: "1px solid #111827",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: accent }}>{strategy.name}</div>
+            <div style={{ fontSize: 11, color: "#4b5563", marginTop: 3 }}>{strategy.description}</div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              background: "transparent",
+              border: "1px solid #1f2937",
+              color: "#6b7280",
+              width: 28,
+              height: 28,
+              fontSize: 13,
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
           >
-            {btcPrice > 0 ? `$${fmtUSD(btcPrice)}` : "CONNECTING..."}
-          </p>
+            ✕
+          </button>
         </div>
 
-        {btcChange24h !== 0 && (
-          <p
-            className="font-pixel font-bold text-[1.176rem] mt-1"
-            style={{ color: pnlColor(btcChange24h) }}
+        {/* Section A: Rules (accordion) */}
+        <div style={{ borderBottom: "1px solid #111827" }}>
+          <div
+            style={{
+              padding: "10px 20px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              cursor: "pointer",
+              userSelect: "none",
+            }}
+            onClick={() => setRulesOpen(v => !v)}
           >
-            {btcChange24h >= 0 ? "+" : ""}
-            {btcChange24h.toFixed(2)}% 24H
-          </p>
+            <span style={{ fontSize: 10, fontWeight: 700, color: "#4b5563", letterSpacing: "0.1em" }}>
+              STRATEGY RULES
+            </span>
+            <span style={{ fontSize: 10, color: "#374151" }}>{rulesOpen ? "▲ COLLAPSE" : "▼ EXPAND"}</span>
+          </div>
+          {rulesOpen && (
+            <div style={{ padding: "0 20px 16px" }}>
+              {rules.map((line, i) => {
+                const isIndented = line.startsWith("  ");
+                return (
+                  <div key={i} style={{
+                    fontSize: 11,
+                    color: isIndented ? "#6b7280" : "#9ca3af",
+                    padding: "2px 0",
+                    lineHeight: 1.65,
+                    paddingLeft: isIndented ? 20 : 0,
+                  }}>
+                    {isIndented ? line.trim() : `· ${line}`}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Section B: Stats bar */}
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(6, 1fr)",
+          borderBottom: "1px solid #111827",
+        }}>
+          {[
+            { label: "CAPITAL",   value: `₹${fmtINR(alloc)}`,     color: "#e5e7eb" },
+            { label: "TOTAL PnL", value: pnlStr(pnl),              color: pnl === 0 ? accent : pnlColor(pnl) },
+            { label: "RETURN",    value: fmtPct(retPct),           color: pnlColor(retPct) },
+            { label: "WIN RATE",  value: winRate(capital),         color: "#e5e7eb" },
+            { label: "TRADES",    value: String(trades),            color: "#e5e7eb" },
+            { label: "OPEN NOW",  value: String(openTrades.length), color: openTrades.length > 0 ? "#f5d547" : "#4b5563" },
+          ].map((s, i) => (
+            <div key={s.label} style={{
+              padding: "14px 16px",
+              borderRight: i < 5 ? "1px solid #111827" : undefined,
+            }}>
+              <div style={{ fontSize: 9, color: "#6b7280", letterSpacing: "0.1em", marginBottom: 5 }}>{s.label}</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Section C: Open trades */}
+        {openTrades.length > 0 && (
+          <div>
+            <div style={{
+              padding: "10px 20px",
+              borderBottom: "1px solid #111827",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: 10,
+              fontWeight: 700,
+              color: "#f5d547",
+              letterSpacing: "0.1em",
+            }}>
+              <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: "#f5d547", flexShrink: 0 }} />
+              OPEN TRADES ({openTrades.length}) · live updates every 5s
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 680 }}>
+                <thead>
+                  <tr style={{ background: "#070A11" }}>
+                    {["Side", "Entry (USD)", "Current (USD)", "Live PnL (INR)", "Qty (INR)", "Opened (UTC)", "Stop Loss", "Trail SL"].map(h => (
+                      <th key={h} style={thStyle}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {openTrades.map(pos => (
+                    <Fragment key={pos.id}>
+                      <tr
+                        style={{
+                          borderTop: "1px solid #0f1520",
+                          background: expandedTrade === pos.id ? `${accent}08` : "rgba(245,213,71,0.01)",
+                          cursor: "pointer",
+                        }}
+                        onClick={() => toggleTrade(pos.id)}
+                      >
+                        <td style={{ padding: "7px 10px", fontSize: 11, fontWeight: 700, color: pos.side === "LONG" ? "#22c55e" : "#ef4444" }}>
+                          {pos.side}
+                        </td>
+                        <td style={{ padding: "7px 8px", fontSize: 11, color: "#6b7280", fontFamily: "monospace" }}>
+                          ${pos.entry_price_usd.toFixed(2)}
+                        </td>
+                        <td style={{ padding: "7px 8px", fontSize: 11, color: "#f5d547", fontFamily: "monospace", fontWeight: 600 }}>
+                          ${(pos.current_price_usd ?? pos.entry_price_usd).toFixed(2)}
+                        </td>
+                        <td style={{ padding: "7px 8px", fontSize: 11, fontFamily: "monospace", fontWeight: 600, color: "#f5d547" }}>
+                          {pnlStr(pos.pnl_inr ?? 0)}
+                        </td>
+                        <td style={{ padding: "7px 8px", fontSize: 11, color: "#9ca3af" }}>₹{pos.qty_inr.toFixed(0)}</td>
+                        <td style={{ padding: "7px 8px", fontSize: 10, color: "#4b5563" }}>{fmtTime(pos.opened_at)}</td>
+                        <td style={{ padding: "7px 8px", fontSize: 11, color: "#ef4444", fontFamily: "monospace" }}>
+                          {pos.stop_loss ? `$${pos.stop_loss.toFixed(2)}` : "—"}
+                        </td>
+                        <td style={{ padding: "7px 8px", fontSize: 11, fontFamily: "monospace", color: pos.trail_sl ? "#f5d547" : "#374151" }}>
+                          {pos.trail_sl ? `$${pos.trail_sl.toFixed(2)}` : "inactive"}
+                        </td>
+                      </tr>
+                      {expandedTrade === pos.id && (
+                        <tr style={{ borderTop: "1px solid #0f1520" }}>
+                          <td colSpan={8} style={{ padding: "14px 20px", background: "#080B12" }}>
+                            <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
+                              <div style={{ flex: 1, minWidth: 220 }}>
+                                <div style={{ fontSize: 9, fontWeight: 700, color: "#374151", letterSpacing: "0.1em", marginBottom: 7 }}>WHY THIS TRADE WAS ENTERED</div>
+                                <div style={{ fontSize: 11, color: "#9ca3af", lineHeight: 1.7 }}>
+                                  {pos.entry_reason ?? "Entry signal triggered."}
+                                </div>
+                              </div>
+                              <div style={{ minWidth: 160 }}>
+                                <div style={{ fontSize: 9, fontWeight: 700, color: "#374151", letterSpacing: "0.1em", marginBottom: 7 }}>STOP LOSS</div>
+                                <div style={{ fontSize: 12, color: "#ef4444", fontFamily: "monospace" }}>
+                                  {pos.stop_loss ? `$${pos.stop_loss.toFixed(2)}` : "Not set"}
+                                </div>
+                              </div>
+                              <div style={{ minWidth: 200 }}>
+                                <div style={{ fontSize: 9, fontWeight: 700, color: "#374151", letterSpacing: "0.1em", marginBottom: 7 }}>TRAILING STOP LOSS</div>
+                                <div style={{ fontSize: 12, fontFamily: "monospace", color: pos.trail_sl ? "#f5d547" : "#374151" }}>
+                                  {pos.trail_sl ? `Active — $${pos.trail_sl.toFixed(2)}` : "Not yet activated"}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
 
-        <div className="ml-auto flex items-center gap-2">
-          <span
-            className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block"
-            style={{ animation: "pulse 2s infinite" }}
-          />
-          <span className="font-pixel font-bold text-[1.176rem] text-green-400">
-            MARKET OPEN 24/7
-          </span>
+        {/* Section D: Closed trades */}
+        {closedTrades.length > 0 && (
+          <div style={{ borderTop: openTrades.length > 0 ? "2px solid #111827" : undefined }}>
+            <div style={{
+              padding: "10px 20px",
+              borderBottom: "1px solid #111827",
+              fontSize: 10,
+              fontWeight: 700,
+              color: "#4b5563",
+              letterSpacing: "0.1em",
+            }}>
+              CLOSED TRADES ({closedTrades.length})
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
+                <thead>
+                  <tr style={{ background: "#070A11" }}>
+                    {["Side", "Entry (USD)", "Exit (USD)", "Final PnL (INR)", "Exit Reason", "Opened", "Closed"].map(h => (
+                      <th key={h} style={thStyle}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {closedTrades.map(pos => (
+                    <Fragment key={pos.id}>
+                      <tr
+                        style={{
+                          borderTop: "1px solid #0f1520",
+                          background: expandedTrade === pos.id ? "rgba(255,255,255,0.02)" : "transparent",
+                          cursor: "pointer",
+                        }}
+                        onClick={() => toggleTrade(pos.id)}
+                      >
+                        <td style={{ padding: "7px 10px", fontSize: 11, fontWeight: 700, color: pos.side === "LONG" ? "#22c55e" : "#ef4444" }}>
+                          {pos.side}
+                        </td>
+                        <td style={{ padding: "7px 8px", fontSize: 11, color: "#6b7280", fontFamily: "monospace" }}>
+                          ${pos.entry_price_usd.toFixed(2)}
+                        </td>
+                        <td style={{ padding: "7px 8px", fontSize: 11, color: "#4b5563", fontFamily: "monospace" }}>
+                          {pos.exit_price_usd != null ? `$${pos.exit_price_usd.toFixed(2)}` : "—"}
+                        </td>
+                        <td style={{ padding: "7px 8px", fontSize: 11, fontFamily: "monospace", fontWeight: 600, color: pnlColor(pos.pnl_inr ?? 0) }}>
+                          {pnlStr(pos.pnl_inr ?? 0)}
+                        </td>
+                        <td style={{ padding: "7px 8px", fontSize: 10, color: "#374151", whiteSpace: "nowrap" }}>
+                          {pos.exit_reason?.replace(/_/g, " ") ?? "—"}
+                        </td>
+                        <td style={{ padding: "7px 8px", fontSize: 10, color: "#374151" }}>{fmtTime(pos.opened_at)}</td>
+                        <td style={{ padding: "7px 8px", fontSize: 10, color: "#374151" }}>{fmtTime(pos.closed_at)}</td>
+                      </tr>
+                      {expandedTrade === pos.id && (
+                        <tr style={{ borderTop: "1px solid #0f1520" }}>
+                          <td colSpan={7} style={{ padding: "14px 20px", background: "#080B12" }}>
+                            <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
+                              <div style={{ flex: 1, minWidth: 220 }}>
+                                <div style={{ fontSize: 9, fontWeight: 700, color: "#374151", letterSpacing: "0.1em", marginBottom: 7 }}>WHY THIS TRADE WAS ENTERED</div>
+                                <div style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.7 }}>
+                                  {pos.entry_reason ?? "Entry signal triggered."}
+                                </div>
+                              </div>
+                              <div style={{ flex: 1, minWidth: 220 }}>
+                                <div style={{ fontSize: 9, fontWeight: 700, color: "#374151", letterSpacing: "0.1em", marginBottom: 7 }}>WHY THIS TRADE WAS CLOSED</div>
+                                <div style={{ fontSize: 11, color: "#9ca3af", lineHeight: 1.7 }}>
+                                  {pos.exit_reason_detail ?? pos.exit_reason?.replace(/_/g, " ") ?? "—"}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {openTrades.length === 0 && closedTrades.length === 0 && (
+          <div style={{ padding: "36px 20px", textAlign: "center", fontSize: 12, color: "#1f2937" }}>
+            No trades yet for this strategy.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── BTC Arena Page ─────────────────────────────────────────────
+
+export default function BtcArenaPage() {
+  const [strategies,     setStrategies]     = useState<BtcStrategy[]>([]);
+  const [capitals,       setCapitals]       = useState<BtcCapital[]>([]);
+  const [positions,      setPositions]      = useState<BtcPosition[]>([]);
+  const [btcPrice,       setBtcPrice]       = useState<number>(0);
+  const [lastUpdate,     setLastUpdate]     = useState<Date | null>(null);
+  const [error,          setError]          = useState<string | null>(null);
+  const [popup,          setPopup]          = useState<BtcStrategy | null>(null);
+  const [popupPositions, setPopupPositions] = useState<BtcPosition[]>([]);
+
+  // Main 15s refresh
+  const refresh = useCallback(async () => {
+    const [sRes, cRes, pRes, priceRes] = await Promise.all([
+      supabase.from("btc_strategies").select("*").order("sort_order"),
+      supabase.from("btc_strategy_capital").select("*"),
+      supabase.from("btc_strategy_positions").select("*").order("opened_at", { ascending: false }).limit(300),
+      supabase.from("config").select("value").eq("key", "BTC_PRICE_USD").single(),
+    ]);
+
+    if (sRes.error || cRes.error || pRes.error) {
+      setError(sRes.error?.message ?? cRes.error?.message ?? pRes.error?.message ?? "Unknown");
+      return;
+    }
+
+    setError(null);
+    setStrategies((sRes.data ?? []) as BtcStrategy[]);
+    setCapitals((cRes.data ?? []) as BtcCapital[]);
+    setPositions((pRes.data ?? []) as BtcPosition[]);
+    if (priceRes.data?.value) setBtcPrice(parseFloat(priceRes.data.value));
+    setLastUpdate(new Date());
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const iv = setInterval(refresh, 15_000);
+    return () => clearInterval(iv);
+  }, [refresh]);
+
+  // Popup 5s position refresh
+  useEffect(() => {
+    if (!popup) return;
+    const fetchPopup = async () => {
+      const { data } = await supabase
+        .from("btc_strategy_positions")
+        .select("*")
+        .eq("strategy_id", popup.id)
+        .order("opened_at", { ascending: false })
+        .limit(200);
+      if (data) setPopupPositions(data as BtcPosition[]);
+    };
+    fetchPopup();
+    const iv = setInterval(fetchPopup, 5_000);
+    return () => clearInterval(iv);
+  }, [popup]);
+
+  const openPopup = (s: BtcStrategy) => {
+    setPopupPositions(positions.filter(p => p.strategy_id === s.id));
+    setPopup(s);
+  };
+
+  // Aggregate stats
+  const totalPnl   = capitals.reduce((s, c) => s + c.total_pnl_inr, 0);
+  const totalAlloc = capitals.reduce((s, c) => s + c.allocated_inr, 0) || 40000;
+  const retPct     = (totalPnl / totalAlloc) * 100;
+  const totalTrades = capitals.reduce((s, c) => s + c.total_trades, 0);
+
+  return (
+    <div style={{ background: "#0A0D14", minHeight: "100vh", padding: "18px 16px 32px" }}>
+      {/* Page header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16 }}>
+        <div>
+          <div style={{ fontSize: 9, color: "#1f2937", letterSpacing: "0.15em", marginBottom: 4 }}>
+            AI TRADING ARENA · SEASON 1 · PAPER TRADING
+          </div>
+          <h1 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: "#e5e7eb" }}>
+            BTC Arena
+          </h1>
+        </div>
+        <div style={{ fontSize: 9, color: "#374151" }}>
+          {lastUpdate
+            ? `UPDATED ${lastUpdate.toLocaleTimeString()} · AUTO-REFRESH 15s`
+            : "CONNECTING..."}
         </div>
       </div>
 
-      {/* ── Bot squares ────────────────────────────────────── */}
-      <div className="grid grid-cols-4 gap-4">
-        {BOT_IDS.map((botId) => {
-          const cfg     = BOT_CONFIG[botId]!;
-          const cap     = caps.find((c) => c.bot_id === botId);
-          const capital = cap?.allocated_capital ?? 100_000;
-          const pnl     = cap?.pnl ?? 0;
-          const retPct  = (pnl / 100_000) * 100;
-
-          const botPos       = positions.filter((p) => p.bot_id === botId);
-          const openPos      = botPos.filter((p) => p.status === "OPEN");
-          const totalCharges = botPos.reduce((s, p) => s + (p.charges ?? 0), 0);
-
-          return (
-            <div
-              key={botId}
-              onClick={() => router.push(`/btc/trades?bot=${botId}`)}
-              className="cursor-pointer px-5 py-5 flex flex-col gap-4 transition-all hover:scale-[1.02]"
-              style={{
-                background: "rgba(10,10,22,0.85)",
-                border: `1px solid ${cfg.color}40`,
-                backdropFilter: "blur(12px)",
-                boxShadow: `0 0 20px ${cfg.color}10`,
-              }}
-            >
-              {/* Bot name */}
-              <div className="flex items-center gap-2">
-                <div
-                  className="w-2 h-2 rounded-full flex-shrink-0"
-                  style={{ background: cfg.color, boxShadow: `0 0 8px ${cfg.color}` }}
-                />
-                <p className="font-pixel font-bold text-[1.176rem]" style={{ color: cfg.color }}>
-                  {cfg.name} BOT
-                </p>
-              </div>
-
-              {/* Stats */}
-              <div className="flex flex-col gap-3">
-                {[
-                  { label: "CAPITAL",   value: `₹${fmtINR(capital)}`,                           color: "#ffffff" },
-                  { label: "TOTAL PNL", value: pnlStr(pnl),                                     color: pnlColor(pnl) },
-                  { label: "RETURN",    value: `${retPct >= 0 ? "+" : ""}${retPct.toFixed(2)}%`, color: pnlColor(retPct) },
-                  { label: "TRADES",    value: `${botPos.length} (${openPos.length} open)`,      color: "#a1a1aa" },
-                  { label: "CHARGES",   value: `₹${fmtINR(totalCharges)}`,                       color: "#f59e0b" },
-                ].map((row) => (
-                  <div key={row.label} className="flex justify-between items-baseline">
-                    <p className="font-pixel font-bold text-[1.176rem] text-zinc-400 tracking-widest">
-                      {row.label}
-                    </p>
-                    <p className="font-pixel font-bold text-[1.176rem]" style={{ color: row.color }}>
-                      {row.value}
-                    </p>
-                  </div>
-                ))}
-              </div>
-
-              {/* Open positions direction/leverage */}
-              <div className="flex flex-col gap-1">
-                {openPos.length === 0 ? (
-                  <p className="font-pixel text-[0.7rem] text-zinc-400">No open position</p>
-                ) : (
-                  openPos.map((p) => {
-                    const dir = p.direction ?? "LONG";
-                    const lev = p.leverage ?? 1;
-                    return (
-                      <p key={p.id} className="font-pixel text-[0.7rem] font-bold"
-                        style={{ color: dir === "SHORT" ? "#ef4444" : "#22c55e" }}>
-                        {dir} {lev}x
-                      </p>
-                    );
-                  })
-                )}
-              </div>
-
-              {/* Click hint */}
-              <p className="font-pixel text-[0.55rem] text-zinc-400 tracking-widest mt-1">
-                TAP FOR DETAILS →
-              </p>
-            </div>
-          );
-        })}
+      {/* BTC price banner */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 24,
+        marginBottom: 16,
+        padding: "12px 16px",
+        background: "#0B0E17",
+        border: "1px solid rgba(247,147,26,0.2)",
+        borderRadius: 8,
+      }}>
+        <div>
+          <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.12em", marginBottom: 4 }}>BTC / USD · LIVE</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: btcPrice > 0 ? "#F7931A" : "#4b5563", fontFamily: "monospace" }}>
+            {btcPrice > 0 ? `$${fmtUSD(btcPrice)}` : "CONNECTING..."}
+          </div>
+        </div>
+        <div style={{ height: 32, width: 1, background: "#1f2937" }} />
+        <div>
+          <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.12em", marginBottom: 4 }}>TOTAL PnL (ALL STRATEGIES)</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: totalPnl === 0 ? "#4b5563" : pnlColor(totalPnl), fontFamily: "monospace" }}>
+            {pnlStr(totalPnl)} &nbsp;
+            <span style={{ fontSize: 12, color: pnlColor(retPct) }}>({fmtPct(retPct)})</span>
+          </div>
+        </div>
+        <div style={{ height: 32, width: 1, background: "#1f2937" }} />
+        <div>
+          <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.12em", marginBottom: 4 }}>TOTAL TRADES</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#9ca3af", fontFamily: "monospace" }}>
+            {totalTrades}
+          </div>
+        </div>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e", display: "inline-block" }} />
+          <span style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.1em" }}>MARKET OPEN 24/7</span>
+        </div>
       </div>
 
-      {/* ── Footer ─────────────────────────────────────────── */}
-      {lastUpdated && (
-        <p className="font-pixel text-[13px] text-zinc-300 text-center mt-8">
-          UPDATED {lastUpdated.toLocaleTimeString()} · AUTO-REFRESH 15s
-        </p>
+      {/* Error banner */}
+      {error && (
+        <div style={{
+          marginBottom: 12,
+          padding: "9px 12px",
+          background: "rgba(239,68,68,0.05)",
+          border: "1px solid rgba(239,68,68,0.15)",
+          color: "#ef4444",
+          fontSize: 11,
+          borderRadius: 4,
+        }}>
+          Supabase error: {error} —{" "}
+          <span style={{ color: "#4b5563" }}>
+            Run migration 005_btc_rebuild.sql in your Supabase dashboard first.
+          </span>
+        </div>
       )}
 
+      {/* Strategy cards — 2×2 grid */}
+      {strategies.length > 0 && (
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(2, 1fr)",
+          gap: 16,
+        }}>
+          {strategies.map(s => (
+            <BtcStrategyCard
+              key={s.id}
+              strategy={s}
+              capital={capitals.find(c => c.strategy_id === s.id)}
+              openPositions={positions.filter(p => p.strategy_id === s.id && p.status === "OPEN")}
+              onClick={() => openPopup(s)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {strategies.length === 0 && !error && (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 300, gap: 8 }}>
+          <div style={{ fontSize: 12, color: "#374151" }}>Waiting for data...</div>
+          <div style={{ fontSize: 10, color: "#1f2937" }}>
+            Run supabase/migrations/005_btc_rebuild.sql if tables are missing.
+          </div>
+        </div>
+      )}
+
+      {/* Trade detail popup */}
+      {popup && (
+        <BtcTradePopup
+          strategy={popup}
+          capital={capitals.find(c => c.strategy_id === popup.id)}
+          positions={popupPositions}
+          onClose={() => setPopup(null)}
+        />
+      )}
     </div>
   );
 }

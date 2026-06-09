@@ -8,8 +8,7 @@ const NAV_MAIN = [
 ];
 
 const NAV_CRYPTO = [
-  { href: "/btc",        label: "BTC ARENA" },
-  { href: "/btc/trades", label: "BTC TRADES" },
+  { href: "/btc", label: "BTC ARENA" },
 ];
 
 function NavItem({
