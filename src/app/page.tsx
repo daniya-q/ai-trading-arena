@@ -209,7 +209,7 @@ function LockedCard({ strategy }: { strategy: Strategy }) {
   return (
     <div style={{
       background: "#080B12",
-      border: "1px solid #1a2030",
+      border: "1px solid #1f2937",
       borderRadius: 12,
       padding: "20px 16px",
       display: "flex",
@@ -219,10 +219,10 @@ function LockedCard({ strategy }: { strategy: Strategy }) {
       minHeight: 90,
       gap: 6,
     }}>
-      <div style={{ fontSize: 10, fontWeight: 700, color: "#1f2937", letterSpacing: "0.12em" }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: "#4b5563", letterSpacing: "0.1em" }}>
         SLOT {strategy.slot_number}
       </div>
-      <div style={{ fontSize: 10, color: "#1f2937" }}>COMING SOON</div>
+      <div style={{ fontSize: 11, color: "#374151" }}>COMING SOON</div>
     </div>
   );
 }
@@ -250,46 +250,47 @@ function StrategyCard({
       onClick={onClick}
       style={{
         background: "#0B0E17",
-        border: `1px solid ${accent}40`,
+        border: `1px solid ${accent}99`,
+        borderTop: `3px solid ${accent}`,
         borderRadius: 12,
         display: "flex",
         flexDirection: "column",
         cursor: "pointer",
         overflow: "hidden",
       }}
-      onMouseEnter={e => (e.currentTarget.style.borderColor = `${accent}80`)}
-      onMouseLeave={e => (e.currentTarget.style.borderColor = `${accent}40`)}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = accent; e.currentTarget.style.borderTopColor = accent; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = `${accent}99`; e.currentTarget.style.borderTopColor = accent; }}
     >
       {/* Header */}
-      <div style={{ padding: "16px 16px 12px" }}>
+      <div style={{ padding: "16px 16px 14px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: accent }}>{strategy.name}</div>
-            <div style={{ fontSize: 10, color: "#4b5563", marginTop: 3, lineHeight: 1.5 }}>{strategy.description}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#ffffff" }}>{strategy.name}</div>
+            <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4, lineHeight: 1.5 }}>{strategy.description}</div>
           </div>
-          <div style={{ fontSize: 9, color: "#374151", letterSpacing: "0.06em", marginTop: 1, whiteSpace: "nowrap" }}>
+          <div style={{ fontSize: 10, color: "#9ca3af", letterSpacing: "0.06em", marginTop: 3, whiteSpace: "nowrap" }}>
             VIEW →
           </div>
         </div>
       </div>
 
       {/* Stats grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderTop: `1px solid ${accent}18` }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderTop: `1px solid ${accent}30` }}>
         {[
-          { label: "CAPITAL",   value: "₹1,00,000",       color: "#9ca3af" },
-          { label: "TOTAL PnL", value: pnlStr(pnl),        color: pnl === 0 ? accent : pnlColor(pnl) },
-          { label: "RETURN",    value: fmtPct(retPct),     color: pnlColor(retPct) },
-          { label: "SHARPE",    value: sharpe.toFixed(2),  color: "#9ca3af" },
-          { label: "TODAY",     value: String(today),       color: "#9ca3af" },
-          { label: "LIFETIME",  value: String(life),        color: "#9ca3af" },
+          { label: "CAPITAL",   value: "₹1,00,000",      color: "#ffffff",        weight: 600 },
+          { label: "TOTAL PnL", value: pnlStr(pnl),       color: accent,           weight: 700 },
+          { label: "RETURN",    value: fmtPct(retPct),    color: pnlColor(retPct), weight: 600 },
+          { label: "SHARPE",    value: sharpe.toFixed(2), color: "#ffffff",        weight: 600 },
+          { label: "TODAY",     value: String(today),      color: "#ffffff",        weight: 600 },
+          { label: "LIFETIME",  value: String(life),       color: "#ffffff",        weight: 600 },
         ].map((s, i) => (
           <div key={s.label} style={{
-            padding: "10px 12px",
-            borderRight: i % 3 < 2 ? `1px solid ${accent}18` : undefined,
-            borderTop:   i >= 3    ? `1px solid ${accent}18` : undefined,
+            padding: "12px 14px",
+            borderRight: i % 3 < 2 ? `1px solid ${accent}25` : undefined,
+            borderTop:   i >= 3    ? `1px solid ${accent}25` : undefined,
           }}>
-            <div style={{ fontSize: 8, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 4 }}>{s.label}</div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
+            <div style={{ fontSize: 11, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 5, textTransform: "uppercase" as const }}>{s.label}</div>
+            <div style={{ fontSize: 16, fontWeight: s.weight, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
           </div>
         ))}
       </div>

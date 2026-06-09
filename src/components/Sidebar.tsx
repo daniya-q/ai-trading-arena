@@ -28,16 +28,16 @@ function NavItem({
     <Link href={href}>
       <div
         style={{
-          padding: "10px 12px",
+          padding: "10px 16px",
+          paddingLeft: isActive ? 14 : 16,
           fontSize: 13,
           fontWeight: 600,
-          letterSpacing: "0.06em",
+          letterSpacing: "0.04em",
           color: isActive
             ? (accent || "#ffffff")
-            : (accent ? `${accent}cc` : "#d1d5db"),
+            : (accent ? `${accent}dd` : "#d1d5db"),
           background: isActive ? "rgba(255,255,255,0.05)" : "transparent",
           borderLeft: `2px solid ${isActive ? (accent || "#ffffff") : "transparent"}`,
-          paddingLeft: isActive ? 10 : 12,
           transition: "color 0.15s",
         }}
       >
@@ -79,8 +79,8 @@ export default function Sidebar() {
       </div>
 
       {/* Main nav */}
-      <div style={{ padding: "16px 4px 8px" }}>
-        <div style={{ fontSize: 11, color: "#9ca3af", letterSpacing: "0.12em", padding: "0 12px", marginBottom: 6, fontWeight: 600 }}>
+      <div style={{ padding: "16px 0 8px" }}>
+        <div style={{ fontSize: 11, color: "#9ca3af", letterSpacing: "0.12em", padding: "0 16px", marginBottom: 6, fontWeight: 600 }}>
           STRATEGIES
         </div>
         {NAV_MAIN.map((item) => (
@@ -89,8 +89,8 @@ export default function Sidebar() {
       </div>
 
       {/* Crypto nav */}
-      <div style={{ padding: "8px 4px" }}>
-        <div style={{ fontSize: 11, color: "#9ca3af", letterSpacing: "0.12em", padding: "0 12px", marginBottom: 6, fontWeight: 600 }}>
+      <div style={{ padding: "8px 0" }}>
+        <div style={{ fontSize: 11, color: "#9ca3af", letterSpacing: "0.12em", padding: "0 16px", marginBottom: 6, fontWeight: 600 }}>
           CRYPTO
         </div>
         {NAV_CRYPTO.map((item) => (
