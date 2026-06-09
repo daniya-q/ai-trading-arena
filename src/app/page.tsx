@@ -209,8 +209,8 @@ function LockedCard({ strategy }: { strategy: Strategy }) {
   return (
     <div style={{
       background: "#080B12",
-      border: "1px solid #0f1520",
-      borderTop: "2px solid #1a2030",
+      border: "1px solid #1a2030",
+      borderRadius: 12,
       padding: "20px 16px",
       display: "flex",
       flexDirection: "column",
@@ -250,31 +250,31 @@ function StrategyCard({
       onClick={onClick}
       style={{
         background: "#0B0E17",
-        border: "1px solid #111827",
-        borderTop: `2px solid ${accent}`,
+        border: `1px solid ${accent}40`,
+        borderRadius: 12,
         display: "flex",
         flexDirection: "column",
         cursor: "pointer",
-        aspectRatio: "1",
+        overflow: "hidden",
       }}
-      onMouseEnter={e => (e.currentTarget.style.background = "#0f1420")}
-      onMouseLeave={e => (e.currentTarget.style.background = "#0B0E17")}
+      onMouseEnter={e => (e.currentTarget.style.borderColor = `${accent}80`)}
+      onMouseLeave={e => (e.currentTarget.style.borderColor = `${accent}40`)}
     >
       {/* Header */}
-      <div style={{ padding: "20px 20px 16px", borderBottom: "1px solid #111827", flex: 1 }}>
+      <div style={{ padding: "16px 16px 12px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: accent }}>{strategy.name}</div>
-            <div style={{ fontSize: 11, color: "#4b5563", marginTop: 4, lineHeight: 1.5 }}>{strategy.description}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: accent }}>{strategy.name}</div>
+            <div style={{ fontSize: 10, color: "#4b5563", marginTop: 3, lineHeight: 1.5 }}>{strategy.description}</div>
           </div>
-          <div style={{ fontSize: 9, color: "#374151", letterSpacing: "0.06em", marginTop: 2, whiteSpace: "nowrap" }}>
+          <div style={{ fontSize: 9, color: "#374151", letterSpacing: "0.06em", marginTop: 1, whiteSpace: "nowrap" }}>
             VIEW →
           </div>
         </div>
       </div>
 
       {/* Stats grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderTop: `1px solid ${accent}18` }}>
         {[
           { label: "CAPITAL",   value: "₹1,00,000",       color: "#9ca3af" },
           { label: "TOTAL PnL", value: pnlStr(pnl),        color: pnl === 0 ? accent : pnlColor(pnl) },
@@ -284,12 +284,12 @@ function StrategyCard({
           { label: "LIFETIME",  value: String(life),        color: "#9ca3af" },
         ].map((s, i) => (
           <div key={s.label} style={{
-            padding: "12px 14px",
-            borderRight: i % 3 < 2 ? "1px solid #111827" : undefined,
-            borderTop:   i >= 3    ? "1px solid #111827" : undefined,
+            padding: "10px 12px",
+            borderRight: i % 3 < 2 ? `1px solid ${accent}18` : undefined,
+            borderTop:   i >= 3    ? `1px solid ${accent}18` : undefined,
           }}>
-            <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 5 }}>{s.label}</div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
+            <div style={{ fontSize: 8, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 4 }}>{s.label}</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
           </div>
         ))}
       </div>

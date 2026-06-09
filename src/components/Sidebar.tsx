@@ -80,7 +80,7 @@ export default function Sidebar() {
 
       {/* Main nav */}
       <div style={{ padding: "16px 4px 8px" }}>
-        <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.15em", padding: "0 12px", marginBottom: 6 }}>
+        <div style={{ fontSize: 11, color: "#9ca3af", letterSpacing: "0.12em", padding: "0 12px", marginBottom: 6, fontWeight: 600 }}>
           STRATEGIES
         </div>
         {NAV_MAIN.map((item) => (
@@ -90,7 +90,7 @@ export default function Sidebar() {
 
       {/* Crypto nav */}
       <div style={{ padding: "8px 4px" }}>
-        <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.15em", padding: "0 12px", marginBottom: 6 }}>
+        <div style={{ fontSize: 11, color: "#9ca3af", letterSpacing: "0.12em", padding: "0 12px", marginBottom: 6, fontWeight: 600 }}>
           CRYPTO
         </div>
         {NAV_CRYPTO.map((item) => (
