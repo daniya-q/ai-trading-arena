@@ -684,6 +684,58 @@ async function openStrategyPosition(
   }
 }
 
+function generateExitDetail(
+  reason: string,
+  pos: { entry_price: number; stop_loss: number | null; trail_sl: number | null; strategy_id: string; type: string },
+  exitPrice: number,
+  peakPremium?: number
+): string {
+  const ist   = getIST();
+  const timeStr = `${String(ist.getHours()).padStart(2,"0")}:${String(ist.getMinutes()).padStart(2,"0")} IST`;
+
+  const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:25, gap_orb:20 };
+  const TRAIL_PCT: Record<string, number> = { ema_crossover:10, ema_confluence:10, orion:15, supertrend:12, pcr_reversal:12, gap_orb:12 };
+  const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:00 PM", orion:"2:00 PM", ema_confluence:"3:00 PM", supertrend:"3:00 PM", pcr_reversal:"3:00 PM", gap_orb:"3:00 PM" };
+
+  switch (reason) {
+    case "SL_HIT": {
+      const pct = SL_PCT[pos.strategy_id] ?? 15;
+      const sl  = pos.stop_loss ?? Number((pos.entry_price * (1 - pct / 100)).toFixed(2));
+      return `Stop loss hit at ${timeStr}. Entry: ₹${pos.entry_price.toFixed(2)}. SL was set at ${pct}% below entry = ₹${sl.toFixed(2)}. Price dropped to ₹${exitPrice.toFixed(2)}.`;
+    }
+    case "CROSSOVER": {
+      if (pos.strategy_id === "supertrend") {
+        const flip = pos.type === "CE" ? "red (bearish)" : "green (bullish)";
+        return `Supertrend flipped ${flip} at ${timeStr}. Opposite signal triggered — position closed.`;
+      }
+      const cross = pos.type === "CE" ? "16 EMA crossed below 64 EMA" : "16 EMA crossed above 64 EMA";
+      return `${cross} at ${timeStr}. Opposite crossover signal — position closed and flip trade entered.`;
+    }
+    case "TRAIL_SL": {
+      const tpct  = TRAIL_PCT[pos.strategy_id] ?? 10;
+      const peak  = peakPremium ?? (pos.trail_sl != null ? Number((pos.trail_sl / (1 - tpct / 100)).toFixed(2)) : null);
+      const trail = pos.trail_sl ?? (peak != null ? Number((peak * (1 - tpct / 100)).toFixed(2)) : null);
+      if (peak != null && trail != null) {
+        return `Trailing stop loss triggered at ${timeStr}. Premium peaked at ₹${peak.toFixed(2)}, trail SL was ${tpct}% below peak = ₹${trail.toFixed(2)}. Price dropped to ₹${exitPrice.toFixed(2)}.`;
+      }
+      return `Trailing stop loss triggered at ${timeStr}. Price dropped to ₹${exitPrice.toFixed(2)}.`;
+    }
+    case "HARD_CLOSE":
+      return `Position closed at ${CLOSE_TIME[pos.strategy_id] ?? "3:00 PM"} per the hard close rule.`;
+    case "PCR_NEUTRAL":
+      return `PCR reverted to neutral zone (0.9–1.1) at ${timeStr}. Mean-reversion complete — signal no longer valid.`;
+    case "OI_REVERSE": {
+      const opposite = pos.type === "CE" ? "PE" : "CE";
+      return `${opposite} OI buildup detected at ${timeStr}. Opposite side strengthening — position closed to avoid reversal.`;
+    }
+    case "TARGET":
+    case "GAP_FILL":
+      return `Gap fill target reached at ${timeStr}. Price returned to previous day's close level. Trade objective achieved at ₹${exitPrice.toFixed(2)}.`;
+    default:
+      return `Position closed at ${timeStr}. Reason: ${reason}. Exit: ₹${exitPrice.toFixed(2)}.`;
+  }
+}
+
 async function closeStrategyPosition(
   posId: string,
   exitPrice: number,
@@ -691,21 +743,23 @@ async function closeStrategyPosition(
 ): Promise<void> {
   const { data: pos } = await supabase
     .from("strategy_positions")
-    .select("entry_price, quantity, strategy_id, symbol")
+    .select("entry_price, quantity, strategy_id, symbol, type, stop_loss, trail_sl")
     .eq("id", posId)
     .single();
   if (!pos) return;
 
-  const p = pos as { entry_price: number; quantity: number; strategy_id: string; symbol: string };
-  const pnl = (exitPrice - p.entry_price) * p.quantity;
+  const p = pos as { entry_price: number; quantity: number; strategy_id: string; symbol: string; type: string; stop_loss: number | null; trail_sl: number | null };
+  const pnl    = (exitPrice - p.entry_price) * p.quantity;
+  const detail = generateExitDetail(reason, p, exitPrice, peakPremiums[posId]);
 
   const { error } = await supabase.from("strategy_positions").update({
-    status:     "CLOSED",
-    exit_price: exitPrice,
-    current_price: exitPrice,
-    pnl:        Number(pnl.toFixed(2)),
-    closed_at:  new Date().toISOString(),
-    exit_reason: reason,
+    status:             "CLOSED",
+    exit_price:         exitPrice,
+    current_price:      exitPrice,
+    pnl:                Number(pnl.toFixed(2)),
+    closed_at:          new Date().toISOString(),
+    exit_reason:        reason,
+    exit_reason_detail: detail,
   }).eq("id", posId);
 
   if (error) {
