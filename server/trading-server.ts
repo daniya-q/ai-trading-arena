@@ -130,23 +130,24 @@ let tradeDateStr = "";
 // ══════════════════════════════════════════════════════════════
 
 function getIST(): Date {
-  return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  // UTC+5:30 — avoids toLocaleString ICU dependency on Railway
+  return new Date(Date.now() + (5 * 60 + 30) * 60_000);
 }
 
 function istMins(): number {
   const d = getIST();
-  return d.getHours() * 60 + d.getMinutes();
+  return d.getUTCHours() * 60 + d.getUTCMinutes();
 }
 
 function todayIST(): string {
   const d = getIST();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}-${String(d.getUTCDate()).padStart(2,"0")}`;
 }
 
 function isMarketOpen(): boolean {
   const d = getIST();
-  if (d.getDay() === 0 || d.getDay() === 6) return false;
-  const m = d.getHours() * 60 + d.getMinutes();
+  if (d.getUTCDay() === 0 || d.getUTCDay() === 6) return false;
+  const m = d.getUTCHours() * 60 + d.getUTCMinutes();
   return m >= 555 && m <= 930; // 9:15–15:30
 }
 
@@ -953,9 +954,8 @@ async function runOrionForIndex(index: string, mins: number): Promise<void> {
   // Set ORB from first completed 15m candle (9:15–9:30 candle)
   if (!orbSet[index] && candles15m.length >= 1) {
     const orbCandle = candles15m[0];
-    const orbTime = new Date(orbCandle.time);
-    const istH = new Date(orbTime.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-    if (istH.getHours() === 9 && istH.getMinutes() === 15) {
+    const istH = new Date(orbCandle.time + (5 * 60 + 30) * 60_000);
+    if (istH.getUTCHours() === 9 && istH.getUTCMinutes() === 15) {
       orbHigh[index] = orbCandle.high;
       orbLow[index]  = orbCandle.low;
       orbSet[index]  = true;
@@ -1412,13 +1412,24 @@ async function pollLTP(): Promise<void> {
 // ══════════════════════════════════════════════════════════════
 
 let strategyRunning = false;
+let lastClosedLog = 0;
 
 async function runEquityStrategies(): Promise<void> {
   if (strategyRunning) return;
   strategyRunning = true;
   try {
     checkDailyReset();
-    if (!isMarketOpen()) return;
+    const mins = istMins();
+    const hh = String(Math.floor(mins / 60)).padStart(2, "0");
+    const mm = String(mins % 60).padStart(2, "0");
+    if (!isMarketOpen()) {
+      if (Date.now() - lastClosedLog > 600_000) { // log once every 10 min
+        console.log(`[Equity] Market closed — IST ${hh}:${mm}`);
+        lastClosedLog = Date.now();
+      }
+      return;
+    }
+    console.log(`[Equity] Cycle — IST ${hh}:${mm}`);
     await Promise.allSettled([
       runStrategy1(),
       runStrategy2(),
