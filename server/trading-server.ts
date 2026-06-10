@@ -427,7 +427,43 @@ function nextWeekday(weekday: number): Date {
   return d;
 }
 
+// Cache of expiry dates fetched from Upstox to avoid repeated API calls
+const expiryCache: Record<string, { expiry: string; fetchedAt: number }> = {};
+
 async function getWeeklyExpiry(index: string): Promise<string> {
+  // Try to fetch available expiries from Upstox and pick nearest upcoming one
+  const cached = expiryCache[index];
+  if (cached && Date.now() - cached.fetchedAt < 3_600_000) {
+    return cached.expiry;
+  }
+  const token = upstoxToken();
+  if (token) {
+    try {
+      const instrKey = OPTION_KEYS[index];
+      const url = new URL("https://api.upstox.com/v2/option/contract");
+      url.searchParams.set("instrument_key", instrKey);
+      const res = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      });
+      if (res.ok) {
+        const json = await res.json() as { data?: Array<{ expiry?: string }> };
+        const today = todayIST();
+        const expiries = (json.data ?? [])
+          .map(e => e.expiry ?? "")
+          .filter(e => e >= today)
+          .sort();
+        if (expiries.length > 0) {
+          const expiry = expiries[0];
+          expiryCache[index] = { expiry, fetchedAt: Date.now() };
+          console.log(`[Expiry:${index}] Fetched from Upstox: ${expiry}`);
+          return expiry;
+        }
+      }
+    } catch (err) {
+      console.warn(`[Expiry:${index}] Upstox contract fetch failed:`, err);
+    }
+  }
+  // Fallback: compute manually
   if (index === "BANKNIFTY") {
     // BANKNIFTY: monthly expiry — last Thursday of current month
     const now     = new Date();
@@ -438,7 +474,6 @@ async function getWeeklyExpiry(index: string): Promise<string> {
     lastDay.setUTCDate(lastDay.getUTCDate() - diff);
     const today   = new Date(Date.UTC(year, month, now.getUTCDate()));
     if (today > lastDay) {
-      // current month expiry passed — use next month
       const nm  = month + 1 > 11 ? 0 : month + 1;
       const ny  = month + 1 > 11 ? year + 1 : year;
       const nld = new Date(Date.UTC(ny, nm + 1, 0));
