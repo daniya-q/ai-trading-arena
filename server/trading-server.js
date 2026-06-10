@@ -758,8 +758,10 @@ async function runStrategy1() {
     if (mins < 630 || mins >= 900)
         return; // 10:30–15:00
     const candles = getCandles("NIFTY", "30s");
-    if (candles.length < 66)
+    if (candles.length < 66) {
+        console.log(`[S1] Waiting for candles — have ${candles.length}/66`);
         return;
+    }
     const closes = candles.map(c => c.close);
     const fastArr = emaValues(closes, 16);
     const slowArr = emaValues(closes, 64);
@@ -771,11 +773,13 @@ async function runStrategy1() {
     const bearCross = fastPrev >= slowPrev && fastCurr < slowCurr;
     s1PrevFast = fastCurr;
     s1PrevSlow = slowCurr;
+    const crossTag = bullCross ? "BULL-CROSS↑" : bearCross ? "BEAR-CROSS↓" : "no-cross";
+    const atr = calcATR(candles, 14);
+    console.log(`[S1] candles=${candles.length} EMA16=${fastCurr.toFixed(1)} EMA64=${slowCurr.toFixed(1)} ATR=${atr.toFixed(1)} | ${crossTag}`);
     if (!bullCross && !bearCross)
         return;
     const optType = bullCross ? "CE" : "PE";
     const openPos = await getOpenStrategyPositions("ema_crossover");
-    // If opposite type open → close it first (FLIP)
     for (const pos of openPos) {
         if (pos.type !== optType) {
             const cp = getCurrentPrice(pos.symbol);
@@ -783,29 +787,23 @@ async function runStrategy1() {
                 await closeStrategyPosition(pos.id, cp, "CROSSOVER");
         }
         else {
-            return; // already in same direction trade
+            console.log(`[S1] Already in ${optType} — skipping`);
+            return;
         }
     }
     const chain = getLatestChain("NIFTY");
-    if (!chain)
+    if (!chain) {
+        console.log(`[S1] No option chain data`);
         return;
+    }
+    const fld = optType === "CE" ? "cePremium" : "pePremium";
+    const allPrem = chain.rows.map(r => r[fld]).filter(p => p > 0).sort((a, b) => a - b);
     const option = getATMOption(chain, optType, 60, 70);
     if (!option) {
-        console.log(`[S1] No ATM ${optType} in ₹60-70 range`);
+        console.log(`[S1] SIGNAL ${optType} — no option in ₹60-70 (chain range ₹${allPrem[0]?.toFixed(0) ?? "?"}-${allPrem[allPrem.length - 1]?.toFixed(0) ?? "?"})`);
         return;
     }
-    const atr = calcATR(candles, 14);
-    // Use Fibonacci confluence check (50–61.8% zone)
-    const recentHighs = candles.slice(-100).map(c => c.high);
-    const recentLows = candles.slice(-100).map(c => c.low);
-    const fibH = Math.max(...recentHighs);
-    const fibL = Math.min(...recentLows);
-    const fib = calcFibLevels(fibH, fibL);
-    const price = lastNiftyPrice;
-    const nearFib = price >= fib["50"] * 0.998 && price <= fib["61.8"] * 1.002;
-    if (!nearFib && Math.abs(price - fib["50"]) / fib["50"] > 0.003) {
-        // Confluence not met but still trade — fib is advisory for this strategy
-    }
+    console.log(`[S1] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — opening trade`);
     await openStrategyPosition("ema_crossover", {
         symbol: option.symbol,
         type: optType,
@@ -818,7 +816,6 @@ async function runStrategy1() {
         pnl: 0,
         status: "OPEN",
     });
-    void atr; // used for trailing SL monitoring
 }
 // ══════════════════════════════════════════════════════════════
 // Strategy 2 — Orion (ORB + VWAP + OI, 9:30–14:00)
@@ -844,8 +841,10 @@ async function runStrategy2() {
 }
 async function runOrionForIndex(index, mins) {
     const candles15m = getCandles(index, "15m");
-    if (candles15m.length < 1)
+    if (candles15m.length < 1) {
+        console.log(`[S2:${index}] No 15m candles yet`);
         return;
+    }
     // Set ORB from first completed 15m candle (9:15–9:30 candle)
     if (!orbSet[index] && candles15m.length >= 1) {
         const orbCandle = candles15m[0];
@@ -854,18 +853,19 @@ async function runOrionForIndex(index, mins) {
             orbHigh[index] = orbCandle.high;
             orbLow[index] = orbCandle.low;
             orbSet[index] = true;
-            console.log(`[S2:${index}] ORB set — High: ${orbHigh[index]} | Low: ${orbLow[index]}`);
+            console.log(`[S2:${index}] ORB set — H:${orbHigh[index]} L:${orbLow[index]}`);
+        }
+        else {
+            console.log(`[S2:${index}] ORB not set — first candle time ${istH.getUTCHours()}:${String(istH.getUTCMinutes()).padStart(2, "0")} IST (need 9:15)`);
         }
     }
     if (!orbSet[index])
         return;
     // Already have an open trade for this instrument
     if (orionOpenInstruments.has(index)) {
-        // Check if we need to close it due to Orion's specific exit conditions
         const openPos = await getOpenStrategyPositions("orion");
         const indexPos = openPos.find(p => p.symbol.startsWith(index));
         if (indexPos) {
-            // Exit if time is >= 14:00
             if (mins >= 840) {
                 const cp = getCurrentPrice(indexPos.symbol);
                 if (cp > 0) {
@@ -880,25 +880,30 @@ async function runOrionForIndex(index, mins) {
         return;
     }
     const price = index === "NIFTY" ? lastNiftyPrice : index === "BANKNIFTY" ? lastBankniftyPrice : lastSensexPrice;
-    if (!price)
+    if (!price) {
+        console.log(`[S2:${index}] No price data`);
         return;
+    }
     const candles = getCandles(index, "15m");
     const vwap = calcVWAP(candles);
     const chain = getLatestChain(index);
-    if (!chain)
+    if (!chain) {
+        console.log(`[S2:${index}] No option chain`);
         return;
+    }
     const orbH = orbHigh[index] ?? 0;
     const orbL = orbLow[index] ?? 0;
-    // Entry: CE
     const ceBreakout = price > orbH;
     const aboveVwap = price > vwap;
     const ceOIchange = getOIChangeForATM(index, "CE", 5);
-    const ceOIrising = ceOIchange ? ceOIchange.pctChange > 0 : true; // bullish OI buildup
-    // Entry: PE
+    const ceOIrising = ceOIchange ? ceOIchange.pctChange > 0 : true;
     const peBreakout = price < orbL;
     const belowVwap = price < vwap;
     const peOIchange = getOIChangeForATM(index, "PE", 5);
     const peOIrising = peOIchange ? peOIchange.pctChange > 0 : true;
+    const ceOIStr = ceOIchange ? `${ceOIchange.pctChange >= 0 ? "+" : ""}${ceOIchange.pctChange.toFixed(1)}%` : "no-hist";
+    const peOIStr = peOIchange ? `${peOIchange.pctChange >= 0 ? "+" : ""}${peOIchange.pctChange.toFixed(1)}%` : "no-hist";
+    console.log(`[S2:${index}] price=${price.toFixed(0)} ORB H:${orbH} L:${orbL} VWAP=${vwap.toFixed(0)} | CE:brk=${ceBreakout} avwap=${aboveVwap} OI=${ceOIStr} | PE:brk=${peBreakout} bvwap=${belowVwap} OI=${peOIStr}`);
     let optType = null;
     if (ceBreakout && aboveVwap && ceOIrising)
         optType = "CE";
@@ -906,9 +911,11 @@ async function runOrionForIndex(index, mins) {
         optType = "PE";
     if (!optType)
         return;
+    const fld = optType === "CE" ? "cePremium" : "pePremium";
+    const allPrem = chain.rows.map(r => r[fld]).filter(p => p > 0).sort((a, b) => a - b);
     const option = getATMOptionForIndex(chain, index, optType, 60, 70);
     if (!option) {
-        console.log(`[S2:${index}] No ATM ${optType} in ₹60-70`);
+        console.log(`[S2:${index}] SIGNAL ${optType} — no option in ₹60-70 (chain ₹${allPrem[0]?.toFixed(0) ?? "?"}-${allPrem[allPrem.length - 1]?.toFixed(0) ?? "?"})`);
         return;
     }
     await openStrategyPosition("orion", {
@@ -937,11 +944,15 @@ async function runStrategy3() {
     if (mins < 630 || mins >= 900)
         return;
     const candles = getCandles("NIFTY", "30s");
-    if (candles.length < 66)
+    if (candles.length < 66) {
+        console.log(`[S3] Waiting for candles — have ${candles.length}/66`);
         return;
+    }
     const openPos = await getOpenStrategyPositions("ema_confluence");
-    if (openPos.length >= 1)
-        return; // max 1 open
+    if (openPos.length >= 1) {
+        console.log(`[S3] Position already open (${openPos[0].symbol}) — skipping`);
+        return;
+    }
     const closes = candles.map(c => c.close);
     const fastArr = emaValues(closes, 16);
     const slowArr = emaValues(closes, 64);
@@ -953,37 +964,48 @@ async function runStrategy3() {
     const bearCross = fastPrev >= slowPrev && fastCurr < slowCurr;
     s3PrevFast = fastCurr;
     s3PrevSlow = slowCurr;
+    const rsi = calcRSI(candles, 14);
+    const vwap = calcVWAP(candles);
+    const crossTag = bullCross ? "BULL-CROSS↑" : bearCross ? "BEAR-CROSS↓" : "no-cross";
+    console.log(`[S3] candles=${candles.length} EMA16=${fastCurr.toFixed(1)} EMA64=${slowCurr.toFixed(1)} RSI=${rsi.toFixed(1)} VWAP=${vwap.toFixed(0)} price=${lastNiftyPrice.toFixed(0)} | ${crossTag}`);
     if (!bullCross && !bearCross)
         return;
     const optType = bullCross ? "CE" : "PE";
     // Filter 1: RSI
-    const rsi = calcRSI(candles, 14);
-    if (optType === "CE" && rsi >= 45)
+    const rsiOk = optType === "CE" ? rsi < 45 : rsi > 55;
+    if (!rsiOk) {
+        console.log(`[S3] BLOCKED: RSI=${rsi.toFixed(1)} (CE needs <45, PE needs >55)`);
         return;
-    if (optType === "PE" && rsi <= 55)
-        return;
+    }
     // Filter 2: VWAP
-    const vwap = calcVWAP(candles);
-    if (optType === "CE" && lastNiftyPrice <= vwap)
+    const vwapOk = optType === "CE" ? lastNiftyPrice > vwap : lastNiftyPrice < vwap;
+    if (!vwapOk) {
+        console.log(`[S3] BLOCKED: VWAP price=${lastNiftyPrice.toFixed(0)} vwap=${vwap.toFixed(0)}`);
         return;
-    if (optType === "PE" && lastNiftyPrice >= vwap)
-        return;
-    // Filter 3: Volume proxy — we don't have volume data; treat as passing
-    // (Cannot get volume from LTP-only feed)
-    // Filter 4: Fibonacci zone
+    }
+    // Filter 3: Fibonacci zone
     const recentHighs = candles.slice(-100).map(c => c.high);
     const recentLows = candles.slice(-100).map(c => c.low);
     const fib = calcFibLevels(Math.max(...recentHighs), Math.min(...recentLows));
     const price = lastNiftyPrice;
     const inFibZone = price >= fib["50"] * 0.998 && price <= fib["61.8"] * 1.002;
-    if (!inFibZone)
+    if (!inFibZone) {
+        console.log(`[S3] BLOCKED: Fib zone price=${price.toFixed(0)} fib50=${fib["50"].toFixed(0)} fib61.8=${fib["61.8"].toFixed(0)}`);
         return;
+    }
     const chain = getLatestChain("NIFTY");
-    if (!chain)
+    if (!chain) {
+        console.log(`[S3] No option chain`);
         return;
+    }
+    const fld = optType === "CE" ? "cePremium" : "pePremium";
+    const allPrem = chain.rows.map(r => r[fld]).filter(p => p > 0).sort((a, b) => a - b);
     const option = getATMOption(chain, optType, 60, 70);
-    if (!option)
+    if (!option) {
+        console.log(`[S3] SIGNAL ${optType} — no option in ₹60-70 (chain ₹${allPrem[0]?.toFixed(0) ?? "?"}-${allPrem[allPrem.length - 1]?.toFixed(0) ?? "?"})`);
         return;
+    }
+    console.log(`[S3] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — opening trade`);
     await openStrategyPosition("ema_confluence", {
         symbol: option.symbol,
         type: optType,
@@ -1014,42 +1036,55 @@ async function runStrategy4() {
 }
 async function runSupertrendForIndex(index) {
     const candles5m = getCandles(index, "5m");
-    if (candles5m.length < 10)
+    if (candles5m.length < 10) {
+        console.log(`[S4:${index}] Waiting for 5m candles — have ${candles5m.length}/10`);
         return;
+    }
     const openPos = await getOpenStrategyPositions("supertrend");
     const indexPos = openPos.filter(p => p.symbol.startsWith(index));
     const todayKey = `${index}_${todayIST()}`;
     const dayTrades = s4DailyTrades[todayKey] ?? 0;
-    if (dayTrades >= 2)
-        return; // max 2 trades per instrument per day
-    const series = calcSupertrendSeries(candles5m, 7, 3);
-    if (series.length < 2)
-        return;
-    const currDir = series[series.length - 1].dir;
-    const prevDir = series[series.length - 2].dir;
-    const flipped = currDir !== prevDir;
-    if (!flipped) {
-        // If we have an open position and Supertrend just flipped → close it (handled below too)
+    if (dayTrades >= 2) {
+        console.log(`[S4:${index}] Daily limit reached (${dayTrades}/2)`);
         return;
     }
-    // Close opposite position
+    const series = calcSupertrendSeries(candles5m, 7, 3);
+    if (series.length < 2) {
+        console.log(`[S4:${index}] Supertrend series too short (${series.length})`);
+        return;
+    }
+    const currST = series[series.length - 1];
+    const prevST = series[series.length - 2];
+    const flipped = currST.dir !== prevST.dir;
+    console.log(`[S4:${index}] candles=${candles5m.length} ST=${currST.dir}(line=${currST.value.toFixed(0)}) prev=${prevST.dir} | ${flipped ? "FLIP!" : "no-flip"} | dayTrades=${dayTrades}/2 openPos=${indexPos.length}`);
+    if (!flipped)
+        return;
     for (const pos of indexPos) {
-        const wrongType = currDir === "up" ? "PE" : "CE";
+        const wrongType = currST.dir === "up" ? "PE" : "CE";
         if (pos.type === wrongType) {
             const cp = getCurrentPrice(pos.symbol);
             if (cp > 0)
                 await closeStrategyPosition(pos.id, cp, "CROSSOVER");
         }
     }
-    if (indexPos.length >= 1)
-        return; // already have one in this direction
-    const optType = currDir === "up" ? "CE" : "PE";
+    if (indexPos.length >= 1) {
+        console.log(`[S4:${index}] Position exists — skipping new entry`);
+        return;
+    }
+    const optType = currST.dir === "up" ? "CE" : "PE";
     const chain = getLatestChain(index);
-    if (!chain)
+    if (!chain) {
+        console.log(`[S4:${index}] No option chain`);
         return;
+    }
+    const fld = optType === "CE" ? "cePremium" : "pePremium";
+    const allPrem = chain.rows.map(r => r[fld]).filter(p => p > 0).sort((a, b) => a - b);
     const option = getATMOptionForIndex(chain, index, optType, 60, 70);
-    if (!option)
+    if (!option) {
+        console.log(`[S4:${index}] SIGNAL ${optType} — no option in ₹60-70 (chain ₹${allPrem[0]?.toFixed(0) ?? "?"}-${allPrem[allPrem.length - 1]?.toFixed(0) ?? "?"})`);
         return;
+    }
+    console.log(`[S4:${index}] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — opening trade`);
     await openStrategyPosition("supertrend", {
         symbol: option.symbol,
         type: optType,
@@ -1057,7 +1092,7 @@ async function runSupertrendForIndex(index) {
         entry_price: option.premium,
         current_price: option.premium,
         quantity: index === "NIFTY" ? 50 : 15,
-        stop_loss: Number((option.premium * 0.80).toFixed(2)), // 20% SL
+        stop_loss: Number((option.premium * 0.80).toFixed(2)),
         trail_sl: null,
         pnl: 0,
         status: "OPEN",
@@ -1075,29 +1110,39 @@ async function runStrategy5() {
         return; // 10:00–14:30
     const today = todayIST();
     const dayKey = `pcr_reversal_${today}`;
-    if ((dailyTradeCounts[dayKey] ?? 0) >= 3)
+    const dayCount = dailyTradeCounts[dayKey] ?? 0;
+    if (dayCount >= 3) {
+        console.log(`[S5] Daily limit reached (${dayCount}/3)`);
         return;
+    }
     const openPos = await getOpenStrategyPositions("pcr_reversal");
-    if (openPos.length >= 1)
+    if (openPos.length >= 1) {
+        console.log(`[S5] Position open (${openPos[0].symbol}) — skipping`);
         return;
+    }
     const chain = getLatestChain("NIFTY");
-    if (!chain)
+    if (!chain) {
+        console.log(`[S5] No option chain`);
         return;
+    }
     const pcr = chain.pcr;
+    const peOI30 = getOIChangeForATM("NIFTY", "PE", 30);
+    const ceOI30 = getOIChangeForATM("NIFTY", "CE", 30);
+    const peOIStr = peOI30 ? `${peOI30.pctChange >= 0 ? "+" : ""}${peOI30.pctChange.toFixed(1)}%` : "no-hist";
+    const ceOIStr = ceOI30 ? `${ceOI30.pctChange >= 0 ? "+" : ""}${ceOI30.pctChange.toFixed(1)}%` : "no-hist";
+    console.log(`[S5] PCR=${pcr.toFixed(2)} (need >1.3 or <0.7) | PE-OI-30m=${peOIStr} CE-OI-30m=${ceOIStr} (need <-10%) | trades=${dayCount}/3`);
     let optType = null;
     if (pcr > 1.3) {
-        // Oversold — buy CE if PE OI is unwinding at ATM
-        const peOIChange = getOIChangeForATM("NIFTY", "PE", 30);
-        if (peOIChange && peOIChange.pctChange <= -10) {
+        if (peOI30 && peOI30.pctChange <= -10)
             optType = "CE";
-        }
+        else
+            console.log(`[S5] PCR oversold but PE-OI unwind insufficient (${peOIStr})`);
     }
     else if (pcr < 0.7) {
-        // Overbought — buy PE if CE OI is unwinding at ATM
-        const ceOIChange = getOIChangeForATM("NIFTY", "CE", 30);
-        if (ceOIChange && ceOIChange.pctChange <= -10) {
+        if (ceOI30 && ceOI30.pctChange <= -10)
             optType = "PE";
-        }
+        else
+            console.log(`[S5] PCR overbought but CE-OI unwind insufficient (${ceOIStr})`);
     }
     if (!optType)
         return;
@@ -1159,60 +1204,76 @@ async function runStrategy6() {
         return; // no new trades after 11:30 AM
     const today = todayIST();
     const dayKey = `gap_orb_${today}`;
-    if ((dailyTradeCounts[dayKey] ?? 0) >= 2)
+    const dayCount = dailyTradeCounts[dayKey] ?? 0;
+    if (dayCount >= 2) {
+        console.log(`[S6] Daily limit reached (${dayCount}/2)`);
         return;
+    }
     const openPos = await getOpenStrategyPositions("gap_orb");
-    if (openPos.length >= 1)
+    if (openPos.length >= 1) {
+        console.log(`[S6] Position open (${openPos[0].symbol}) — skipping`);
         return;
+    }
+    const pdc = prevDayClose["NIFTY"] ?? 0;
     // Calculate gap at 9:15 AM
     if (!gapCalcDate || gapCalcDate !== today) {
-        // Try to get yesterday's close from candle history
         const allCandles = getCandles("NIFTY", "15m");
-        if (allCandles.length < 2)
-            return;
-        // Yesterday's close: last candle from previous session
-        // Approximate: use the first candle open as today's open
-        const todayOpen = allCandles[0]?.open ?? lastNiftyPrice;
-        // We don't have yesterday's close from LTP polling alone
-        // Use prevDayClose if we have it; otherwise try from the oldest candle
-        const pdc = prevDayClose["NIFTY"];
-        if (!pdc || pdc === 0) {
-            // Not enough data — skip gap calculation
+        if (allCandles.length < 2) {
+            console.log(`[S6] Waiting for 15m candles (${allCandles.length}) to calc gap`);
             return;
         }
+        if (!pdc || pdc === 0) {
+            console.log(`[S6] prevDayClose=0 — cannot calc gap (server has no PDC data)`);
+            return;
+        }
+        const todayOpen = allCandles[0]?.open ?? lastNiftyPrice;
         dailyGapPct = ((todayOpen - pdc) / pdc) * 100;
         gapCalcDate = today;
-        console.log(`[S6] Gap: ${dailyGapPct.toFixed(2)}% | TodayOpen: ${todayOpen} | PrevClose: ${pdc}`);
+        console.log(`[S6] Gap calculated: ${dailyGapPct.toFixed(2)}% | open=${todayOpen} PDC=${pdc}`);
     }
-    // ORB setup (9:15–9:30 AM candle)
-    if (!orbSet["NIFTY"])
+    if (!orbSet["NIFTY"]) {
+        console.log(`[S6] ORB not set yet`);
         return;
+    }
     const orbH = orbHigh["NIFTY"] ?? 0;
     const orbL = orbLow["NIFTY"] ?? 0;
     const price = lastNiftyPrice;
     const chain = getLatestChain("NIFTY");
-    if (!chain)
+    if (!chain) {
+        console.log(`[S6] No option chain`);
         return;
+    }
     let optType = null;
+    let reason = "";
     if (Math.abs(dailyGapPct) < 0.3) {
-        // Small gap → ORB breakout
-        if (price > orbH)
+        if (price > orbH) {
             optType = "CE";
-        else if (price < orbL)
+            reason = `ORB breakout CE (price=${price.toFixed(0)} > H=${orbH})`;
+        }
+        else if (price < orbL) {
             optType = "PE";
+            reason = `ORB breakout PE (price=${price.toFixed(0)} < L=${orbL})`;
+        }
+        else
+            reason = `inside ORB (price=${price.toFixed(0)} H=${orbH} L=${orbL})`;
     }
     else if (dailyGapPct > 0.3) {
-        // Gap up > 0.3% → FADE → buy PE (expect gap to fill)
-        const pdc = prevDayClose["NIFTY"] ?? 0;
-        if (pdc > 0 && price > pdc && price < orbH)
+        if (pdc > 0 && price > pdc && price < orbH) {
             optType = "PE";
+            reason = `gap-up fade PE`;
+        }
+        else
+            reason = `gap-up fade: price=${price.toFixed(0)} PDC=${pdc} H=${orbH} — conditions not met`;
     }
     else {
-        // Gap down > 0.3% → FADE → buy CE
-        const pdc = prevDayClose["NIFTY"] ?? 0;
-        if (pdc > 0 && price < pdc && price > orbL)
+        if (pdc > 0 && price < pdc && price > orbL) {
             optType = "CE";
+            reason = `gap-down fade CE`;
+        }
+        else
+            reason = `gap-down fade: price=${price.toFixed(0)} PDC=${pdc} L=${orbL} — conditions not met`;
     }
+    console.log(`[S6] gap=${dailyGapPct.toFixed(2)}% ORB H=${orbH} L=${orbL} | ${reason}`);
     if (!optType)
         return;
     const option = getATMOption(chain, optType, 60, 70);
@@ -1570,8 +1631,10 @@ function btcTrailPct(strategyId) {
 // ── BTC Strategy 1: EMA Crossover ────────────────────────────
 async function strategyBtcEmaCrossover() {
     const candles = getCandles("BTC", "30s");
-    if (candles.length < 25)
+    if (candles.length < 25) {
+        console.log(`[BTC:ema_crossover] Waiting for candles (${candles.length}/25)`);
         return;
+    }
     const closes = candles.map(c => c.close);
     const fastEmas = emaValues(closes, 9);
     const slowEmas = emaValues(closes, 21);
@@ -1584,12 +1647,17 @@ async function strategyBtcEmaCrossover() {
     const atr = calcATR(candles, 14);
     if (!atr)
         return;
+    const bullCross = fastNow > slowNow && fastPrev <= slowPrev;
+    const bearCross = fastNow < slowNow && fastPrev >= slowPrev;
+    const crossTag = bullCross ? "BULL↑" : bearCross ? "BEAR↓" : "no-cross";
     const { data: openPos } = await supabase
         .from("btc_strategy_positions")
         .select("id, side")
         .eq("strategy_id", "btc_ema_crossover")
         .eq("status", "OPEN");
-    // Close on opposite cross
+    const longs = btcDailyTradeCounts["btc_ema_crossover_LONG"] ?? 0;
+    const shorts = btcDailyTradeCounts["btc_ema_crossover_SHORT"] ?? 0;
+    console.log(`[BTC:ema_crossover] candles=${candles.length} EMA9=${fastNow.toFixed(0)} EMA21=${slowNow.toFixed(0)} ATR=${atr.toFixed(0)} | ${crossTag} | open=${openPos?.length ?? 0} daily L=${longs}/1 S=${shorts}/1`);
     if (openPos && openPos.length > 0) {
         for (const pos of openPos) {
             if (pos.side === "LONG" && fastNow < slowNow && fastPrev >= slowPrev)
@@ -1599,13 +1667,11 @@ async function strategyBtcEmaCrossover() {
         }
         return;
     }
-    const longs = btcDailyTradeCounts["btc_ema_crossover_LONG"] ?? 0;
-    const shorts = btcDailyTradeCounts["btc_ema_crossover_SHORT"] ?? 0;
-    if (fastNow > slowNow && fastPrev <= slowPrev && longs < 1) {
+    if (bullCross && longs < 1) {
         await openBtcPosition("btc_ema_crossover", "LONG", btcPrice, btcPrice - 1.5 * atr, `EMA9(${fastNow.toFixed(0)}) crossed above EMA21(${slowNow.toFixed(0)})`);
         btcDailyTradeCounts["btc_ema_crossover_LONG"] = longs + 1;
     }
-    else if (fastNow < slowNow && fastPrev >= slowPrev && shorts < 1) {
+    else if (bearCross && shorts < 1) {
         await openBtcPosition("btc_ema_crossover", "SHORT", btcPrice, btcPrice + 1.5 * atr, `EMA9(${fastNow.toFixed(0)}) crossed below EMA21(${slowNow.toFixed(0)})`);
         btcDailyTradeCounts["btc_ema_crossover_SHORT"] = shorts + 1;
     }
@@ -1615,7 +1681,6 @@ async function strategyBtcOrion() {
     const now = new Date();
     const utcMins = now.getUTCHours() * 60 + now.getUTCMinutes();
     if (utcMins < 30) {
-        // Build ORB from UTC midnight candles
         const candles = getCandles("BTC", "30s");
         const utcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
         const orbCandles = candles.filter(c => c.time >= utcMidnight && c.time < utcMidnight + 30 * 60000);
@@ -1628,22 +1693,27 @@ async function strategyBtcOrion() {
     }
     if (!btcOrbSet && btcOrbHigh > 0 && btcOrbLow > 0) {
         btcOrbSet = true;
-        console.log(`[BTC Orion] ORB locked — High $${btcOrbHigh.toFixed(0)} Low $${btcOrbLow.toFixed(0)}`);
+        console.log(`[BTC:orion] ORB locked — H=$${btcOrbHigh.toFixed(0)} L=$${btcOrbLow.toFixed(0)}`);
     }
-    if (!btcOrbSet)
-        return;
-    const total = (btcDailyTradeCounts["btc_orion_LONG"] ?? 0) + (btcDailyTradeCounts["btc_orion_SHORT"] ?? 0);
-    if (total >= 2)
-        return;
+    const longs = btcDailyTradeCounts["btc_orion_LONG"] ?? 0;
+    const shorts = btcDailyTradeCounts["btc_orion_SHORT"] ?? 0;
+    const total = longs + shorts;
     const { data: openPos } = await supabase
         .from("btc_strategy_positions")
         .select("id")
         .eq("strategy_id", "btc_orion")
         .eq("status", "OPEN");
+    const orbStatus = btcOrbSet ? `H=$${btcOrbHigh.toFixed(0)} L=$${btcOrbLow.toFixed(0)}` : "ORB-not-set";
+    const posStr = btcOrbSet ? (btcPrice > btcOrbHigh ? "above-H" : btcPrice < btcOrbLow ? "below-L" : "inside") : "—";
+    console.log(`[BTC:orion] price=$${btcPrice.toFixed(0)} ${orbStatus} pos=${posStr} | open=${openPos?.length ?? 0} daily=${total}/2`);
+    if (!btcOrbSet)
+        return;
+    if (total >= 2) {
+        console.log(`[BTC:orion] Daily limit reached (${total}/2)`);
+        return;
+    }
     if (openPos && openPos.length > 0)
         return;
-    const longs = btcDailyTradeCounts["btc_orion_LONG"] ?? 0;
-    const shorts = btcDailyTradeCounts["btc_orion_SHORT"] ?? 0;
     if (btcPrice > btcOrbHigh && longs < 1) {
         await openBtcPosition("btc_orion", "LONG", btcPrice, btcOrbLow, `Price ($${btcPrice.toFixed(0)}) broke above ORB High ($${btcOrbHigh.toFixed(0)})`);
         btcDailyTradeCounts["btc_orion_LONG"] = longs + 1;
@@ -1656,8 +1726,10 @@ async function strategyBtcOrion() {
 // ── BTC Strategy 3: EMA Confluence ───────────────────────────
 async function strategyBtcEmaConfluence() {
     const candles5m = getCandles("BTC", "5m");
-    if (candles5m.length < 52)
+    if (candles5m.length < 52) {
+        console.log(`[BTC:ema_confluence] Waiting for 5m candles (${candles5m.length}/52)`);
         return;
+    }
     const ema20 = calcEMA(candles5m, 20);
     const ema50 = calcEMA(candles5m, 50);
     const rsi = calcRSI(candles5m, 14);
@@ -1669,6 +1741,12 @@ async function strategyBtcEmaConfluence() {
     const ema9arr = emaValues(slice9, 9);
     const slope = ema9arr.length >= 2 ? ema9arr[ema9arr.length - 1] - ema9arr[ema9arr.length - 2] : 0;
     const atrPct = (atr / btcPrice) * 100;
+    // Log each filter result
+    const f1 = ema20 > ema50 ? "EMA20>50✓" : ema20 < ema50 ? "EMA20<50✓(bear)" : "EMA20=50✗";
+    const f2 = rsi > 40 && rsi < 60 ? `RSI=${rsi.toFixed(0)}✓` : `RSI=${rsi.toFixed(0)}✗(need 40-60)`;
+    const f3 = btcPrice > vwap ? `P>VWAP✓` : `P<VWAP✓(bear)`;
+    const f4 = atrPct > 0.5 ? `ATR=${atrPct.toFixed(2)}%✓` : `ATR=${atrPct.toFixed(2)}%✗(need >0.5%)`;
+    const f5 = slope > 0 ? `slope=+${slope.toFixed(0)}✓` : slope < 0 ? `slope=${slope.toFixed(0)}✓(bear)` : `slope=0✗`;
     const bullish = ema20 > ema50 && rsi > 40 && rsi < 60 && btcPrice > vwap && atrPct > 0.5 && slope > 0;
     const bearish = ema20 < ema50 && rsi > 40 && rsi < 60 && btcPrice < vwap && atrPct > 0.5 && slope < 0;
     const { data: openPos } = await supabase
@@ -1676,10 +1754,12 @@ async function strategyBtcEmaConfluence() {
         .select("id")
         .eq("strategy_id", "btc_ema_confluence")
         .eq("status", "OPEN");
-    if (openPos && openPos.length > 0)
-        return;
     const longs = btcDailyTradeCounts["btc_ema_confluence_LONG"] ?? 0;
     const shorts = btcDailyTradeCounts["btc_ema_confluence_SHORT"] ?? 0;
+    const signal = bullish ? "BULLISH" : bearish ? "BEARISH" : "no-signal";
+    console.log(`[BTC:ema_confluence] EMA20=${ema20.toFixed(0)} EMA50=${ema50.toFixed(0)} | ${f1} ${f2} ${f3} ${f4} ${f5} | ${signal} | open=${openPos?.length ?? 0} L=${longs}/1 S=${shorts}/1`);
+    if (openPos && openPos.length > 0)
+        return;
     if (bullish && longs < 1) {
         await openBtcPosition("btc_ema_confluence", "LONG", btcPrice, btcPrice - 2 * atr, `5-filter bullish: EMA20>EMA50, RSI ${rsi.toFixed(0)}, P>VWAP, ATR ${atrPct.toFixed(1)}%, slope+`);
         btcDailyTradeCounts["btc_ema_confluence_LONG"] = longs + 1;
@@ -1692,20 +1772,29 @@ async function strategyBtcEmaConfluence() {
 // ── BTC Strategy 4: Supertrend ────────────────────────────────
 async function strategyBtcSupertrend() {
     const candles5m = getCandles("BTC", "5m");
-    if (candles5m.length < 20)
+    if (candles5m.length < 20) {
+        console.log(`[BTC:supertrend] Waiting for 5m candles (${candles5m.length}/20)`);
         return;
+    }
     const stSeries = calcSupertrendSeries(candles5m, 7, 3);
-    if (stSeries.length < 2)
+    if (stSeries.length < 2) {
+        console.log(`[BTC:supertrend] Series too short (${stSeries.length})`);
         return;
+    }
     const stNow = stSeries[stSeries.length - 1];
     const stPrev = stSeries[stSeries.length - 2];
     const crossUp = stPrev.dir === "down" && stNow.dir === "up";
     const crossDown = stPrev.dir === "up" && stNow.dir === "down";
+    const flipTag = crossUp ? "FLIP-UP↑" : crossDown ? "FLIP-DOWN↓" : "no-flip";
     const { data: openPos } = await supabase
         .from("btc_strategy_positions")
         .select("id, side")
         .eq("strategy_id", "btc_supertrend")
         .eq("status", "OPEN");
+    const longs = btcDailyTradeCounts["btc_supertrend_LONG"] ?? 0;
+    const shorts = btcDailyTradeCounts["btc_supertrend_SHORT"] ?? 0;
+    const total = longs + shorts;
+    console.log(`[BTC:supertrend] candles=${candles5m.length} ST=${stNow.dir}($${stNow.value.toFixed(0)}) prev=${stPrev.dir} | ${flipTag} | open=${openPos?.length ?? 0} daily L=${longs}/1 S=${shorts}/1 tot=${total}/2`);
     if (openPos && openPos.length > 0) {
         for (const pos of openPos) {
             if (pos.side === "LONG" && crossDown)
@@ -1715,16 +1804,17 @@ async function strategyBtcSupertrend() {
         }
         return;
     }
-    const total = (btcDailyTradeCounts["btc_supertrend_LONG"] ?? 0) + (btcDailyTradeCounts["btc_supertrend_SHORT"] ?? 0);
-    if (total >= 2)
+    if (total >= 2) {
+        console.log(`[BTC:supertrend] Daily limit reached (${total}/2)`);
         return;
+    }
     if (crossUp) {
         await openBtcPosition("btc_supertrend", "LONG", btcPrice, stNow.value, `Supertrend flipped bullish (line $${stNow.value.toFixed(0)})`);
-        btcDailyTradeCounts["btc_supertrend_LONG"] = (btcDailyTradeCounts["btc_supertrend_LONG"] ?? 0) + 1;
+        btcDailyTradeCounts["btc_supertrend_LONG"] = longs + 1;
     }
     else if (crossDown) {
         await openBtcPosition("btc_supertrend", "SHORT", btcPrice, stNow.value, `Supertrend flipped bearish (line $${stNow.value.toFixed(0)})`);
-        btcDailyTradeCounts["btc_supertrend_SHORT"] = (btcDailyTradeCounts["btc_supertrend_SHORT"] ?? 0) + 1;
+        btcDailyTradeCounts["btc_supertrend_SHORT"] = shorts + 1;
     }
 }
 // ── Run all BTC strategies (every 30s) ───────────────────────
@@ -1735,6 +1825,7 @@ async function runBtcStrategies() {
     btcStrategiesRunning = true;
     try {
         checkBtcDailyReset();
+        console.log(`[BTC] Cycle — price=$${btcPrice.toFixed(2)} candles30s=${getCandles("BTC", "30s").length} candles5m=${getCandles("BTC", "5m").length}`);
         await strategyBtcEmaCrossover();
         await strategyBtcOrion();
         await strategyBtcEmaConfluence();
