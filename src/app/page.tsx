@@ -447,7 +447,7 @@ function TradePopup({
         }}>
           {[
             { label: "CAPITAL",   value: "₹1,00,000",       color: "#e5e7eb" },
-            { label: "TOTAL PnL", value: pnlStr(pnl),        color: pnl === 0 ? accent : pnlColor(pnl) },
+            { label: "TOTAL PnL", value: pnlStr(pnl),        color: pnlColor(pnl) },
             { label: "RETURN",    value: fmtPct(retPct),     color: pnlColor(retPct) },
             { label: "SHARPE",    value: sharpe.toFixed(2),  color: "#e5e7eb" },
             { label: "TODAY",     value: String(today),       color: "#e5e7eb" },

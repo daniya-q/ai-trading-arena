@@ -192,7 +192,7 @@ function BtcStrategyCard({
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderTop: `1px solid ${accent}30` }}>
         {[
           { label: "CAPITAL",  value: `₹${fmtINR(alloc)}`,    color: "#ffffff",        weight: 600 },
-          { label: "TOTAL PnL", value: pnlStr(pnl),            color: accent,           weight: 700 },
+          { label: "TOTAL PnL", value: pnlStr(pnl),            color: pnlColor(pnl),    weight: 700 },
           { label: "RETURN",   value: fmtPct(retPct),          color: pnlColor(retPct), weight: 600 },
           { label: "WIN RATE", value: winRate(capital),        color: "#ffffff",        weight: 600 },
           { label: "TRADES",   value: String(trades),           color: "#ffffff",        weight: 600 },
@@ -359,7 +359,7 @@ function BtcTradePopup({
         }}>
           {[
             { label: "CAPITAL",   value: `₹${fmtINR(alloc)}`,     color: "#e5e7eb" },
-            { label: "TOTAL PnL", value: pnlStr(pnl),              color: pnl === 0 ? accent : pnlColor(pnl) },
+            { label: "TOTAL PnL", value: pnlStr(pnl),              color: pnlColor(pnl) },
             { label: "RETURN",    value: fmtPct(retPct),           color: pnlColor(retPct) },
             { label: "WIN RATE",  value: winRate(capital),         color: "#e5e7eb" },
             { label: "TRADES",    value: String(trades),            color: "#e5e7eb" },
@@ -672,7 +672,7 @@ export default function BtcArenaPage() {
         <div style={{ height: 32, width: 1, background: "#1f2937" }} />
         <div>
           <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.12em", marginBottom: 4 }}>TOTAL PnL (ALL STRATEGIES)</div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: totalPnl === 0 ? "#4b5563" : pnlColor(totalPnl), fontFamily: "monospace" }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: pnlColor(totalPnl), fontFamily: "monospace" }}>
             {pnlStr(totalPnl)} &nbsp;
             <span style={{ fontSize: 12, color: pnlColor(retPct) }}>({fmtPct(retPct)})</span>
           </div>
