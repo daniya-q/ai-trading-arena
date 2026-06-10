@@ -1,4 +1,4 @@
-// RAILWAY_CACHE_BUST: 2026-06-10
+// RAILWAY_CACHE_BUST: 2026-06-10b
 /**
  * AI Trading Arena — Strategy-based Trading Server
  *
@@ -11,6 +11,18 @@
 import path from "path";
 import * as dotenv from "dotenv";
 dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
+
+// ── Global error handlers — prevent process crash on unhandled rejections ──
+process.on("uncaughtException", (err) => {
+  console.error("[Server] Uncaught exception:", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[Server] Unhandled rejection:", reason);
+});
+process.on("SIGTERM", () => {
+  console.log("[Server] SIGTERM received — shutting down");
+  process.exit(0);
+});
 
 import express from "express";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
@@ -262,15 +274,10 @@ function calcATR(candles: Candle[], period = 14): number {
 }
 
 function calcVWAP(candles: Candle[]): number {
-  // No volume data from LTP; approximate VWAP as average of typical price (H+L+C)/3
-  // from 9:15 AM IST
-  const dayStart = new Date(getIST());
-  dayStart.setHours(9, 15, 0, 0);
-  const t = dayStart.getTime() - (new Date().getTime() - Date.now()); // local epoch equivalent
-  // Use candle.time directly (it's UTC ms)
+  // Approximate VWAP as avg of typical price (H+L+C)/3 from 9:15 AM IST (UTC 3:45 = 225 mins)
   const todayCandles = candles.filter(c => {
-    const ist = new Date(new Date(c.time).toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-    return ist.getHours() * 60 + ist.getMinutes() >= 555;
+    const istD = new Date(c.time + (5 * 60 + 30) * 60_000);
+    return istD.getUTCHours() * 60 + istD.getUTCMinutes() >= 555;
   });
   if (!todayCandles.length) return candles[candles.length - 1]?.close ?? 0;
   const sum = todayCandles.reduce((s, c) => s + (c.high + c.low + c.close) / 3, 0);
@@ -635,7 +642,7 @@ function generateExitDetail(
   peakPremium?: number
 ): string {
   const ist   = getIST();
-  const timeStr = `${String(ist.getHours()).padStart(2,"0")}:${String(ist.getMinutes()).padStart(2,"0")} IST`;
+  const timeStr = `${String(ist.getUTCHours()).padStart(2,"0")}:${String(ist.getUTCMinutes()).padStart(2,"0")} IST`;
 
   const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:25, gap_orb:20 };
   const TRAIL_PCT: Record<string, number> = { ema_crossover:10, ema_confluence:10, orion:15, supertrend:12, pcr_reversal:12, gap_orb:12 };
@@ -1975,9 +1982,9 @@ let lastTokenRequestDate = "";
 function scheduleTokenRequest(): void {
   setInterval(() => {
     const ist = getIST();
-    if (ist.getDay() === 0 || ist.getDay() === 6) return;
-    const hh  = String(ist.getHours()).padStart(2,"0");
-    const mm  = String(ist.getMinutes()).padStart(2,"0");
+    if (ist.getUTCDay() === 0 || ist.getUTCDay() === 6) return;
+    const hh  = String(ist.getUTCHours()).padStart(2,"0");
+    const mm  = String(ist.getUTCMinutes()).padStart(2,"0");
     const today = todayIST();
     if (`${hh}:${mm}` !== "08:30" || lastTokenRequestDate === today) return;
     lastTokenRequestDate = today;

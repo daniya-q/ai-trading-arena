@@ -1,10 +1,9 @@
 "use strict";
-// RAILWAY_CACHE_BUST: 2026-05-25
+// RAILWAY_CACHE_BUST: 2026-06-10b
 /**
- * AI Trading Arena — Standalone Backend Server
+ * AI Trading Arena — Strategy-based Trading Server
  *
- * Runs the AI trading cycle completely independently of the Next.js frontend.
- * All logic is self-contained: no imports from src/.
+ * Rule-based strategy execution for 6 equity strategies + 4 BTC strategies.
  *
  * Start:
  *   npx ts-node --project server/tsconfig.json server/trading-server.ts
@@ -48,88 +47,159 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const path_1 = __importDefault(require("path"));
 const dotenv = __importStar(require("dotenv"));
-// Load .env.local before anything else
 dotenv.config({ path: path_1.default.resolve(process.cwd(), ".env.local") });
+// ── Global error handlers — prevent process crash on unhandled rejections ──
+process.on("uncaughtException", (err) => {
+    console.error("[Server] Uncaught exception:", err);
+});
+process.on("unhandledRejection", (reason) => {
+    console.error("[Server] Unhandled rejection:", reason);
+});
+process.on("SIGTERM", () => {
+    console.log("[Server] SIGTERM received — shutting down");
+    process.exit(0);
+});
 const express_1 = __importDefault(require("express"));
 const supabase_js_1 = require("@supabase/supabase-js");
 const ws_1 = __importDefault(require("ws"));
 // ══════════════════════════════════════════════════════════════
-// Supabase admin client
+// Supabase
 // ══════════════════════════════════════════════════════════════
 const supabase = (0, supabase_js_1.createClient)(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { realtime: { transport: ws_1.default } });
 // ══════════════════════════════════════════════════════════════
-// Bots
+// In-memory market state
 // ══════════════════════════════════════════════════════════════
-const BOTS = [
-    { id: "gpt", name: "GPT Bot", provider: "openai" },
-    { id: "claude", name: "Claude Bot", provider: "claude" },
-    { id: "gemini", name: "Gemini Bot", provider: "gemini" },
-    { id: "groq", name: "Groq Bot", provider: "groq" },
-];
-// ══════════════════════════════════════════════════════════════
-// In-memory candle stores
-// ══════════════════════════════════════════════════════════════
-const MAX_CANDLES = 200;
-// ── NIFTY 1-sec candles ──
-const niftyCandles = [];
-let currentCandle = null;
-let currentBucket = 0;
 let lastNiftyPrice = 0;
 let lastBankniftyPrice = 0;
 let lastSensexPrice = 0;
-// ── BTC 1-sec candles ──
-const btcCandles = [];
-let btcCurrentCandle = null;
-let btcCurrentBucket = 0;
+let lastVix = 0;
+// BTC (unchanged)
 let btcPrice = 0;
 let lastBtcLogTime = 0;
-// USD/INR exchange rate cache
+// USD/INR
 let cachedUsdToInr = 84;
 let lastUsdInrFetch = 0;
-function processBtcTick(price, timestamp) {
-    const CANDLE_DURATION = 1000;
-    const bucket = Math.floor(timestamp / CANDLE_DURATION) * CANDLE_DURATION;
-    if (!btcCurrentCandle) {
-        btcCurrentCandle = { open: price, high: price, low: price, close: price, time: bucket };
-        btcCurrentBucket = bucket;
-        return;
-    }
-    if (bucket !== btcCurrentBucket) {
-        btcCandles.push({ ...btcCurrentCandle });
-        if (btcCandles.length > MAX_CANDLES)
-            btcCandles.shift();
-        btcCurrentCandle = { open: price, high: price, low: price, close: price, time: bucket };
-        btcCurrentBucket = bucket;
-        return;
-    }
-    btcCurrentCandle.high = Math.max(btcCurrentCandle.high, price);
-    btcCurrentCandle.low = Math.min(btcCurrentCandle.low, price);
-    btcCurrentCandle.close = price;
+const candleStores = {};
+const MAX_CANDLES = 500;
+// ── Option chain cache ───────────────────────────────────────
+// Key: "NIFTY" | "BANKNIFTY" | "SENSEX"
+// Stores last 12 snapshots (1 hour at 5-min polling)
+const optionChainHistory = {};
+// Fast lookup: symbol → current LTP
+// Key format: "NIFTY 2026-06-12 23400 CE"
+const optionPriceCache = {};
+// Peak premiums for open positions (in-memory, intraday only)
+const peakPremiums = {}; // posId → peak premium
+// ── Daily gap state (Strategy 6) ────────────────────────────
+let dailyGapPct = 0;
+let gapCalcDate = "";
+let orbHigh = {}; // "NIFTY" → ORB high
+let orbLow = {}; // "NIFTY" → ORB low
+let orbSet = {};
+let prevDayClose = {}; // "NIFTY" → prev day close
+// ── Per-strategy daily trade counters ───────────────────────
+const dailyTradeCounts = {};
+let tradeDateStr = "";
+// ══════════════════════════════════════════════════════════════
+// Utility: IST time
+// ══════════════════════════════════════════════════════════════
+function getIST() {
+    // UTC+5:30 — avoids toLocaleString ICU dependency on Railway
+    return new Date(Date.now() + (5 * 60 + 30) * 60000);
 }
-function processTick(price, timestamp) {
-    const CANDLE_DURATION = 1000;
-    const bucket = Math.floor(timestamp / CANDLE_DURATION) * CANDLE_DURATION;
-    if (!currentCandle) {
-        currentCandle = { open: price, high: price, low: price, close: price, time: bucket };
-        currentBucket = bucket;
-        return;
+function istMins() {
+    const d = getIST();
+    return d.getUTCHours() * 60 + d.getUTCMinutes();
+}
+function todayIST() {
+    const d = getIST();
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+function isMarketOpen() {
+    const d = getIST();
+    if (d.getUTCDay() === 0 || d.getUTCDay() === 6)
+        return false;
+    const m = d.getUTCHours() * 60 + d.getUTCMinutes();
+    return m >= 555 && m <= 930; // 9:15–15:30
+}
+// Reset daily counters at start of day
+function checkDailyReset() {
+    const today = todayIST();
+    if (tradeDateStr !== today) {
+        tradeDateStr = today;
+        for (const k of Object.keys(dailyTradeCounts))
+            dailyTradeCounts[k] = 0;
+        // Reset ORB state
+        for (const k of Object.keys(orbSet))
+            orbSet[k] = false;
+        gapCalcDate = "";
+        console.log(`[Daily] Reset for ${today}`);
     }
-    if (bucket !== currentBucket) {
-        niftyCandles.push({ ...currentCandle });
-        if (niftyCandles.length > MAX_CANDLES)
-            niftyCandles.shift();
-        console.log(`[Candle] Finalized NIFTY ${new Date(currentCandle.time).toLocaleTimeString()} O:${currentCandle.open} H:${currentCandle.high} L:${currentCandle.low} C:${currentCandle.close} | total: ${niftyCandles.length}`);
-        currentCandle = { open: price, high: price, low: price, close: price, time: bucket };
-        currentBucket = bucket;
-        return;
+}
+// ══════════════════════════════════════════════════════════════
+// Candle builders
+// ══════════════════════════════════════════════════════════════
+const INTERVALS = {
+    "30s": 30000,
+    "5m": 5 * 60000,
+    "15m": 15 * 60000,
+};
+function processTick(price, symbol, tsMs) {
+    for (const [interval, duration] of Object.entries(INTERVALS)) {
+        const key = `${symbol}_${interval}`;
+        const bucket = Math.floor(tsMs / duration) * duration;
+        if (!candleStores[key]) {
+            candleStores[key] = { candles: [], current: null, bucket: 0 };
+        }
+        const store = candleStores[key];
+        if (!store.current) {
+            store.current = { open: price, high: price, low: price, close: price, time: bucket };
+            store.bucket = bucket;
+            continue;
+        }
+        if (bucket !== store.bucket) {
+            store.candles.push({ ...store.current });
+            if (store.candles.length > MAX_CANDLES)
+                store.candles.shift();
+            store.current = { open: price, high: price, low: price, close: price, time: bucket };
+            store.bucket = bucket;
+            continue;
+        }
+        store.current.high = Math.max(store.current.high, price);
+        store.current.low = Math.min(store.current.low, price);
+        store.current.close = price;
     }
-    currentCandle.high = Math.max(currentCandle.high, price);
-    currentCandle.low = Math.min(currentCandle.low, price);
-    currentCandle.close = price;
+}
+function getCandles(symbol, interval) {
+    const store = candleStores[`${symbol}_${interval}`];
+    if (!store)
+        return [];
+    const all = [...store.candles];
+    if (store.current)
+        all.push({ ...store.current });
+    return all;
 }
 // ══════════════════════════════════════════════════════════════
 // Indicators
 // ══════════════════════════════════════════════════════════════
+function emaValues(values, period) {
+    if (values.length === 0)
+        return [];
+    const mult = 2 / (period + 1);
+    let ema = values[0];
+    const result = [ema];
+    for (let i = 1; i < values.length; i++) {
+        ema = (values[i] - ema) * mult + ema;
+        result.push(ema);
+    }
+    return result;
+}
+function calcEMA(candles, period) {
+    if (candles.length < period)
+        return 0;
+    const vals = emaValues(candles.map(c => c.close), period);
+    return vals[vals.length - 1];
+}
 function calcRSI(candles, period = 14) {
     if (candles.length < period + 1)
         return 50;
@@ -145,227 +215,185 @@ function calcRSI(candles, period = 14) {
     const avgLoss = losses / period;
     if (avgLoss === 0)
         return 100;
-    return Number((100 - 100 / (1 + avgGain / avgLoss)).toFixed(2));
-}
-function emaValues(values, period) {
-    const mult = 2 / (period + 1);
-    let ema = values[0];
-    const result = [ema];
-    for (let i = 1; i < values.length; i++) {
-        ema = (values[i] - ema) * mult + ema;
-        result.push(ema);
-    }
-    return result;
-}
-function calcEMA(candles, period = 20) {
-    if (candles.length < period)
-        return 0;
-    const vals = emaValues(candles.map(c => c.close), period);
-    return Number(vals[vals.length - 1].toFixed(2));
-}
-function calcMACD(candles) {
-    if (candles.length < 35)
-        return { macd: 0, signal: 0, histogram: 0 };
-    const closes = candles.map(c => c.close);
-    const ema12 = emaValues(closes, 12);
-    const ema26 = emaValues(closes, 26);
-    const macdLine = ema12.map((v, i) => v - ema26[i]);
-    const sigLine = emaValues(macdLine, 9);
-    const macd = macdLine[macdLine.length - 1];
-    const signal = sigLine[sigLine.length - 1];
-    return {
-        macd: Number(macd.toFixed(2)),
-        signal: Number(signal.toFixed(2)),
-        histogram: Number((macd - signal).toFixed(2)),
-    };
+    return 100 - 100 / (1 + avgGain / avgLoss);
 }
 function calcATR(candles, period = 14) {
     if (candles.length < period + 1)
         return 0;
     const trs = [];
     for (let i = 1; i < candles.length; i++) {
-        const hl = candles[i].high - candles[i].low;
-        const hc = Math.abs(candles[i].high - candles[i - 1].close);
-        const lc = Math.abs(candles[i].low - candles[i - 1].close);
-        trs.push(Math.max(hl, hc, lc));
+        trs.push(Math.max(candles[i].high - candles[i].low, Math.abs(candles[i].high - candles[i - 1].close), Math.abs(candles[i].low - candles[i - 1].close)));
     }
     const recent = trs.slice(-period);
-    return Number((recent.reduce((s, v) => s + v, 0) / period).toFixed(2));
+    return recent.reduce((s, v) => s + v, 0) / period;
 }
-function calcBollinger(candles, period = 20, mult = 2) {
-    if (candles.length < period)
-        return { upper: 0, middle: 0, lower: 0 };
-    const closes = candles.slice(-period).map(c => c.close);
-    const mean = closes.reduce((s, v) => s + v, 0) / period;
-    const variance = closes.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / period;
-    const sd = Math.sqrt(variance);
+function calcVWAP(candles) {
+    // Approximate VWAP as avg of typical price (H+L+C)/3 from 9:15 AM IST (UTC 3:45 = 225 mins)
+    const todayCandles = candles.filter(c => {
+        const istD = new Date(c.time + (5 * 60 + 30) * 60000);
+        return istD.getUTCHours() * 60 + istD.getUTCMinutes() >= 555;
+    });
+    if (!todayCandles.length)
+        return candles[candles.length - 1]?.close ?? 0;
+    const sum = todayCandles.reduce((s, c) => s + (c.high + c.low + c.close) / 3, 0);
+    return sum / todayCandles.length;
+}
+function calcFibLevels(high, low) {
+    const r = high - low;
     return {
-        upper: Number((mean + sd * mult).toFixed(2)),
-        middle: Number(mean.toFixed(2)),
-        lower: Number((mean - sd * mult).toFixed(2)),
+        "0": low,
+        "23.6": low + r * 0.236,
+        "38.2": low + r * 0.382,
+        "50": low + r * 0.5,
+        "61.8": low + r * 0.618,
+        "78.6": low + r * 0.786,
+        "100": high,
     };
 }
-function calcSupertrend(candles, period = 10, mult = 3) {
+// Proper Supertrend with flip detection
+function calcSupertrendSeries(candles, period, multiplier) {
     if (candles.length < period + 1)
-        return { trend: "NEUTRAL", value: 0 };
-    const atr = calcATR(candles, period);
-    const latest = candles[candles.length - 1];
-    const hl2 = (latest.high + latest.low) / 2;
-    const upper = hl2 + mult * atr;
-    const lower = hl2 - mult * atr;
-    let trend, value;
-    if (latest.close > upper) {
-        trend = "BULLISH";
-        value = lower;
-    }
-    else if (latest.close < lower) {
-        trend = "BEARISH";
-        value = upper;
-    }
-    else {
-        trend = latest.close > hl2 ? "BULLISH" : "BEARISH";
-        value = trend === "BULLISH" ? lower : upper;
-    }
-    return { trend, value: Number(value.toFixed(2)) };
-}
-function analyzeStructure(candles) {
-    if (candles.length < 30)
-        return { trend: "NEUTRAL", breakout: false, momentum: "NEUTRAL", support: 0, resistance: 0, candleSignal: "NONE" };
-    const recent = candles.slice(-20);
-    const highs = recent.map(c => c.high);
-    const lows = recent.map(c => c.low);
-    const closes = recent.map(c => c.close);
-    const latest = recent[recent.length - 1];
-    const previous = recent[recent.length - 2];
-    const support = Number(Math.min(...lows).toFixed(2));
-    const resistance = Number(Math.max(...highs).toFixed(2));
-    const first = closes[0], last = closes[closes.length - 1];
-    let trend = "NEUTRAL";
-    if (last > first * 1.01)
-        trend = "BULLISH";
-    if (last < first * 0.99)
-        trend = "BEARISH";
-    const move = Math.abs(latest.close - previous.close);
-    let momentum = "WEAK";
-    if (move > 80)
-        momentum = "STRONG";
-    if (move > 150)
-        momentum = "EXPLOSIVE";
-    const breakout = latest.close > resistance * 0.998 || latest.close < support * 1.002;
-    const body = Math.abs(latest.close - latest.open);
-    const range = latest.high - latest.low;
-    let candleSignal = "NONE";
-    if (latest.close > latest.open && previous.close < previous.open && latest.close > previous.open)
-        candleSignal = "BULLISH_ENGULFING";
-    if (latest.close < latest.open && previous.close > previous.open && latest.close < previous.open)
-        candleSignal = "BEARISH_ENGULFING";
-    if (range > 0 && body / range > 0.7)
-        candleSignal = latest.close > latest.open ? "BULLISH_IMPULSE" : "BEARISH_IMPULSE";
-    return { trend, breakout, momentum, support, resistance, candleSignal };
-}
-function detectRegime(rsi, atr, macd, signal, trend) {
-    if (atr > 180 && Math.abs(macd - signal) > 20)
-        return "BREAKOUT";
-    if (trend === "BULLISH" && rsi > 55)
-        return "TRENDING_BULLISH";
-    if (trend === "BEARISH" && rsi < 45)
-        return "TRENDING_BEARISH";
-    if (rsi > 75 || rsi < 25)
-        return "REVERSAL";
-    return "RANGING";
-}
-// ══════════════════════════════════════════════════════════════
-// Market hours (IST)
-// ══════════════════════════════════════════════════════════════
-function isMarketOpen() {
-    const ist = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-    const day = ist.getDay();
-    if (day === 0 || day === 6)
-        return false;
-    const mins = ist.getHours() * 60 + ist.getMinutes();
-    return mins >= 555 && mins <= 930; // 9:15–15:30
-}
-// ══════════════════════════════════════════════════════════════
-// Upstox API helpers
-// ══════════════════════════════════════════════════════════════
-const INDEX_KEY_MAP = {
-    "NSE_INDEX:Nifty 50": "NIFTY",
-    "NSE_INDEX:Nifty Bank": "BANKNIFTY",
-    "BSE_INDEX:SENSEX": "SENSEX",
-};
-async function fetchIndexLTP() {
-    const token = process.env.UPSTOX_ANALYTICS_TOKEN || process.env.UPSTOX_ACCESS_TOKEN;
-    if (!token)
-        return {};
-    const keys = ["NSE_INDEX|Nifty 50", "NSE_INDEX|Nifty Bank", "BSE_INDEX|SENSEX"]
-        .map(encodeURIComponent).join(",");
-    try {
-        const res = await fetch(`https://api.upstox.com/v2/market-quote/ltp?instrument_key=${keys}`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
-        if (!res.ok) {
-            console.warn("[LTP] Index fetch failed:", res.status);
-            return {};
-        }
-        const json = await res.json();
-        const prices = {};
-        for (const [key, val] of Object.entries(json.data ?? {})) {
-            const sym = INDEX_KEY_MAP[key];
-            if (sym && val?.last_price)
-                prices[sym] = Number(val.last_price.toFixed(2));
-        }
-        return prices;
-    }
-    catch (err) {
-        console.error("[LTP] Index fetch error:", err);
-        return {};
-    }
-}
-const STOCK_SYMBOLS = ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "HINDUNILVR", "ITC", "SBIN", "BHARTIARTL", "KOTAKBANK"];
-async function fetchStockLTPs() {
-    const token = process.env.UPSTOX_ANALYTICS_TOKEN || process.env.UPSTOX_ACCESS_TOKEN;
-    if (!token)
         return [];
-    const keys = STOCK_SYMBOLS.map(s => `NSE_EQ|${s}`).map(encodeURIComponent).join(",");
-    try {
-        const res = await fetch(`https://api.upstox.com/v2/market-quote/ltp?instrument_key=${keys}`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
-        if (!res.ok)
-            return [];
-        const json = await res.json();
-        return STOCK_SYMBOLS
-            .map(sym => {
-            const quote = json.data?.[`NSE_EQ:${sym}`];
-            const price = Number((quote?.last_price ?? 0).toFixed(2));
-            const close = Number((quote?.close_price ?? price).toFixed(2));
-            return { symbol: sym, price, change: Number((price - close).toFixed(2)) };
-        })
-            .filter(s => s.price > 0);
+    // True Range
+    const tr = [0];
+    for (let i = 1; i < candles.length; i++) {
+        tr.push(Math.max(candles[i].high - candles[i].low, Math.abs(candles[i].high - candles[i - 1].close), Math.abs(candles[i].low - candles[i - 1].close)));
     }
-    catch {
-        return [];
+    // Wilder smoothed ATR
+    const atr = new Array(candles.length).fill(0);
+    let sum = 0;
+    for (let i = 1; i <= period; i++)
+        sum += tr[i];
+    atr[period] = sum / period;
+    for (let i = period + 1; i < candles.length; i++) {
+        atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period;
     }
+    // Basic bands
+    const basicUpper = new Array(candles.length).fill(0);
+    const basicLower = new Array(candles.length).fill(0);
+    for (let i = period; i < candles.length; i++) {
+        const hl2 = (candles[i].high + candles[i].low) / 2;
+        basicUpper[i] = hl2 + multiplier * atr[i];
+        basicLower[i] = hl2 - multiplier * atr[i];
+    }
+    // Adjusted bands
+    const finalUpper = [...basicUpper];
+    const finalLower = [...basicLower];
+    for (let i = period + 1; i < candles.length; i++) {
+        finalUpper[i] = (basicUpper[i] < finalUpper[i - 1] || candles[i - 1].close > finalUpper[i - 1])
+            ? basicUpper[i] : finalUpper[i - 1];
+        finalLower[i] = (basicLower[i] > finalLower[i - 1] || candles[i - 1].close < finalLower[i - 1])
+            ? basicLower[i] : finalLower[i - 1];
+    }
+    // Supertrend direction
+    const result = new Array(candles.length).fill({ value: 0, dir: "up" });
+    result[period] = { value: finalUpper[period], dir: "down" };
+    for (let i = period + 1; i < candles.length; i++) {
+        const prevDir = result[i - 1].dir;
+        let value, dir;
+        if (prevDir === "down") {
+            if (candles[i].close > finalUpper[i]) {
+                value = finalLower[i];
+                dir = "up";
+            }
+            else {
+                value = finalUpper[i];
+                dir = "down";
+            }
+        }
+        else {
+            if (candles[i].close < finalLower[i]) {
+                value = finalUpper[i];
+                dir = "down";
+            }
+            else {
+                value = finalLower[i];
+                dir = "up";
+            }
+        }
+        result[i] = { value, dir };
+    }
+    return result.slice(period);
 }
+// ══════════════════════════════════════════════════════════════
+// Upstox API
+// ══════════════════════════════════════════════════════════════
 const OPTION_KEYS = {
     NIFTY: "NSE_INDEX|Nifty 50",
     BANKNIFTY: "NSE_INDEX|Nifty Bank",
     SENSEX: "BSE_INDEX|SENSEX",
 };
+function upstoxToken() {
+    return process.env.UPSTOX_ANALYTICS_TOKEN || process.env.UPSTOX_ACCESS_TOKEN || "";
+}
+async function fetchIndexLTP() {
+    const token = upstoxToken();
+    if (!token)
+        return {};
+    const rawKeys = [
+        "NSE_INDEX|Nifty 50",
+        "NSE_INDEX|Nifty Bank",
+        "BSE_INDEX|SENSEX",
+        "NSE_INDEX|India VIX",
+    ];
+    const keys = rawKeys.map(encodeURIComponent).join(",");
+    try {
+        const res = await fetch(`https://api.upstox.com/v2/market-quote/ltp?instrument_key=${keys}`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+        if (!res.ok)
+            return {};
+        const json = await res.json();
+        const keyMap = {
+            "NSE_INDEX:Nifty 50": "NIFTY",
+            "NSE_INDEX:Nifty Bank": "BANKNIFTY",
+            "BSE_INDEX:SENSEX": "SENSEX",
+            "NSE_INDEX:India VIX": "VIX",
+        };
+        const prices = {};
+        for (const [k, v] of Object.entries(json.data ?? {})) {
+            const sym = keyMap[k];
+            if (sym && v?.last_price)
+                prices[sym] = Number(v.last_price.toFixed(2));
+        }
+        return prices;
+    }
+    catch (err) {
+        console.error("[LTP] Fetch error:", err);
+        return {};
+    }
+}
+// Expiry helpers
 function getDTE(expiryStr) {
     const expiry = new Date(expiryStr);
+    expiry.setHours(0, 0, 0, 0);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    expiry.setHours(0, 0, 0, 0);
     return Math.max(0, Math.round((expiry.getTime() - today.getTime()) / 86400000));
 }
-async function fetchOptionSlice(instrument, expiryStr) {
-    const token = process.env.UPSTOX_ANALYTICS_TOKEN || process.env.UPSTOX_ACCESS_TOKEN;
+function nextWeekday(weekday) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const d = new Date(today);
+    const diff = (weekday - d.getDay() + 7) % 7;
+    d.setDate(d.getDate() + (diff === 0 ? 7 : diff));
+    return d;
+}
+async function getWeeklyExpiry(index) {
+    // NIFTY weekly: Tuesday; SENSEX: Thursday; BANKNIFTY: use nearest Tuesday
+    const weekday = index === "SENSEX" ? 4 : 2;
+    const d = nextWeekday(weekday);
+    return d.toISOString().split("T")[0];
+}
+async function fetchFullOptionChain(index, expiry) {
+    const token = upstoxToken();
     if (!token)
         return null;
-    const instrumentKey = OPTION_KEYS[instrument];
-    if (!instrumentKey)
+    const instrKey = OPTION_KEYS[index];
+    if (!instrKey)
         return null;
     try {
         const url = new URL("https://api.upstox.com/v2/option/chain");
-        url.searchParams.set("instrument_key", instrumentKey);
-        url.searchParams.set("expiry_date", expiryStr);
+        url.searchParams.set("instrument_key", instrKey);
+        url.searchParams.set("expiry_date", expiry);
         const res = await fetch(url.toString(), {
             headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
         });
@@ -376,65 +404,933 @@ async function fetchOptionSlice(instrument, expiryStr) {
         if (!chain.length)
             return null;
         const spotPrice = chain[0].underlying_spot_price ?? 0;
-        const atmStrike = chain.reduce((nearest, row) => Math.abs(row.strike_price - spotPrice) < Math.abs(nearest - spotPrice) ? row.strike_price : nearest, chain[0].strike_price);
-        const sorted = [...chain].sort((a, b) => a.strike_price - b.strike_price);
-        const atmIdx = sorted.findIndex(r => r.strike_price === atmStrike);
-        const lo = Math.max(0, atmIdx - 5);
-        const hi = Math.min(sorted.length - 1, atmIdx + 5);
-        const strikes = sorted.slice(lo, hi + 1).map(row => ({
-            strike: row.strike_price,
-            cePremium: row.call_options?.market_data?.ltp ?? 0,
-            pePremium: row.put_options?.market_data?.ltp ?? 0,
-        }));
-        return { expiry: expiryStr, dte: getDTE(expiryStr), atm: atmStrike, strikes };
+        const atmStrike = chain.reduce((nearest, row) => Math.abs(row.strike_price - spotPrice) < Math.abs(nearest - spotPrice)
+            ? row.strike_price : nearest, chain[0].strike_price);
+        let totalCE_OI = 0, totalPE_OI = 0;
+        const rows = chain.map(row => {
+            const ceOI = row.call_options?.market_data?.oi ?? 0;
+            const peOI = row.put_options?.market_data?.oi ?? 0;
+            totalCE_OI += ceOI;
+            totalPE_OI += peOI;
+            return {
+                strike: row.strike_price,
+                cePremium: row.call_options?.market_data?.ltp ?? 0,
+                pePremium: row.put_options?.market_data?.ltp ?? 0,
+                ceOI,
+                peOI,
+            };
+        });
+        // Update price cache
+        const expiryFmt = formatExpiryDDMMM(expiry);
+        for (const row of rows) {
+            if (row.cePremium > 0)
+                optionPriceCache[`${index} ${expiryFmt} ${row.strike} CE`] = row.cePremium;
+            if (row.pePremium > 0)
+                optionPriceCache[`${index} ${expiryFmt} ${row.strike} PE`] = row.pePremium;
+        }
+        const pcr = totalCE_OI > 0 ? totalPE_OI / totalCE_OI : 1;
+        return { expiry, spotPrice, atmStrike, rows, pcr, timestamp: Date.now() };
     }
-    catch {
+    catch (err) {
+        console.error(`[OptionChain:${index}] Error:`, err);
         return null;
     }
 }
+function formatExpiryDDMMM(dateStr) {
+    const d = new Date(dateStr);
+    const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+    return `${String(d.getDate()).padStart(2, "0")}${months[d.getMonth()]}`;
+}
+function getLatestChain(index) {
+    const hist = optionChainHistory[index];
+    if (!hist?.length)
+        return null;
+    return hist[hist.length - 1];
+}
+function getATMOption(chain, type, premMin = 60, premMax = 70) {
+    const field = type === "CE" ? "cePremium" : "pePremium";
+    const target = (premMin + premMax) / 2;
+    const candidates = chain.rows
+        .filter(r => r[field] >= premMin && r[field] <= premMax)
+        .sort((a, b) => Math.abs(a[field] - target) - Math.abs(b[field] - target));
+    if (!candidates.length)
+        return null;
+    const best = candidates[0];
+    const expiryFmt = formatExpiryDDMMM(chain.expiry);
+    return {
+        strike: best.strike,
+        premium: best[field],
+        symbol: `NIFTY ${expiryFmt} ${best.strike} ${type}`,
+    };
+}
+function getATMOptionForIndex(chain, index, type, premMin = 60, premMax = 70) {
+    const field = type === "CE" ? "cePremium" : "pePremium";
+    const target = (premMin + premMax) / 2;
+    const candidates = chain.rows
+        .filter(r => r[field] >= premMin && r[field] <= premMax)
+        .sort((a, b) => Math.abs(a[field] - target) - Math.abs(b[field] - target));
+    if (!candidates.length)
+        return null;
+    const best = candidates[0];
+    const expiryFmt = formatExpiryDDMMM(chain.expiry);
+    return {
+        strike: best.strike,
+        premium: best[field],
+        symbol: `${index} ${expiryFmt} ${best.strike} ${type}`,
+    };
+}
+function getCurrentPrice(symbol) {
+    return optionPriceCache[symbol] ?? 0;
+}
+// OI change: compare latest snapshot vs snapshot N minutes ago
+function getOIChangeForATM(index, type, minutesAgo) {
+    const hist = optionChainHistory[index];
+    if (!hist || hist.length < 2)
+        return null;
+    const latest = hist[hist.length - 1];
+    const cutoff = latest.timestamp - minutesAgo * 60000;
+    const old = hist.find(h => h.timestamp <= cutoff) ?? hist[0];
+    const atmStr = latest.atmStrike;
+    const latestRow = latest.rows.find(r => r.strike === atmStr);
+    const oldRow = old.rows.find(r => r.strike === atmStr);
+    if (!latestRow || !oldRow)
+        return null;
+    const current = type === "CE" ? latestRow.ceOI : latestRow.peOI;
+    const previous = type === "CE" ? oldRow.ceOI : oldRow.peOI;
+    const pctChange = previous > 0 ? ((current - previous) / previous) * 100 : 0;
+    return { current, previous, pctChange };
+}
 // ══════════════════════════════════════════════════════════════
-// Kraken WebSocket — XBT/USD live price feed
+// Option chain poller — every 60 seconds
 // ══════════════════════════════════════════════════════════════
-function connectBinanceWS() {
-    const socket = new ws_1.default("wss://ws.kraken.com");
-    socket.on("open", () => {
-        console.log("[BTC] Kraken WebSocket connected — subscribing to XBT/USD trades");
-        socket.send(JSON.stringify({
-            event: "subscribe",
-            pair: ["XBT/USD"],
-            subscription: { name: "trade" },
-        }));
-    });
-    socket.on("message", (data) => {
+async function pollOptionChain() {
+    if (!isMarketOpen())
+        return;
+    const indices = ["NIFTY", "BANKNIFTY", "SENSEX"];
+    for (const index of indices) {
         try {
-            // Kraken trade message: [channelID, [[price, vol, time, side, orderType, misc], ...], "trade", "XBT/USD"]
-            const msg = JSON.parse(data.toString());
-            if (!Array.isArray(msg) || msg[3] !== "XBT/USD")
-                return;
-            const trades = msg[1];
-            if (!Array.isArray(trades) || !trades[0])
-                return;
-            const price = parseFloat(trades[0][0]);
-            if (!price)
-                return;
-            btcPrice = price;
-            processBtcTick(price, Date.now());
-            if (Date.now() - lastBtcLogTime > 5000) {
-                console.log(`[BTC] Price: $${btcPrice.toFixed(2)}`);
-                lastBtcLogTime = Date.now();
-            }
+            const expiry = await getWeeklyExpiry(index);
+            const chain = await fetchFullOptionChain(index, expiry);
+            if (!chain)
+                continue;
+            if (!optionChainHistory[index])
+                optionChainHistory[index] = [];
+            optionChainHistory[index].push(chain);
+            if (optionChainHistory[index].length > 12)
+                optionChainHistory[index].shift();
+            console.log(`[Chain:${index}] PCR: ${chain.pcr.toFixed(2)} | ATM: ${chain.atmStrike} | VIX: ${lastVix.toFixed(1)}`);
         }
         catch (err) {
-            console.error("[BTC] WS parse error:", err);
+            console.error(`[Chain:${index}] Error:`, err);
         }
+    }
+}
+// ══════════════════════════════════════════════════════════════
+// Strategy DB helpers
+// ══════════════════════════════════════════════════════════════
+async function getOpenStrategyPositions(strategyId) {
+    const { data } = await supabase
+        .from("strategy_positions")
+        .select("*")
+        .eq("strategy_id", strategyId)
+        .eq("status", "OPEN");
+    return (data ?? []);
+}
+async function openStrategyPosition(strategyId, pos) {
+    const { error } = await supabase.from("strategy_positions").insert({
+        strategy_id: strategyId,
+        symbol: pos.symbol,
+        type: pos.type,
+        side: pos.side ?? "LONG",
+        entry_price: pos.entry_price,
+        current_price: pos.entry_price,
+        exit_price: null,
+        quantity: pos.quantity,
+        stop_loss: pos.stop_loss,
+        trail_sl: null,
+        pnl: 0,
+        status: "OPEN",
+        opened_at: new Date().toISOString(),
     });
-    socket.on("error", (err) => {
-        console.error("[BTC] WS error:", err.message);
+    if (error) {
+        console.error(`[DB] openStrategyPosition(${strategyId}) error:`, error.message);
+    }
+    else {
+        dailyTradeCounts[strategyId] = (dailyTradeCounts[strategyId] ?? 0) + 1;
+        console.log(`[${strategyId}] OPENED ${pos.type} ${pos.symbol} @ ₹${pos.entry_price} | SL: ₹${pos.stop_loss}`);
+    }
+}
+function generateExitDetail(reason, pos, exitPrice, peakPremium) {
+    const ist = getIST();
+    const timeStr = `${String(ist.getUTCHours()).padStart(2, "0")}:${String(ist.getUTCMinutes()).padStart(2, "0")} IST`;
+    const SL_PCT = { ema_crossover: 15, ema_confluence: 15, orion: 30, supertrend: 20, pcr_reversal: 25, gap_orb: 20 };
+    const TRAIL_PCT = { ema_crossover: 10, ema_confluence: 10, orion: 15, supertrend: 12, pcr_reversal: 12, gap_orb: 12 };
+    const CLOSE_TIME = { ema_crossover: "3:00 PM", orion: "2:00 PM", ema_confluence: "3:00 PM", supertrend: "3:00 PM", pcr_reversal: "3:00 PM", gap_orb: "3:00 PM" };
+    switch (reason) {
+        case "SL_HIT": {
+            const pct = SL_PCT[pos.strategy_id] ?? 15;
+            const sl = pos.stop_loss ?? Number((pos.entry_price * (1 - pct / 100)).toFixed(2));
+            return `Stop loss hit at ${timeStr}. Entry: ₹${pos.entry_price.toFixed(2)}. SL was set at ${pct}% below entry = ₹${sl.toFixed(2)}. Price dropped to ₹${exitPrice.toFixed(2)}.`;
+        }
+        case "CROSSOVER": {
+            if (pos.strategy_id === "supertrend") {
+                const flip = pos.type === "CE" ? "red (bearish)" : "green (bullish)";
+                return `Supertrend flipped ${flip} at ${timeStr}. Opposite signal triggered — position closed.`;
+            }
+            const cross = pos.type === "CE" ? "16 EMA crossed below 64 EMA" : "16 EMA crossed above 64 EMA";
+            return `${cross} at ${timeStr}. Opposite crossover signal — position closed and flip trade entered.`;
+        }
+        case "TRAIL_SL": {
+            const tpct = TRAIL_PCT[pos.strategy_id] ?? 10;
+            const peak = peakPremium ?? (pos.trail_sl != null ? Number((pos.trail_sl / (1 - tpct / 100)).toFixed(2)) : null);
+            const trail = pos.trail_sl ?? (peak != null ? Number((peak * (1 - tpct / 100)).toFixed(2)) : null);
+            if (peak != null && trail != null) {
+                return `Trailing stop loss triggered at ${timeStr}. Premium peaked at ₹${peak.toFixed(2)}, trail SL was ${tpct}% below peak = ₹${trail.toFixed(2)}. Price dropped to ₹${exitPrice.toFixed(2)}.`;
+            }
+            return `Trailing stop loss triggered at ${timeStr}. Price dropped to ₹${exitPrice.toFixed(2)}.`;
+        }
+        case "HARD_CLOSE":
+            return `Position closed at ${CLOSE_TIME[pos.strategy_id] ?? "3:00 PM"} per the hard close rule.`;
+        case "PCR_NEUTRAL":
+            return `PCR reverted to neutral zone (0.9–1.1) at ${timeStr}. Mean-reversion complete — signal no longer valid.`;
+        case "OI_REVERSE": {
+            const opposite = pos.type === "CE" ? "PE" : "CE";
+            return `${opposite} OI buildup detected at ${timeStr}. Opposite side strengthening — position closed to avoid reversal.`;
+        }
+        case "TARGET":
+        case "GAP_FILL":
+            return `Gap fill target reached at ${timeStr}. Price returned to previous day's close level. Trade objective achieved at ₹${exitPrice.toFixed(2)}.`;
+        default:
+            return `Position closed at ${timeStr}. Reason: ${reason}. Exit: ₹${exitPrice.toFixed(2)}.`;
+    }
+}
+async function closeStrategyPosition(posId, exitPrice, reason) {
+    const { data: pos } = await supabase
+        .from("strategy_positions")
+        .select("entry_price, quantity, strategy_id, symbol, type, stop_loss, trail_sl")
+        .eq("id", posId)
+        .single();
+    if (!pos)
+        return;
+    const p = pos;
+    const pnl = (exitPrice - p.entry_price) * p.quantity;
+    const detail = generateExitDetail(reason, p, exitPrice, peakPremiums[posId]);
+    const { error } = await supabase.from("strategy_positions").update({
+        status: "CLOSED",
+        exit_price: exitPrice,
+        current_price: exitPrice,
+        pnl: Number(pnl.toFixed(2)),
+        closed_at: new Date().toISOString(),
+        exit_reason: reason,
+        exit_reason_detail: detail,
+    }).eq("id", posId);
+    if (error) {
+        console.error(`[DB] closeStrategyPosition(${posId}) error:`, error.message);
+    }
+    else {
+        console.log(`[${p.strategy_id}] CLOSED ${p.symbol} @ ₹${exitPrice} | PnL: ${pnl >= 0 ? "+" : ""}₹${pnl.toFixed(2)} | ${reason}`);
+        delete peakPremiums[posId];
+        await updateStrategyCapital(p.strategy_id);
+    }
+}
+async function updateStrategyCapital(strategyId) {
+    const { data } = await supabase
+        .from("strategy_positions")
+        .select("pnl, status")
+        .eq("strategy_id", strategyId);
+    const positions = (data ?? []);
+    const closed = positions.filter(p => p.status === "CLOSED");
+    const totalPnl = closed.reduce((s, p) => s + (p.pnl ?? 0), 0);
+    const wins = closed.filter(p => (p.pnl ?? 0) > 0).length;
+    const winRate = closed.length > 0 ? wins / closed.length : 0;
+    const currentVal = 100000 + totalPnl;
+    // Simple Sharpe: (return / std) using daily trade PnLs
+    let sharpe = 0;
+    if (closed.length >= 2) {
+        const pnls = closed.map(p => p.pnl ?? 0);
+        const mean = pnls.reduce((s, v) => s + v, 0) / pnls.length;
+        const std = Math.sqrt(pnls.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / pnls.length);
+        sharpe = std > 0 ? mean / std : 0;
+    }
+    await supabase.from("strategy_capital").update({
+        total_pnl: Number(totalPnl.toFixed(2)),
+        current_value: Number(currentVal.toFixed(2)),
+        peak_capital: Number(Math.max(currentVal, 100000).toFixed(2)),
+        win_rate: Number(winRate.toFixed(4)),
+        sharpe_ratio: Number(sharpe.toFixed(4)),
+        today_trades: dailyTradeCounts[strategyId] ?? 0,
+        lifetime_trades: closed.length,
+        updated_at: new Date().toISOString(),
+    }).eq("strategy_id", strategyId);
+}
+// ══════════════════════════════════════════════════════════════
+// Position Monitor — runs every 30s
+// ══════════════════════════════════════════════════════════════
+async function monitorOpenPositions() {
+    if (!isMarketOpen())
+        return;
+    const { data } = await supabase
+        .from("strategy_positions")
+        .select("*")
+        .eq("status", "OPEN");
+    if (!data?.length)
+        return;
+    const HARD_CLOSE_MINS = {
+        ema_crossover: 900, // 15:00
+        orion: 840, // 14:00
+        ema_confluence: 900,
+        supertrend: 900,
+        pcr_reversal: 900,
+        gap_orb: 900,
+    };
+    const currentMins = istMins();
+    for (const raw of data) {
+        const pos = raw;
+        const currentPrice = getCurrentPrice(pos.symbol);
+        if (!currentPrice || currentPrice <= 0)
+            continue;
+        // Track peak
+        if (!peakPremiums[pos.id] || currentPrice > peakPremiums[pos.id]) {
+            peakPremiums[pos.id] = currentPrice;
+        }
+        const peak = peakPremiums[pos.id];
+        const pnl = (currentPrice - pos.entry_price) * pos.quantity;
+        // Update current price + pnl in DB (best effort, fire-and-forget)
+        void supabase.from("strategy_positions").update({
+            current_price: Number(currentPrice.toFixed(2)),
+            pnl: Number(pnl.toFixed(2)),
+        }).eq("id", pos.id);
+        // ── Hard close ──
+        const hc = HARD_CLOSE_MINS[pos.strategy_id];
+        if (hc && currentMins >= hc) {
+            await closeStrategyPosition(pos.id, currentPrice, "HARD_CLOSE");
+            continue;
+        }
+        // ── Trail SL activation ──
+        // Strategy 1 & 3: 1.5×ATR move in direction → trail at 10% below peak
+        // Strategy 2: up 35% → trail at 15% below peak
+        // Strategy 4: up 40% → trail at 12% below peak
+        // Strategy 5: up 30% → trail at 12% below peak
+        // Strategy 6 (breakout): up 35% → trail at 12% below peak
+        const pnlPct = (currentPrice - pos.entry_price) / pos.entry_price;
+        let trailActivationPct = 0.35;
+        let trailPct = 0.12;
+        if (pos.strategy_id === "ema_crossover" || pos.strategy_id === "ema_confluence") {
+            trailActivationPct = 0.20; // approximate 1.5×ATR as 20% move
+            trailPct = 0.10;
+        }
+        else if (pos.strategy_id === "orion") {
+            trailActivationPct = 0.35;
+            trailPct = 0.15;
+        }
+        if (pnlPct >= trailActivationPct) {
+            const newTrail = peak * (1 - trailPct);
+            if (!pos.trail_sl || newTrail > pos.trail_sl) {
+                await supabase.from("strategy_positions").update({ trail_sl: Number(newTrail.toFixed(2)) }).eq("id", pos.id);
+                pos.trail_sl = newTrail; // update local copy
+            }
+        }
+        // ── SL hit ──
+        if (pos.stop_loss && currentPrice <= pos.stop_loss) {
+            await closeStrategyPosition(pos.id, currentPrice, "SL_HIT");
+            continue;
+        }
+        // ── Trail SL hit ──
+        if (pos.trail_sl && currentPrice <= pos.trail_sl) {
+            await closeStrategyPosition(pos.id, currentPrice, "TRAIL_SL");
+            continue;
+        }
+        // ── Strategy 2 Orion breakeven: up 20% → move SL to breakeven ──
+        if (pos.strategy_id === "orion" && pnlPct >= 0.20 && pos.stop_loss && pos.stop_loss < pos.entry_price) {
+            await supabase.from("strategy_positions").update({ stop_loss: pos.entry_price }).eq("id", pos.id);
+        }
+    }
+}
+// ══════════════════════════════════════════════════════════════
+// Strategy 1 — EMA Crossover (30s candles, starts 10:30 AM)
+// ══════════════════════════════════════════════════════════════
+let s1PrevFast = 0;
+let s1PrevSlow = 0;
+async function runStrategy1() {
+    if (!isMarketOpen())
+        return;
+    const mins = istMins();
+    if (mins < 630 || mins >= 900)
+        return; // 10:30–15:00
+    const candles = getCandles("NIFTY", "30s");
+    if (candles.length < 66)
+        return;
+    const closes = candles.map(c => c.close);
+    const fastArr = emaValues(closes, 16);
+    const slowArr = emaValues(closes, 64);
+    const fastCurr = fastArr[fastArr.length - 1];
+    const slowCurr = slowArr[slowArr.length - 1];
+    const fastPrev = s1PrevFast || fastArr[fastArr.length - 2];
+    const slowPrev = s1PrevSlow || slowArr[slowArr.length - 2];
+    const bullCross = fastPrev <= slowPrev && fastCurr > slowCurr;
+    const bearCross = fastPrev >= slowPrev && fastCurr < slowCurr;
+    s1PrevFast = fastCurr;
+    s1PrevSlow = slowCurr;
+    if (!bullCross && !bearCross)
+        return;
+    const optType = bullCross ? "CE" : "PE";
+    const openPos = await getOpenStrategyPositions("ema_crossover");
+    // If opposite type open → close it first (FLIP)
+    for (const pos of openPos) {
+        if (pos.type !== optType) {
+            const cp = getCurrentPrice(pos.symbol);
+            if (cp > 0)
+                await closeStrategyPosition(pos.id, cp, "CROSSOVER");
+        }
+        else {
+            return; // already in same direction trade
+        }
+    }
+    const chain = getLatestChain("NIFTY");
+    if (!chain)
+        return;
+    const option = getATMOption(chain, optType, 60, 70);
+    if (!option) {
+        console.log(`[S1] No ATM ${optType} in ₹60-70 range`);
+        return;
+    }
+    const atr = calcATR(candles, 14);
+    // Use Fibonacci confluence check (50–61.8% zone)
+    const recentHighs = candles.slice(-100).map(c => c.high);
+    const recentLows = candles.slice(-100).map(c => c.low);
+    const fibH = Math.max(...recentHighs);
+    const fibL = Math.min(...recentLows);
+    const fib = calcFibLevels(fibH, fibL);
+    const price = lastNiftyPrice;
+    const nearFib = price >= fib["50"] * 0.998 && price <= fib["61.8"] * 1.002;
+    if (!nearFib && Math.abs(price - fib["50"]) / fib["50"] > 0.003) {
+        // Confluence not met but still trade — fib is advisory for this strategy
+    }
+    await openStrategyPosition("ema_crossover", {
+        symbol: option.symbol,
+        type: optType,
+        side: "LONG",
+        entry_price: option.premium,
+        current_price: option.premium,
+        quantity: 50,
+        stop_loss: Number((option.premium * 0.85).toFixed(2)),
+        trail_sl: null,
+        pnl: 0,
+        status: "OPEN",
     });
-    socket.on("close", () => {
-        console.warn("[BTC] WS closed — reconnecting in 5s...");
-        setTimeout(connectBinanceWS, 5000);
+    void atr; // used for trailing SL monitoring
+}
+// ══════════════════════════════════════════════════════════════
+// Strategy 2 — Orion (ORB + VWAP + OI, 9:30–14:00)
+// ══════════════════════════════════════════════════════════════
+// Max 1 trade per instrument simultaneously
+const orionOpenInstruments = new Set();
+async function runStrategy2() {
+    if (!isMarketOpen())
+        return;
+    const mins = istMins();
+    if (mins < 570 || mins >= 840)
+        return; // 9:30–14:00
+    // VIX filter
+    if (lastVix > 0 && lastVix < 13) {
+        console.log(`[S2] VIX ${lastVix} < 13 — skipping trades today`);
+        return;
+    }
+    // ORB setup at 9:30 (after 15-min opening candle)
+    const instruments = ["NIFTY", "BANKNIFTY", "SENSEX"];
+    for (const index of instruments) {
+        await runOrionForIndex(index, mins);
+    }
+}
+async function runOrionForIndex(index, mins) {
+    const candles15m = getCandles(index, "15m");
+    if (candles15m.length < 1)
+        return;
+    // Set ORB from first completed 15m candle (9:15–9:30 candle)
+    if (!orbSet[index] && candles15m.length >= 1) {
+        const orbCandle = candles15m[0];
+        const istH = new Date(orbCandle.time + (5 * 60 + 30) * 60000);
+        if (istH.getUTCHours() === 9 && istH.getUTCMinutes() === 15) {
+            orbHigh[index] = orbCandle.high;
+            orbLow[index] = orbCandle.low;
+            orbSet[index] = true;
+            console.log(`[S2:${index}] ORB set — High: ${orbHigh[index]} | Low: ${orbLow[index]}`);
+        }
+    }
+    if (!orbSet[index])
+        return;
+    // Already have an open trade for this instrument
+    if (orionOpenInstruments.has(index)) {
+        // Check if we need to close it due to Orion's specific exit conditions
+        const openPos = await getOpenStrategyPositions("orion");
+        const indexPos = openPos.find(p => p.symbol.startsWith(index));
+        if (indexPos) {
+            // Exit if time is >= 14:00
+            if (mins >= 840) {
+                const cp = getCurrentPrice(indexPos.symbol);
+                if (cp > 0) {
+                    await closeStrategyPosition(indexPos.id, cp, "HARD_CLOSE");
+                    orionOpenInstruments.delete(index);
+                }
+            }
+        }
+        else {
+            orionOpenInstruments.delete(index);
+        }
+        return;
+    }
+    const price = index === "NIFTY" ? lastNiftyPrice : index === "BANKNIFTY" ? lastBankniftyPrice : lastSensexPrice;
+    if (!price)
+        return;
+    const candles = getCandles(index, "15m");
+    const vwap = calcVWAP(candles);
+    const chain = getLatestChain(index);
+    if (!chain)
+        return;
+    const orbH = orbHigh[index] ?? 0;
+    const orbL = orbLow[index] ?? 0;
+    // Entry: CE
+    const ceBreakout = price > orbH;
+    const aboveVwap = price > vwap;
+    const ceOIchange = getOIChangeForATM(index, "CE", 5);
+    const ceOIrising = ceOIchange ? ceOIchange.pctChange > 0 : true; // bullish OI buildup
+    // Entry: PE
+    const peBreakout = price < orbL;
+    const belowVwap = price < vwap;
+    const peOIchange = getOIChangeForATM(index, "PE", 5);
+    const peOIrising = peOIchange ? peOIchange.pctChange > 0 : true;
+    let optType = null;
+    if (ceBreakout && aboveVwap && ceOIrising)
+        optType = "CE";
+    else if (peBreakout && belowVwap && peOIrising)
+        optType = "PE";
+    if (!optType)
+        return;
+    const option = getATMOptionForIndex(chain, index, optType, 60, 70);
+    if (!option) {
+        console.log(`[S2:${index}] No ATM ${optType} in ₹60-70`);
+        return;
+    }
+    await openStrategyPosition("orion", {
+        symbol: option.symbol,
+        type: optType,
+        side: "LONG",
+        entry_price: option.premium,
+        current_price: option.premium,
+        quantity: index === "NIFTY" ? 50 : index === "BANKNIFTY" ? 15 : 20,
+        stop_loss: Number((option.premium * 0.70).toFixed(2)), // 30% SL
+        trail_sl: null,
+        pnl: 0,
+        status: "OPEN",
     });
+    orionOpenInstruments.add(index);
+}
+// ══════════════════════════════════════════════════════════════
+// Strategy 3 — EMA Confluence (30s, 10:30–15:00)
+// ══════════════════════════════════════════════════════════════
+let s3PrevFast = 0;
+let s3PrevSlow = 0;
+async function runStrategy3() {
+    if (!isMarketOpen())
+        return;
+    const mins = istMins();
+    if (mins < 630 || mins >= 900)
+        return;
+    const candles = getCandles("NIFTY", "30s");
+    if (candles.length < 66)
+        return;
+    const openPos = await getOpenStrategyPositions("ema_confluence");
+    if (openPos.length >= 1)
+        return; // max 1 open
+    const closes = candles.map(c => c.close);
+    const fastArr = emaValues(closes, 16);
+    const slowArr = emaValues(closes, 64);
+    const fastCurr = fastArr[fastArr.length - 1];
+    const slowCurr = slowArr[slowArr.length - 1];
+    const fastPrev = s3PrevFast || fastArr[fastArr.length - 2];
+    const slowPrev = s3PrevSlow || slowArr[slowArr.length - 2];
+    const bullCross = fastPrev <= slowPrev && fastCurr > slowCurr;
+    const bearCross = fastPrev >= slowPrev && fastCurr < slowCurr;
+    s3PrevFast = fastCurr;
+    s3PrevSlow = slowCurr;
+    if (!bullCross && !bearCross)
+        return;
+    const optType = bullCross ? "CE" : "PE";
+    // Filter 1: RSI
+    const rsi = calcRSI(candles, 14);
+    if (optType === "CE" && rsi >= 45)
+        return;
+    if (optType === "PE" && rsi <= 55)
+        return;
+    // Filter 2: VWAP
+    const vwap = calcVWAP(candles);
+    if (optType === "CE" && lastNiftyPrice <= vwap)
+        return;
+    if (optType === "PE" && lastNiftyPrice >= vwap)
+        return;
+    // Filter 3: Volume proxy — we don't have volume data; treat as passing
+    // (Cannot get volume from LTP-only feed)
+    // Filter 4: Fibonacci zone
+    const recentHighs = candles.slice(-100).map(c => c.high);
+    const recentLows = candles.slice(-100).map(c => c.low);
+    const fib = calcFibLevels(Math.max(...recentHighs), Math.min(...recentLows));
+    const price = lastNiftyPrice;
+    const inFibZone = price >= fib["50"] * 0.998 && price <= fib["61.8"] * 1.002;
+    if (!inFibZone)
+        return;
+    const chain = getLatestChain("NIFTY");
+    if (!chain)
+        return;
+    const option = getATMOption(chain, optType, 60, 70);
+    if (!option)
+        return;
+    await openStrategyPosition("ema_confluence", {
+        symbol: option.symbol,
+        type: optType,
+        side: "LONG",
+        entry_price: option.premium,
+        current_price: option.premium,
+        quantity: 50,
+        stop_loss: Number((option.premium * 0.85).toFixed(2)),
+        trail_sl: null,
+        pnl: 0,
+        status: "OPEN",
+    });
+}
+// ══════════════════════════════════════════════════════════════
+// Strategy 4 — Supertrend (5m candles, 9:45–14:30)
+// ══════════════════════════════════════════════════════════════
+const s4DailyTrades = {};
+async function runStrategy4() {
+    if (!isMarketOpen())
+        return;
+    const mins = istMins();
+    if (mins < 585 || mins >= 870)
+        return; // 9:45–14:30
+    const indices = ["NIFTY", "BANKNIFTY"];
+    for (const index of indices) {
+        await runSupertrendForIndex(index);
+    }
+}
+async function runSupertrendForIndex(index) {
+    const candles5m = getCandles(index, "5m");
+    if (candles5m.length < 10)
+        return;
+    const openPos = await getOpenStrategyPositions("supertrend");
+    const indexPos = openPos.filter(p => p.symbol.startsWith(index));
+    const todayKey = `${index}_${todayIST()}`;
+    const dayTrades = s4DailyTrades[todayKey] ?? 0;
+    if (dayTrades >= 2)
+        return; // max 2 trades per instrument per day
+    const series = calcSupertrendSeries(candles5m, 7, 3);
+    if (series.length < 2)
+        return;
+    const currDir = series[series.length - 1].dir;
+    const prevDir = series[series.length - 2].dir;
+    const flipped = currDir !== prevDir;
+    if (!flipped) {
+        // If we have an open position and Supertrend just flipped → close it (handled below too)
+        return;
+    }
+    // Close opposite position
+    for (const pos of indexPos) {
+        const wrongType = currDir === "up" ? "PE" : "CE";
+        if (pos.type === wrongType) {
+            const cp = getCurrentPrice(pos.symbol);
+            if (cp > 0)
+                await closeStrategyPosition(pos.id, cp, "CROSSOVER");
+        }
+    }
+    if (indexPos.length >= 1)
+        return; // already have one in this direction
+    const optType = currDir === "up" ? "CE" : "PE";
+    const chain = getLatestChain(index);
+    if (!chain)
+        return;
+    const option = getATMOptionForIndex(chain, index, optType, 60, 70);
+    if (!option)
+        return;
+    await openStrategyPosition("supertrend", {
+        symbol: option.symbol,
+        type: optType,
+        side: "LONG",
+        entry_price: option.premium,
+        current_price: option.premium,
+        quantity: index === "NIFTY" ? 50 : 15,
+        stop_loss: Number((option.premium * 0.80).toFixed(2)), // 20% SL
+        trail_sl: null,
+        pnl: 0,
+        status: "OPEN",
+    });
+    s4DailyTrades[todayKey] = dayTrades + 1;
+}
+// ══════════════════════════════════════════════════════════════
+// Strategy 5 — PCR Reversal (5-min checks, 10:00–14:30)
+// ══════════════════════════════════════════════════════════════
+async function runStrategy5() {
+    if (!isMarketOpen())
+        return;
+    const mins = istMins();
+    if (mins < 600 || mins >= 870)
+        return; // 10:00–14:30
+    const today = todayIST();
+    const dayKey = `pcr_reversal_${today}`;
+    if ((dailyTradeCounts[dayKey] ?? 0) >= 3)
+        return;
+    const openPos = await getOpenStrategyPositions("pcr_reversal");
+    if (openPos.length >= 1)
+        return;
+    const chain = getLatestChain("NIFTY");
+    if (!chain)
+        return;
+    const pcr = chain.pcr;
+    let optType = null;
+    if (pcr > 1.3) {
+        // Oversold — buy CE if PE OI is unwinding at ATM
+        const peOIChange = getOIChangeForATM("NIFTY", "PE", 30);
+        if (peOIChange && peOIChange.pctChange <= -10) {
+            optType = "CE";
+        }
+    }
+    else if (pcr < 0.7) {
+        // Overbought — buy PE if CE OI is unwinding at ATM
+        const ceOIChange = getOIChangeForATM("NIFTY", "CE", 30);
+        if (ceOIChange && ceOIChange.pctChange <= -10) {
+            optType = "PE";
+        }
+    }
+    if (!optType)
+        return;
+    const option = getATMOption(chain, optType, 60, 70);
+    if (!option)
+        return;
+    await openStrategyPosition("pcr_reversal", {
+        symbol: option.symbol,
+        type: optType,
+        side: "LONG",
+        entry_price: option.premium,
+        current_price: option.premium,
+        quantity: 50,
+        stop_loss: Number((option.premium * 0.75).toFixed(2)), // 25% SL
+        trail_sl: null,
+        pnl: 0,
+        status: "OPEN",
+    });
+    dailyTradeCounts[dayKey] = (dailyTradeCounts[dayKey] ?? 0) + 1;
+}
+// PCR reversal also monitors for its own exit conditions (PCR neutral / OI reversal)
+async function monitorPCRPositions() {
+    if (!isMarketOpen())
+        return;
+    const openPos = await getOpenStrategyPositions("pcr_reversal");
+    if (!openPos.length)
+        return;
+    const chain = getLatestChain("NIFTY");
+    if (!chain)
+        return;
+    const pcr = chain.pcr;
+    for (const pos of openPos) {
+        // PCR back to neutral zone
+        if (pcr >= 0.9 && pcr <= 1.1) {
+            const cp = getCurrentPrice(pos.symbol);
+            if (cp > 0)
+                await closeStrategyPosition(pos.id, cp, "PCR_NEUTRAL");
+            continue;
+        }
+        // OI buildup on opposite side — detect reversal
+        const opposite = pos.type === "CE" ? "PE" : "CE";
+        const oiChange = getOIChangeForATM("NIFTY", opposite, 5);
+        if (oiChange && oiChange.pctChange > 10) {
+            // Opposite side building up → exit
+            const cp = getCurrentPrice(pos.symbol);
+            if (cp > 0)
+                await closeStrategyPosition(pos.id, cp, "OI_REVERSE");
+        }
+    }
+}
+// ══════════════════════════════════════════════════════════════
+// Strategy 6 — Gap + ORB (morning only, before 11:30)
+// ══════════════════════════════════════════════════════════════
+async function runStrategy6() {
+    if (!isMarketOpen())
+        return;
+    const mins = istMins();
+    if (mins >= 690)
+        return; // no new trades after 11:30 AM
+    const today = todayIST();
+    const dayKey = `gap_orb_${today}`;
+    if ((dailyTradeCounts[dayKey] ?? 0) >= 2)
+        return;
+    const openPos = await getOpenStrategyPositions("gap_orb");
+    if (openPos.length >= 1)
+        return;
+    // Calculate gap at 9:15 AM
+    if (!gapCalcDate || gapCalcDate !== today) {
+        // Try to get yesterday's close from candle history
+        const allCandles = getCandles("NIFTY", "15m");
+        if (allCandles.length < 2)
+            return;
+        // Yesterday's close: last candle from previous session
+        // Approximate: use the first candle open as today's open
+        const todayOpen = allCandles[0]?.open ?? lastNiftyPrice;
+        // We don't have yesterday's close from LTP polling alone
+        // Use prevDayClose if we have it; otherwise try from the oldest candle
+        const pdc = prevDayClose["NIFTY"];
+        if (!pdc || pdc === 0) {
+            // Not enough data — skip gap calculation
+            return;
+        }
+        dailyGapPct = ((todayOpen - pdc) / pdc) * 100;
+        gapCalcDate = today;
+        console.log(`[S6] Gap: ${dailyGapPct.toFixed(2)}% | TodayOpen: ${todayOpen} | PrevClose: ${pdc}`);
+    }
+    // ORB setup (9:15–9:30 AM candle)
+    if (!orbSet["NIFTY"])
+        return;
+    const orbH = orbHigh["NIFTY"] ?? 0;
+    const orbL = orbLow["NIFTY"] ?? 0;
+    const price = lastNiftyPrice;
+    const chain = getLatestChain("NIFTY");
+    if (!chain)
+        return;
+    let optType = null;
+    if (Math.abs(dailyGapPct) < 0.3) {
+        // Small gap → ORB breakout
+        if (price > orbH)
+            optType = "CE";
+        else if (price < orbL)
+            optType = "PE";
+    }
+    else if (dailyGapPct > 0.3) {
+        // Gap up > 0.3% → FADE → buy PE (expect gap to fill)
+        const pdc = prevDayClose["NIFTY"] ?? 0;
+        if (pdc > 0 && price > pdc && price < orbH)
+            optType = "PE";
+    }
+    else {
+        // Gap down > 0.3% → FADE → buy CE
+        const pdc = prevDayClose["NIFTY"] ?? 0;
+        if (pdc > 0 && price < pdc && price > orbL)
+            optType = "CE";
+    }
+    if (!optType)
+        return;
+    const option = getATMOption(chain, optType, 60, 70);
+    if (!option)
+        return;
+    await openStrategyPosition("gap_orb", {
+        symbol: option.symbol,
+        type: optType,
+        side: "LONG",
+        entry_price: option.premium,
+        current_price: option.premium,
+        quantity: 50,
+        stop_loss: Number((option.premium * 0.80).toFixed(2)), // 20% SL
+        trail_sl: null,
+        pnl: 0,
+        status: "OPEN",
+    });
+    dailyTradeCounts[dayKey] = (dailyTradeCounts[dayKey] ?? 0) + 1;
+}
+// Gap fill exit for gap trades
+async function monitorGapOrbPositions() {
+    if (!isMarketOpen())
+        return;
+    const openPos = await getOpenStrategyPositions("gap_orb");
+    if (!openPos.length)
+        return;
+    const pdc = prevDayClose["NIFTY"] ?? 0;
+    if (!pdc)
+        return;
+    const price = lastNiftyPrice;
+    for (const pos of openPos) {
+        if (Math.abs(dailyGapPct) >= 0.3) {
+            // Fade trade — exit at gap fill (price reaches prev day close)
+            const isFade_PE = pos.type === "PE" && dailyGapPct > 0;
+            const isFade_CE = pos.type === "CE" && dailyGapPct < 0;
+            if ((isFade_PE && price <= pdc) || (isFade_CE && price >= pdc)) {
+                const cp = getCurrentPrice(pos.symbol);
+                if (cp > 0)
+                    await closeStrategyPosition(pos.id, cp, "TARGET");
+            }
+        }
+    }
+}
+// ══════════════════════════════════════════════════════════════
+// LTP poller — every second
+// ══════════════════════════════════════════════════════════════
+async function pollLTP() {
+    try {
+        const prices = await fetchIndexLTP();
+        const ts = Date.now();
+        if (prices.NIFTY) {
+            lastNiftyPrice = prices.NIFTY;
+            processTick(prices.NIFTY, "NIFTY", ts);
+            // Update prev day close using earliest recorded price (very rough)
+            if (!prevDayClose["NIFTY"] && getCandles("NIFTY", "15m").length > 0) {
+                // Do nothing here — it's approximated from candles when available
+            }
+        }
+        if (prices.BANKNIFTY) {
+            lastBankniftyPrice = prices.BANKNIFTY;
+            processTick(prices.BANKNIFTY, "BANKNIFTY", ts);
+        }
+        if (prices.SENSEX) {
+            lastSensexPrice = prices.SENSEX;
+            processTick(prices.SENSEX, "SENSEX", ts);
+        }
+        if (prices.VIX)
+            lastVix = prices.VIX;
+        if (Object.keys(prices).length) {
+            console.log(`[LTP] NIFTY: ${prices.NIFTY ?? "--"} | BNF: ${prices.BANKNIFTY ?? "--"} | VIX: ${prices.VIX ?? "--"}`);
+        }
+    }
+    catch (err) {
+        console.error("[LTP] Poll error:", err);
+    }
+}
+// ══════════════════════════════════════════════════════════════
+// Main equity strategy loop — every 30s
+// ══════════════════════════════════════════════════════════════
+let strategyRunning = false;
+let lastClosedLog = 0;
+async function runEquityStrategies() {
+    if (strategyRunning)
+        return;
+    strategyRunning = true;
+    try {
+        checkDailyReset();
+        const mins = istMins();
+        const hh = String(Math.floor(mins / 60)).padStart(2, "0");
+        const mm = String(mins % 60).padStart(2, "0");
+        if (!isMarketOpen()) {
+            if (Date.now() - lastClosedLog > 600000) { // log once every 10 min
+                console.log(`[Equity] Market closed — IST ${hh}:${mm}`);
+                lastClosedLog = Date.now();
+            }
+            return;
+        }
+        console.log(`[Equity] Cycle — IST ${hh}:${mm}`);
+        await Promise.allSettled([
+            runStrategy1(),
+            runStrategy2(),
+            runStrategy3(),
+            runStrategy4(),
+            runStrategy5(),
+            runStrategy6(),
+        ]);
+        await Promise.allSettled([
+            monitorOpenPositions(),
+            monitorPCRPositions(),
+            monitorGapOrbPositions(),
+        ]);
+    }
+    catch (err) {
+        console.error("[Equity] Strategy loop error:", err);
+    }
+    finally {
+        strategyRunning = false;
+    }
 }
 // ══════════════════════════════════════════════════════════════
 // USD/INR exchange rate
@@ -449,846 +1345,468 @@ async function refreshUsdToInr() {
         if (rate && rate > 0) {
             cachedUsdToInr = rate;
             lastUsdInrFetch = Date.now();
-            console.log(`[FX] USD/INR updated: ${rate.toFixed(2)}`);
+            console.log(`[FX] USD/INR: ${rate.toFixed(2)}`);
         }
     }
     catch {
-        console.warn(`[FX] USD/INR fetch failed — using fallback ₹${cachedUsdToInr}`);
+        console.warn(`[FX] USD/INR fetch failed — using ₹${cachedUsdToInr}`);
     }
 }
 function getUsdToInr() {
-    if (Date.now() - lastUsdInrFetch > 3600000) {
+    if (Date.now() - lastUsdInrFetch > 3600000)
         refreshUsdToInr().catch(() => { });
-    }
     return cachedUsdToInr;
 }
-// ══════════════════════════════════════════════════════════════
-// Expiry calendar (inlined, Supabase holiday-adjusted)
-// ══════════════════════════════════════════════════════════════
-function lastWeekdayOfMonth(year, month, weekday) {
-    const d = new Date(year, month + 1, 0);
-    while (d.getDay() !== weekday)
-        d.setDate(d.getDate() - 1);
-    return d;
-}
-function nextNWeekdays(weekday, count) {
-    const results = [];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const d = new Date(today);
-    d.setDate(d.getDate() + ((weekday - d.getDay() + 7) % 7));
-    while (results.length < count) {
-        results.push(new Date(d));
-        d.setDate(d.getDate() + 7);
-    }
-    return results;
-}
-function nextNMonthlyExpiries(weekday, count) {
-    const results = [];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    let y = today.getFullYear(), m = today.getMonth();
-    while (results.length < count) {
-        const exp = lastWeekdayOfMonth(y, m, weekday);
-        if (exp >= today)
-            results.push(exp);
-        m++;
-        if (m > 11) {
-            m = 0;
-            y++;
-        }
-    }
-    return results;
-}
-async function getHolidaySet() {
-    const from = new Date().toISOString().split("T")[0];
-    const to = new Date(Date.now() + 180 * 86400000).toISOString().split("T")[0];
-    const { data } = await supabase.from("nse_holidays").select("date").gte("date", from).lte("date", to);
-    return new Set((data ?? []).map((r) => r.date));
-}
-function shiftToTradingDay(date, holidays) {
-    const d = new Date(date);
-    d.setHours(0, 0, 0, 0);
-    while (true) {
-        const day = d.getDay();
-        const str = d.toISOString().split("T")[0];
-        if (day !== 0 && day !== 6 && !holidays.has(str))
-            return d;
-        d.setDate(d.getDate() - 1);
+// BTC strategy state
+let btcOrbHigh = 0;
+let btcOrbLow = 0;
+let btcOrbSet = false;
+const btcPeakPrices = {}; // posId → peak price
+const btcDailyTradeCounts = {};
+let btcTradeDateStr = "";
+function checkBtcDailyReset() {
+    const today = todayIST();
+    if (btcTradeDateStr !== today) {
+        btcTradeDateStr = today;
+        for (const k of Object.keys(btcDailyTradeCounts))
+            btcDailyTradeCounts[k] = 0;
+        btcOrbHigh = 0;
+        btcOrbLow = 0;
+        btcOrbSet = false;
+        console.log(`[BTC Daily] Reset for ${today}`);
     }
 }
-async function getUpcomingExpiries(instrument) {
-    const TUESDAY = 2, THURSDAY = 4;
-    let raw;
-    if (instrument === "NIFTY")
-        raw = nextNWeekdays(TUESDAY, 2);
-    else if (instrument === "SENSEX")
-        raw = nextNWeekdays(THURSDAY, 2);
-    else
-        raw = nextNMonthlyExpiries(TUESDAY, 2);
-    const holidays = await getHolidaySet().catch(() => new Set());
-    return raw.map(d => shiftToTradingDay(d, holidays).toISOString().split("T")[0]);
+function calcBtcVWAP(candles) {
+    const now = new Date();
+    const utcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const todayCandles = candles.filter(c => c.time >= utcMidnight);
+    if (!todayCandles.length)
+        return candles[candles.length - 1]?.close ?? btcPrice;
+    const sum = todayCandles.reduce((s, c) => s + (c.high + c.low + c.close) / 3, 0);
+    return sum / todayCandles.length;
 }
-// ══════════════════════════════════════════════════════════════
-// Fetch all instruments snapshot
-// ══════════════════════════════════════════════════════════════
-async function fetchInstruments() {
-    const [nExp, sExp, bExp] = await Promise.all([
-        getUpcomingExpiries("NIFTY").catch(() => []),
-        getUpcomingExpiries("SENSEX").catch(() => []),
-        getUpcomingExpiries("BANKNIFTY").catch(() => []),
-    ]);
-    const [n0, n1, s0, s1, b0, b1, stocks] = await Promise.all([
-        nExp[0] ? fetchOptionSlice("NIFTY", nExp[0]) : Promise.resolve(null),
-        nExp[1] ? fetchOptionSlice("NIFTY", nExp[1]) : Promise.resolve(null),
-        sExp[0] ? fetchOptionSlice("SENSEX", sExp[0]) : Promise.resolve(null),
-        sExp[1] ? fetchOptionSlice("SENSEX", sExp[1]) : Promise.resolve(null),
-        bExp[0] ? fetchOptionSlice("BANKNIFTY", bExp[0]) : Promise.resolve(null),
-        bExp[1] ? fetchOptionSlice("BANKNIFTY", bExp[1]) : Promise.resolve(null),
-        fetchStockLTPs(),
-    ]);
-    return {
-        niftyOptions: [n0, n1].filter((x) => x !== null),
-        sensexOptions: [s0, s1].filter((x) => x !== null),
-        bankniftyOptions: [b0, b1].filter((x) => x !== null),
-        topStocks: stocks,
-    };
+function generateBtcExitDetail(reason, side, entryPrice, exitPrice, pnlInr, stopLoss, trailSl) {
+    const pnlStr = pnlInr >= 0 ? `+₹${pnlInr.toFixed(2)}` : `-₹${Math.abs(pnlInr).toFixed(2)}`;
+    const ts = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" });
+    switch (reason) {
+        case "SL_HIT":
+            return `Stop-loss hit at $${exitPrice.toFixed(2)} (entry $${entryPrice.toFixed(2)}, SL $${stopLoss?.toFixed(2) ?? "N/A"}) — ${pnlStr} at ${ts}`;
+        case "TRAIL_SL":
+            return `Trail SL triggered at $${exitPrice.toFixed(2)} (entry $${entryPrice.toFixed(2)}, trail $${trailSl?.toFixed(2) ?? "N/A"}) — ${pnlStr} at ${ts}`;
+        case "CROSSOVER":
+            return `Opposite EMA crossover at $${exitPrice.toFixed(2)} — ${pnlStr} at ${ts}`;
+        case "SUPERTREND_FLIP":
+            return `Supertrend flipped direction at $${exitPrice.toFixed(2)} — ${pnlStr} at ${ts}`;
+        case "HARD_CLOSE":
+            return `Hard close at $${exitPrice.toFixed(2)} — ${pnlStr} at ${ts}`;
+        default:
+            return `Closed at $${exitPrice.toFixed(2)} — ${pnlStr} at ${ts}`;
+    }
 }
-// ══════════════════════════════════════════════════════════════
-// AI providers
-// ══════════════════════════════════════════════════════════════
-async function runAI(provider, prompt) {
+const BTC_QTY_INR = 5000; // ₹5,000 per trade
+async function openBtcPosition(strategyId, side, entryPriceUsd, stopLoss, entryReason) {
     try {
-        if (provider === "openai") {
-            const res = await fetch("https://api.openai.com/v1/chat/completions", {
-                method: "POST",
-                headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-                body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }], temperature: 0.7 }),
-            });
-            const d = await res.json();
-            return d?.choices?.[0]?.message?.content ?? "No response";
+        const { data, error } = await supabase
+            .from("btc_strategy_positions")
+            .insert({
+            strategy_id: strategyId,
+            side,
+            entry_price_usd: entryPriceUsd,
+            current_price_usd: entryPriceUsd,
+            qty_inr: BTC_QTY_INR,
+            pnl_inr: 0,
+            stop_loss: stopLoss,
+            status: "OPEN",
+            entry_reason: entryReason,
+        })
+            .select("id")
+            .single();
+        if (error) {
+            console.error(`[BTC] Open error:`, error.message);
+            return null;
         }
-        if (provider === "claude") {
-            const res = await fetch("https://api.anthropic.com/v1/messages", {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY ?? "", "anthropic-version": "2023-06-01" },
-                body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 500, messages: [{ role: "user", content: prompt }] }),
-            });
-            const d = await res.json();
-            return d?.content?.[0]?.text ?? "No response";
-        }
-        if (provider === "gemini") {
-            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-            });
-            const d = await res.json();
-            return d?.candidates?.[0]?.content?.parts?.[0]?.text ?? "No response";
-        }
-        if (provider === "groq") {
-            const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-                method: "POST",
-                headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
-                body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "user", content: prompt }], temperature: 0.7, response_format: { type: "json_object" } }),
-            });
-            if (!res.ok) {
-                const errText = await res.text();
-                console.error(`[AI:groq] API error ${res.status} ${res.statusText}:`, errText);
-                return "No response";
-            }
-            const d = await res.json();
-            return d?.choices?.[0]?.message?.content ?? "No response";
-        }
-        return "Unknown provider";
+        const posId = data.id;
+        btcPeakPrices[posId] = entryPriceUsd;
+        console.log(`[BTC ${strategyId}] Opened ${side} @ $${entryPriceUsd.toFixed(2)}, SL $${stopLoss.toFixed(2)}`);
+        return posId;
     }
     catch (err) {
-        console.error(`[AI:${provider}] Error:`, err);
-        return `Error: ${String(err)}`;
+        console.error(`[BTC] openBtcPosition failed:`, err);
+        return null;
     }
 }
-// ══════════════════════════════════════════════════════════════
-// Parse AI response
-// ══════════════════════════════════════════════════════════════
-function parseDecision(raw) {
+async function closeBtcPosition(posId, exitPriceUsd, reason) {
     try {
-        const cleaned = raw.replace(/```json/g, "").replace(/```/g, "").trim();
-        const parsed = JSON.parse(cleaned);
-        const rawAction = (parsed.action || parsed.decision || "HOLD").toString().toUpperCase();
-        const action = (["BUY", "SELL", "HOLD", "CLOSE"].includes(rawAction)
-            ? rawAction : "HOLD");
-        const rawOT = parsed.optionType?.toString().toUpperCase();
-        const optionType = rawOT === "CE" || rawOT === "PE" ? rawOT : null;
-        return {
-            action,
-            symbol: parsed.symbol || "NIFTY",
-            optionType,
-            strike: parsed.strike != null ? Number(parsed.strike) : null,
-            expiry: parsed.expiry || null,
-            quantity: Math.max(1, Number(parsed.quantity) || 1),
-            confidence: Math.min(100, Math.max(0, Number(parsed.confidence) || 50)),
-            reasoning: parsed.reasoning || parsed.reason || "No reasoning provided",
-            strategyStatement: parsed.strategyStatement || "No strategy statement",
-        };
-    }
-    catch {
-        return { action: "HOLD", symbol: "NIFTY", optionType: null, strike: null, expiry: null, quantity: 1, confidence: 50, reasoning: "Parse failed", strategyStatement: "Parse error — holding cash" };
-    }
-}
-// ══════════════════════════════════════════════════════════════
-// Prompt builder
-// ══════════════════════════════════════════════════════════════
-function fmt(n) {
-    return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
-}
-function fmtPnl(n) {
-    return (n >= 0 ? "+" : "") + "₹" + fmt(n);
-}
-function buildStrikesTable(strikes, atm) {
-    return strikes.map(s => {
-        const tag = s.strike === atm ? " ◀ATM" : "";
-        return `      ${String(s.strike).padStart(6)}   CE ₹${fmt(s.cePremium).padStart(8)}   PE ₹${fmt(s.pePremium).padStart(8)}${tag}`;
-    }).join("\n");
-}
-function buildExpirySection(label, slices) {
-    if (!slices.length)
-        return `  ${label}: no data`;
-    return slices.map(slice => `  ▸ ${label} — Expiry: ${slice.expiry} (DTE: ${slice.dte})  ATM: ${fmt(slice.atm)}\n` +
-        `    Strike     CE Premium    PE Premium\n` +
-        buildStrikesTable(slice.strikes, slice.atm)).join("\n\n");
-}
-function buildPrompt(params) {
-    const { botName, botProvider, rank, marketRegime, higherTimeframeTrend, volatility, rsi, ema, macd, signal, atr, bb, supertrend, structure, niftyPrice, bankniftyPrice, sensexPrice, allocatedCapital, freeCash, todayPnL, openPositions, lessons, confidenceScore, instruments, } = params;
-    const todayDate = new Date().toISOString().split("T")[0];
-    const niftyOpts = instruments ? buildExpirySection("NIFTY WEEKLY", instruments.niftyOptions) : "  (not loaded)";
-    const sensexOpts = instruments ? buildExpirySection("SENSEX WEEKLY", instruments.sensexOptions) : "  (not loaded)";
-    const bnfOpts = instruments ? buildExpirySection("BANKNIFTY MONTHLY", instruments.bankniftyOptions) : "  (not loaded)";
-    const stocksSec = instruments?.topStocks?.length
-        ? instruments.topStocks.map(s => `  ${s.symbol.padEnd(14)} ₹${fmt(s.price).padStart(10)}   ${fmtPnl(s.change).padStart(10)} today`).join("\n")
-        : "  (not loaded — trade index options or spot)";
-    const posSec = openPositions.length
-        ? openPositions.map((p, i) => `  ${i + 1}. ${p.symbol} | ${p.side} ×${p.quantity}\n` +
-            `     Entry: ₹${fmt(p.entry_price)}  |  Now: ₹${fmt(p.current_price)}  |  PnL: ${fmtPnl(p.pnl)}`).join("\n") +
-            `\n\n  Deployed: ₹${fmt(openPositions.reduce((s, p) => s + p.entry_price * p.quantity, 0))}`
-        : "  No open positions — fully in cash.";
-    const memSec = lessons.length
-        ? lessons.slice(0, 10).map((l, i) => `  ${i + 1}. ${l.trim()}`).join("\n")
-        : "  No lessons recorded yet — this is a fresh start.";
-    return `You are ${botName} (${botProvider}), an autonomous AI trader in a live competition.
-
-═══════════════════════════════════════════════════════════
-  COMPETITION CONTEXT
-═══════════════════════════════════════════════════════════
-Four AIs compete for maximum ₹ profit from a ₹1,00,000 starting capital:
-  • GPT Bot    (OpenAI)
-  • Claude Bot (Anthropic)
-  • Gemini Bot (Google)
-  • Groq Bot   (Meta/Groq)
-
-You are currently ranked #${rank} of 4.
-Today: ${todayDate}
-No strategy restrictions — you decide instrument, direction, size, and timing.
-You manage your own risk.
-
-═══════════════════════════════════════════════════════════
-  MARKET SNAPSHOT
-═══════════════════════════════════════════════════════════
-NIFTY:     ₹${fmt(niftyPrice)}
-BANKNIFTY: ₹${fmt(bankniftyPrice)}
-SENSEX:    ₹${fmt(sensexPrice)}
-
-Regime:          ${marketRegime}
-HTF Trend:       ${higherTimeframeTrend}
-Volatility:      ${volatility}
-Supertrend:      ${supertrend.trend}
-Market Trend:    ${structure.trend}  |  Momentum: ${structure.momentum}
-Breakout:        ${structure.breakout}
-Support:         ₹${fmt(structure.support)}
-Resistance:      ₹${fmt(structure.resistance)}
-Candle Signal:   ${structure.candleSignal}
-
-RSI:     ${rsi.toFixed(2)}   (>70 overbought, <30 oversold)
-EMA:     ₹${fmt(ema)}
-MACD:    ${macd.toFixed(2)}  /  Signal: ${signal.toFixed(2)}  (histogram: ${(macd - signal).toFixed(2)})
-ATR:     ${atr.toFixed(2)}   (daily range proxy)
-Bollinger: Upper ₹${fmt(bb.upper)}  |  Mid ₹${fmt(bb.middle)}  |  Lower ₹${fmt(bb.lower)}
-
-═══════════════════════════════════════════════════════════
-  AVAILABLE INSTRUMENTS
-═══════════════════════════════════════════════════════════
-
-── NIFTY OPTIONS (weekly, expires Tuesday) ─────────────
-${niftyOpts}
-
-── SENSEX OPTIONS (weekly, expires Thursday) ───────────
-${sensexOpts}
-
-── BANKNIFTY OPTIONS (monthly, last Tuesday) ───────────
-${bnfOpts}
-
-── TOP NIFTY 50 STOCKS ─────────────────────────────────
-${stocksSec}
-
-═══════════════════════════════════════════════════════════
-  YOUR STATE
-═══════════════════════════════════════════════════════════
-Bot:              ${botName} (${botProvider})
-Allocated:        ₹${fmt(allocatedCapital)}
-Free cash:        ₹${fmt(freeCash)}
-Today's PnL:      ${fmtPnl(todayPnL)}
-Open positions:   ${openPositions.length}
-Confidence score: ${confidenceScore}/100
-
-═══════════════════════════════════════════════════════════
-  OPEN POSITIONS
-═══════════════════════════════════════════════════════════
-${posSec}
-
-═══════════════════════════════════════════════════════════
-  YOUR MEMORY — LAST 10 LESSONS
-═══════════════════════════════════════════════════════════
-${memSec}
-
-═══════════════════════════════════════════════════════════
-  DECISION REQUIRED
-═══════════════════════════════════════════════════════════
-Analyse all of the above carefully. Learn from your past mistakes.
-
-Respond ONLY in valid JSON — no markdown, no extra text:
-
-{
-  "action": "BUY" | "SELL" | "HOLD" | "CLOSE",
-  "symbol": "instrument name e.g. NIFTY / SENSEX / BANKNIFTY / RELIANCE",
-  "optionType": "CE" | "PE" | null,
-  "strike": <number or null>,
-  "expiry": "YYYY-MM-DD" | null,
-  "quantity": <positive integer>,
-  "confidence": <0–100>,
-  "reasoning": "your private analysis — not shown publicly, be detailed",
-  "strategyStatement": "one sentence describing your current strategy — stored and visible to admin"
-}
-
-Rules:
-• CLOSE: set symbol to the exact symbol of the position you want to close
-• BUY/SELL options: optionType must be CE or PE, strike and expiry are required
-• BUY/SELL spot/futures: set optionType null, strike null, expiry null
-• quantity: number of units / lots (min 1)
-• You have ₹${fmt(freeCash)} free — size accordingly
-• Adapt your strategy based on your memory of past mistakes
-`;
-}
-// ══════════════════════════════════════════════════════════════
-// BTC prompt builder
-// ══════════════════════════════════════════════════════════════
-function buildBtcPrompt(params) {
-    const { btcPrice, capitalInr, freeCash, totalPnl, openPositions } = params;
-    const posStr = openPositions.length === 0
-        ? "none"
-        : openPositions.map(p => `${p.direction ?? "LONG"} ${p.quantity.toFixed(6)}BTC @ $${p.entry_price} ${p.leverage ?? 1}x leverage (SL:${p.stop_loss} TP:${p.take_profit})`).join(", ");
-    return `You are an aggressive BTC/USDT futures trader competing against 3 other AIs for maximum ₹ profit. You have ₹${capitalInr.toFixed(2)} total capital. Free cash: ₹${freeCash.toFixed(2)}. Current BTC price: $${btcPrice.toFixed(2)}. Open positions: ${posStr}. Total PnL so far: ₹${totalPnl.toFixed(2)}.
-
-You can:
-- Go LONG (profit if price goes up)
-- Go SHORT (profit if price goes down)
-- Use leverage from 1x to 100x
-- Set your own Stop Loss and Take Profit levels
-
-Rules:
-- OPEN opens a new position (LONG or SHORT)
-- CLOSE closes ALL your open positions
-- HOLD does nothing
-- Max 10% of free cash per trade (before leverage)
-- Be aggressive, use leverage wisely
-
-Respond ONLY in JSON:
-{
-  "action": "OPEN"|"CLOSE"|"HOLD",
-  "direction": "LONG"|"SHORT",
-  "leverage": <number 1-100>,
-  "quantity_inr": <INR amount to use as margin>,
-  "stop_loss": <price in USD>,
-  "take_profit": <price in USD>,
-  "reasoning": "<your detailed trade logic>"
-}`;
-}
-// ══════════════════════════════════════════════════════════════
-// Supabase state helpers
-// ══════════════════════════════════════════════════════════════
-async function getBotCapital(botId) {
-    const { data } = await supabase.from("capital").select("allocated_capital,pnl").eq("bot_id", botId).single();
-    return data ?? { allocated_capital: 100000, pnl: 0 };
-}
-async function getOpenPositions(botId) {
-    const { data } = await supabase.from("positions").select("*").eq("bot_id", botId).eq("status", "OPEN");
-    return (data ?? []);
-}
-async function getLessons(botId) {
-    const { data } = await supabase
-        .from("ai_memory")
-        .select("lesson,confidence_score")
-        .eq("bot_id", botId)
-        .order("created_at", { ascending: false })
-        .limit(10);
-    if (!data?.length)
-        return { lessons: [], confidenceScore: 50 };
-    return {
-        lessons: data.map(r => r.lesson),
-        confidenceScore: data[0].confidence_score ?? 50,
-    };
-}
-async function getLeaderboardRank(botId) {
-    const { data } = await supabase.from("capital").select("bot_id,pnl").order("pnl", { ascending: false });
-    if (!data?.length)
-        return 4;
-    const idx = data.findIndex(r => r.bot_id === botId);
-    return idx === -1 ? 4 : idx + 1;
-}
-async function getBtcCapital(botId) {
-    const { data } = await supabase
-        .from("btc_capital")
-        .select("allocated_capital,pnl")
-        .eq("bot_id", botId)
-        .single();
-    return data ?? { allocated_capital: 100000, pnl: 0 };
-}
-async function getOpenBtcPositions(botId) {
-    const { data } = await supabase
-        .from("btc_positions")
-        .select("*")
-        .eq("bot_id", botId)
-        .eq("status", "OPEN");
-    return (data ?? []);
-}
-async function openPosition(botId, decision, entryPrice, atr, symbol) {
-    const stopLoss = decision.action === "BUY" ? entryPrice - atr * 1.2 : entryPrice + atr * 1.2;
-    const takeProfit = decision.action === "BUY" ? entryPrice + atr * 2 : entryPrice - atr * 2;
-    const { error } = await supabase.from("positions").insert({
-        bot_id: botId,
-        symbol,
-        side: decision.action,
-        quantity: decision.quantity,
-        entry_price: Number(entryPrice.toFixed(2)),
-        current_price: Number(entryPrice.toFixed(2)),
-        stop_loss: Number(stopLoss.toFixed(2)),
-        take_profit: Number(takeProfit.toFixed(2)),
-        pnl: 0,
-        status: "OPEN",
-    });
-    if (error)
-        console.error(`[Position] Insert failed for ${botId}:`, error.message);
-    else
-        console.log(`[${botId}] OPENED ${symbol} @₹${entryPrice.toFixed(2)}`);
-}
-async function closePosition(position, currentPrice) {
-    const mult = position.side === "BUY" ? 1 : -1;
-    const pnl = mult * (currentPrice - position.entry_price) * position.quantity;
-    const { error } = await supabase.from("positions").update({
-        status: "CLOSED",
-        current_price: currentPrice,
-        pnl: Number(pnl.toFixed(2)),
-        closed_at: new Date().toISOString(),
-    }).eq("id", position.id);
-    if (error)
-        console.error(`[Position] Close failed:`, error.message);
-    else
-        console.log(`[${position.bot_id}] CLOSED ${position.symbol}  PnL: ${fmtPnl(pnl)}`);
-}
-async function writeStrategyLog(botId, strategy) {
-    await supabase.from("strategy_log").insert({ bot_id: botId, strategy, trade_outcome: "PENDING", pnl: 0 });
-}
-// ══════════════════════════════════════════════════════════════
-// Main trading cycle
-// ══════════════════════════════════════════════════════════════
-let cycleRunning = false;
-async function runTradingCycle() {
-    if (cycleRunning)
-        return;
-    cycleRunning = true;
-    try {
-        if (niftyCandles.length < 60) {
-            console.log(`[Cycle] Waiting for candles (${niftyCandles.length}/60)...`);
+        const { data: pos, error: fetchErr } = await supabase
+            .from("btc_strategy_positions")
+            .select("strategy_id, side, entry_price_usd, qty_inr, stop_loss, trail_sl")
+            .eq("id", posId)
+            .single();
+        if (fetchErr || !pos)
             return;
+        const p = pos;
+        const pnlInr = p.side === "LONG"
+            ? ((exitPriceUsd - p.entry_price_usd) / p.entry_price_usd) * p.qty_inr
+            : ((p.entry_price_usd - exitPriceUsd) / p.entry_price_usd) * p.qty_inr;
+        const detail = generateBtcExitDetail(reason, p.side, p.entry_price_usd, exitPriceUsd, pnlInr, p.stop_loss, p.trail_sl);
+        await supabase.from("btc_strategy_positions").update({
+            exit_price_usd: exitPriceUsd,
+            current_price_usd: exitPriceUsd,
+            pnl_inr: pnlInr,
+            status: "CLOSED",
+            exit_reason: reason,
+            exit_reason_detail: detail,
+            closed_at: new Date().toISOString(),
+        }).eq("id", posId);
+        delete btcPeakPrices[posId];
+        await updateBtcCapital(p.strategy_id, pnlInr);
+        console.log(`[BTC ${p.strategy_id}] Closed ${p.side} @ $${exitPriceUsd.toFixed(2)} (${reason}) PnL ₹${pnlInr.toFixed(2)}`);
+    }
+    catch (err) {
+        console.error(`[BTC] closeBtcPosition failed:`, err);
+    }
+}
+async function updateBtcCapital(strategyId, pnlInr) {
+    try {
+        const { data } = await supabase
+            .from("btc_strategy_capital")
+            .select("total_pnl_inr, total_trades, winning_trades")
+            .eq("strategy_id", strategyId)
+            .single();
+        const cap = data;
+        await supabase.from("btc_strategy_capital").update({
+            total_pnl_inr: (cap?.total_pnl_inr ?? 0) + pnlInr,
+            total_trades: (cap?.total_trades ?? 0) + 1,
+            winning_trades: (cap?.winning_trades ?? 0) + (pnlInr > 0 ? 1 : 0),
+            updated_at: new Date().toISOString(),
+        }).eq("strategy_id", strategyId);
+    }
+    catch (err) {
+        console.error(`[BTC] updateBtcCapital failed:`, err);
+    }
+}
+// ── Monitor BTC positions (SL / Trail SL) — every 5s ─────────
+async function monitorBtcPositions() {
+    if (!btcPrice)
+        return;
+    try {
+        // Store live BTC price in config for frontend
+        await supabase.from("config").upsert({ key: "BTC_PRICE_USD", value: btcPrice.toFixed(2) }, { onConflict: "key" });
+        const { data, error } = await supabase
+            .from("btc_strategy_positions")
+            .select("id, strategy_id, side, entry_price_usd, qty_inr, stop_loss, trail_sl")
+            .eq("status", "OPEN");
+        if (error || !data)
+            return;
+        for (const row of data) {
+            const pnlInr = row.side === "LONG"
+                ? ((btcPrice - row.entry_price_usd) / row.entry_price_usd) * row.qty_inr
+                : ((row.entry_price_usd - btcPrice) / row.entry_price_usd) * row.qty_inr;
+            await supabase.from("btc_strategy_positions")
+                .update({ current_price_usd: btcPrice, pnl_inr: pnlInr })
+                .eq("id", row.id);
+            // Update peak price for trail SL
+            if (row.side === "LONG") {
+                if (!btcPeakPrices[row.id] || btcPrice > btcPeakPrices[row.id])
+                    btcPeakPrices[row.id] = btcPrice;
+            }
+            else {
+                if (!btcPeakPrices[row.id] || btcPrice < btcPeakPrices[row.id])
+                    btcPeakPrices[row.id] = btcPrice;
+            }
+            // Trail SL ratchet
+            const trailPct = btcTrailPct(row.strategy_id);
+            if (row.side === "LONG") {
+                const newTrail = btcPeakPrices[row.id] * (1 - trailPct);
+                if (!row.trail_sl || newTrail > row.trail_sl) {
+                    await supabase.from("btc_strategy_positions").update({ trail_sl: newTrail }).eq("id", row.id);
+                    row.trail_sl = newTrail;
+                }
+            }
+            else {
+                const newTrail = btcPeakPrices[row.id] * (1 + trailPct);
+                if (!row.trail_sl || newTrail < row.trail_sl) {
+                    await supabase.from("btc_strategy_positions").update({ trail_sl: newTrail }).eq("id", row.id);
+                    row.trail_sl = newTrail;
+                }
+            }
+            // Hard SL
+            if (row.stop_loss !== null) {
+                if (row.side === "LONG" && btcPrice <= row.stop_loss) {
+                    await closeBtcPosition(row.id, btcPrice, "SL_HIT");
+                    continue;
+                }
+                if (row.side === "SHORT" && btcPrice >= row.stop_loss) {
+                    await closeBtcPosition(row.id, btcPrice, "SL_HIT");
+                    continue;
+                }
+            }
+            // Trail SL
+            if (row.trail_sl !== null) {
+                if (row.side === "LONG" && btcPrice <= row.trail_sl) {
+                    await closeBtcPosition(row.id, btcPrice, "TRAIL_SL");
+                    continue;
+                }
+                if (row.side === "SHORT" && btcPrice >= row.trail_sl) {
+                    await closeBtcPosition(row.id, btcPrice, "TRAIL_SL");
+                    continue;
+                }
+            }
         }
-        // ── Indicators ──
-        const rsi = calcRSI(niftyCandles);
-        const ema = calcEMA(niftyCandles);
-        const macdData = calcMACD(niftyCandles);
-        const atr = calcATR(niftyCandles);
-        const bb = calcBollinger(niftyCandles);
-        const supertrend = calcSupertrend(niftyCandles);
-        const structure = analyzeStructure(niftyCandles);
-        const recent50 = niftyCandles.slice(-50).map(c => c.close);
-        const avg50 = recent50.reduce((s, v) => s + v, 0) / recent50.length;
-        const last50 = recent50[recent50.length - 1];
-        const higherTimeframeTrend = niftyCandles.length >= 50
-            ? (last50 > avg50 ? "BULLISH" : last50 < avg50 ? "BEARISH" : "NEUTRAL")
-            : "NEUTRAL";
-        const marketRegime = detectRegime(rsi, atr, macdData.macd, macdData.signal, supertrend.trend);
-        const volatility = atr > 200 ? "HIGH" : atr > 100 ? "MEDIUM" : "LOW";
-        // ── Fetch live option chains + stocks ──
-        let instruments = null;
+    }
+    catch (err) {
+        console.error("[BTC Monitor] Error:", err);
+    }
+}
+function btcTrailPct(strategyId) {
+    const map = {
+        btc_ema_crossover: 0.010,
+        btc_orion: 0.005,
+        btc_ema_confluence: 0.015,
+        btc_supertrend: 0.008,
+    };
+    return map[strategyId] ?? 0.01;
+}
+// ── BTC Strategy 1: EMA Crossover ────────────────────────────
+async function strategyBtcEmaCrossover() {
+    const candles = getCandles("BTC", "30s");
+    if (candles.length < 25)
+        return;
+    const closes = candles.map(c => c.close);
+    const fastEmas = emaValues(closes, 9);
+    const slowEmas = emaValues(closes, 21);
+    if (fastEmas.length < 2 || slowEmas.length < 2)
+        return;
+    const fastNow = fastEmas[fastEmas.length - 1];
+    const slowNow = slowEmas[slowEmas.length - 1];
+    const fastPrev = fastEmas[fastEmas.length - 2];
+    const slowPrev = slowEmas[slowEmas.length - 2];
+    const atr = calcATR(candles, 14);
+    if (!atr)
+        return;
+    const { data: openPos } = await supabase
+        .from("btc_strategy_positions")
+        .select("id, side")
+        .eq("strategy_id", "btc_ema_crossover")
+        .eq("status", "OPEN");
+    // Close on opposite cross
+    if (openPos && openPos.length > 0) {
+        for (const pos of openPos) {
+            if (pos.side === "LONG" && fastNow < slowNow && fastPrev >= slowPrev)
+                await closeBtcPosition(pos.id, btcPrice, "CROSSOVER");
+            if (pos.side === "SHORT" && fastNow > slowNow && fastPrev <= slowPrev)
+                await closeBtcPosition(pos.id, btcPrice, "CROSSOVER");
+        }
+        return;
+    }
+    const longs = btcDailyTradeCounts["btc_ema_crossover_LONG"] ?? 0;
+    const shorts = btcDailyTradeCounts["btc_ema_crossover_SHORT"] ?? 0;
+    if (fastNow > slowNow && fastPrev <= slowPrev && longs < 1) {
+        await openBtcPosition("btc_ema_crossover", "LONG", btcPrice, btcPrice - 1.5 * atr, `EMA9(${fastNow.toFixed(0)}) crossed above EMA21(${slowNow.toFixed(0)})`);
+        btcDailyTradeCounts["btc_ema_crossover_LONG"] = longs + 1;
+    }
+    else if (fastNow < slowNow && fastPrev >= slowPrev && shorts < 1) {
+        await openBtcPosition("btc_ema_crossover", "SHORT", btcPrice, btcPrice + 1.5 * atr, `EMA9(${fastNow.toFixed(0)}) crossed below EMA21(${slowNow.toFixed(0)})`);
+        btcDailyTradeCounts["btc_ema_crossover_SHORT"] = shorts + 1;
+    }
+}
+// ── BTC Strategy 2: Orion (ORB) ──────────────────────────────
+async function strategyBtcOrion() {
+    const now = new Date();
+    const utcMins = now.getUTCHours() * 60 + now.getUTCMinutes();
+    if (utcMins < 30) {
+        // Build ORB from UTC midnight candles
+        const candles = getCandles("BTC", "30s");
+        const utcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+        const orbCandles = candles.filter(c => c.time >= utcMidnight && c.time < utcMidnight + 30 * 60000);
+        if (orbCandles.length > 0) {
+            btcOrbHigh = Math.max(...orbCandles.map(c => c.high));
+            btcOrbLow = Math.min(...orbCandles.map(c => c.low));
+        }
+        btcOrbSet = false;
+        return;
+    }
+    if (!btcOrbSet && btcOrbHigh > 0 && btcOrbLow > 0) {
+        btcOrbSet = true;
+        console.log(`[BTC Orion] ORB locked — High $${btcOrbHigh.toFixed(0)} Low $${btcOrbLow.toFixed(0)}`);
+    }
+    if (!btcOrbSet)
+        return;
+    const total = (btcDailyTradeCounts["btc_orion_LONG"] ?? 0) + (btcDailyTradeCounts["btc_orion_SHORT"] ?? 0);
+    if (total >= 2)
+        return;
+    const { data: openPos } = await supabase
+        .from("btc_strategy_positions")
+        .select("id")
+        .eq("strategy_id", "btc_orion")
+        .eq("status", "OPEN");
+    if (openPos && openPos.length > 0)
+        return;
+    const longs = btcDailyTradeCounts["btc_orion_LONG"] ?? 0;
+    const shorts = btcDailyTradeCounts["btc_orion_SHORT"] ?? 0;
+    if (btcPrice > btcOrbHigh && longs < 1) {
+        await openBtcPosition("btc_orion", "LONG", btcPrice, btcOrbLow, `Price ($${btcPrice.toFixed(0)}) broke above ORB High ($${btcOrbHigh.toFixed(0)})`);
+        btcDailyTradeCounts["btc_orion_LONG"] = longs + 1;
+    }
+    else if (btcPrice < btcOrbLow && shorts < 1) {
+        await openBtcPosition("btc_orion", "SHORT", btcPrice, btcOrbHigh, `Price ($${btcPrice.toFixed(0)}) broke below ORB Low ($${btcOrbLow.toFixed(0)})`);
+        btcDailyTradeCounts["btc_orion_SHORT"] = shorts + 1;
+    }
+}
+// ── BTC Strategy 3: EMA Confluence ───────────────────────────
+async function strategyBtcEmaConfluence() {
+    const candles5m = getCandles("BTC", "5m");
+    if (candles5m.length < 52)
+        return;
+    const ema20 = calcEMA(candles5m, 20);
+    const ema50 = calcEMA(candles5m, 50);
+    const rsi = calcRSI(candles5m, 14);
+    const atr = calcATR(candles5m, 14);
+    const vwap = calcBtcVWAP(candles5m);
+    if (!atr)
+        return;
+    const slice9 = candles5m.slice(-15).map(c => c.close);
+    const ema9arr = emaValues(slice9, 9);
+    const slope = ema9arr.length >= 2 ? ema9arr[ema9arr.length - 1] - ema9arr[ema9arr.length - 2] : 0;
+    const atrPct = (atr / btcPrice) * 100;
+    const bullish = ema20 > ema50 && rsi > 40 && rsi < 60 && btcPrice > vwap && atrPct > 0.5 && slope > 0;
+    const bearish = ema20 < ema50 && rsi > 40 && rsi < 60 && btcPrice < vwap && atrPct > 0.5 && slope < 0;
+    const { data: openPos } = await supabase
+        .from("btc_strategy_positions")
+        .select("id")
+        .eq("strategy_id", "btc_ema_confluence")
+        .eq("status", "OPEN");
+    if (openPos && openPos.length > 0)
+        return;
+    const longs = btcDailyTradeCounts["btc_ema_confluence_LONG"] ?? 0;
+    const shorts = btcDailyTradeCounts["btc_ema_confluence_SHORT"] ?? 0;
+    if (bullish && longs < 1) {
+        await openBtcPosition("btc_ema_confluence", "LONG", btcPrice, btcPrice - 2 * atr, `5-filter bullish: EMA20>EMA50, RSI ${rsi.toFixed(0)}, P>VWAP, ATR ${atrPct.toFixed(1)}%, slope+`);
+        btcDailyTradeCounts["btc_ema_confluence_LONG"] = longs + 1;
+    }
+    else if (bearish && shorts < 1) {
+        await openBtcPosition("btc_ema_confluence", "SHORT", btcPrice, btcPrice + 2 * atr, `5-filter bearish: EMA20<EMA50, RSI ${rsi.toFixed(0)}, P<VWAP, ATR ${atrPct.toFixed(1)}%, slope-`);
+        btcDailyTradeCounts["btc_ema_confluence_SHORT"] = shorts + 1;
+    }
+}
+// ── BTC Strategy 4: Supertrend ────────────────────────────────
+async function strategyBtcSupertrend() {
+    const candles5m = getCandles("BTC", "5m");
+    if (candles5m.length < 20)
+        return;
+    const stSeries = calcSupertrendSeries(candles5m, 7, 3);
+    if (stSeries.length < 2)
+        return;
+    const stNow = stSeries[stSeries.length - 1];
+    const stPrev = stSeries[stSeries.length - 2];
+    const crossUp = stPrev.dir === "down" && stNow.dir === "up";
+    const crossDown = stPrev.dir === "up" && stNow.dir === "down";
+    const { data: openPos } = await supabase
+        .from("btc_strategy_positions")
+        .select("id, side")
+        .eq("strategy_id", "btc_supertrend")
+        .eq("status", "OPEN");
+    if (openPos && openPos.length > 0) {
+        for (const pos of openPos) {
+            if (pos.side === "LONG" && crossDown)
+                await closeBtcPosition(pos.id, btcPrice, "SUPERTREND_FLIP");
+            if (pos.side === "SHORT" && crossUp)
+                await closeBtcPosition(pos.id, btcPrice, "SUPERTREND_FLIP");
+        }
+        return;
+    }
+    const total = (btcDailyTradeCounts["btc_supertrend_LONG"] ?? 0) + (btcDailyTradeCounts["btc_supertrend_SHORT"] ?? 0);
+    if (total >= 2)
+        return;
+    if (crossUp) {
+        await openBtcPosition("btc_supertrend", "LONG", btcPrice, stNow.value, `Supertrend flipped bullish (line $${stNow.value.toFixed(0)})`);
+        btcDailyTradeCounts["btc_supertrend_LONG"] = (btcDailyTradeCounts["btc_supertrend_LONG"] ?? 0) + 1;
+    }
+    else if (crossDown) {
+        await openBtcPosition("btc_supertrend", "SHORT", btcPrice, stNow.value, `Supertrend flipped bearish (line $${stNow.value.toFixed(0)})`);
+        btcDailyTradeCounts["btc_supertrend_SHORT"] = (btcDailyTradeCounts["btc_supertrend_SHORT"] ?? 0) + 1;
+    }
+}
+// ── Run all BTC strategies (every 30s) ───────────────────────
+let btcStrategiesRunning = false;
+async function runBtcStrategies() {
+    if (btcStrategiesRunning || !btcPrice)
+        return;
+    btcStrategiesRunning = true;
+    try {
+        checkBtcDailyReset();
+        await strategyBtcEmaCrossover();
+        await strategyBtcOrion();
+        await strategyBtcEmaConfluence();
+        await strategyBtcSupertrend();
+    }
+    catch (err) {
+        console.error("[BTC Strategies] Error:", err);
+    }
+    finally {
+        btcStrategiesRunning = false;
+    }
+}
+// ══════════════════════════════════════════════════════════════
+// Kraken WebSocket — XBT/USD live price feed (unchanged)
+// ══════════════════════════════════════════════════════════════
+function connectBinanceWS() {
+    const socket = new ws_1.default("wss://ws.kraken.com");
+    socket.on("open", () => {
+        console.log("[BTC] Kraken WebSocket connected — subscribing to XBT/USD trades");
+        socket.send(JSON.stringify({ event: "subscribe", pair: ["XBT/USD"], subscription: { name: "trade" } }));
+    });
+    socket.on("message", (data) => {
         try {
-            instruments = await fetchInstruments();
+            const msg = JSON.parse(data.toString());
+            if (!Array.isArray(msg) || msg[3] !== "XBT/USD")
+                return;
+            const trades = msg[1];
+            if (!Array.isArray(trades) || !trades[0])
+                return;
+            const price = parseFloat(trades[0][0]);
+            if (!price)
+                return;
+            btcPrice = price;
+            processTick(price, "BTC", Date.now());
+            if (Date.now() - lastBtcLogTime > 5000) {
+                console.log(`[BTC] Price: $${btcPrice.toFixed(2)}`);
+                lastBtcLogTime = Date.now();
+            }
         }
         catch (err) {
-            console.warn("[Instruments] Fetch failed:", String(err));
+            console.error("[BTC] WS parse error:", err);
         }
-        // ── Per-bot decisions ──
-        for (const bot of BOTS) {
-            try {
-                const capital = await getBotCapital(bot.id);
-                if (capital.allocated_capital < 5000) {
-                    console.log(`[${bot.id}] Eliminated — capital ₹${capital.allocated_capital}`);
-                    continue;
-                }
-                const openPositions = await getOpenPositions(bot.id);
-                const { lessons, confidenceScore } = await getLessons(bot.id);
-                const rank = await getLeaderboardRank(bot.id);
-                const deployed = openPositions.reduce((s, p) => s + p.entry_price * p.quantity, 0);
-                const freeCash = capital.allocated_capital - deployed;
-                const prompt = buildPrompt({
-                    botName: bot.name,
-                    botProvider: bot.provider,
-                    rank,
-                    marketRegime,
-                    higherTimeframeTrend,
-                    volatility,
-                    rsi,
-                    ema,
-                    macd: macdData.macd,
-                    signal: macdData.signal,
-                    atr,
-                    bb,
-                    supertrend,
-                    structure,
-                    niftyPrice: lastNiftyPrice,
-                    bankniftyPrice: lastBankniftyPrice,
-                    sensexPrice: lastSensexPrice,
-                    allocatedCapital: capital.allocated_capital,
-                    freeCash,
-                    todayPnL: capital.pnl,
-                    openPositions,
-                    lessons,
-                    confidenceScore,
-                    instruments,
-                });
-                const rawResponse = await runAI(bot.provider, prompt);
-                const decision = parseDecision(rawResponse);
-                console.log(`[${bot.id}] ${decision.action} ${decision.symbol} | confidence: ${decision.confidence} | ${decision.strategyStatement.slice(0, 80)}`);
-                // Fire-and-forget strategy log
-                writeStrategyLog(bot.id, decision.strategyStatement).catch(() => { });
-                if (decision.action === "HOLD")
-                    continue;
-                // ── CLOSE ──
-                if (decision.action === "CLOSE") {
-                    const toClose = openPositions.find(p => !decision.symbol || p.symbol === decision.symbol);
-                    if (toClose) {
-                        const closePrice = lastNiftyPrice || toClose.current_price;
-                        await closePosition(toClose, closePrice);
-                    }
-                    else {
-                        console.warn(`[${bot.id}] CLOSE: no match for "${decision.symbol}"`);
-                    }
-                    continue;
-                }
-                // ── BUY / SELL — resolve entry price ──
-                let entryPrice = 0;
-                let entrySymbol = decision.symbol;
-                if (decision.optionType && decision.strike && decision.expiry) {
-                    const slices = decision.symbol === "NIFTY" ? instruments?.niftyOptions :
-                        decision.symbol === "SENSEX" ? instruments?.sensexOptions :
-                            instruments?.bankniftyOptions;
-                    const slice = slices?.find(s => s.expiry === decision.expiry);
-                    const row = slice?.strikes.find(s => s.strike === decision.strike);
-                    const prem = row ? (decision.optionType === "CE" ? row.cePremium : row.pePremium) : 0;
-                    if (!prem) {
-                        console.warn(`[${bot.id}] No premium for ${decision.symbol} ${decision.optionType} ${decision.strike} — skipping`);
-                        continue;
-                    }
-                    entryPrice = prem;
-                    entrySymbol = `${decision.symbol} ${decision.optionType} ${decision.strike} ${decision.expiry}`;
-                }
-                else {
-                    if (decision.symbol === "NIFTY")
-                        entryPrice = lastNiftyPrice;
-                    else if (decision.symbol === "BANKNIFTY")
-                        entryPrice = lastBankniftyPrice;
-                    else if (decision.symbol === "SENSEX")
-                        entryPrice = lastSensexPrice;
-                    else {
-                        const stock = instruments?.topStocks.find(s => s.symbol === decision.symbol);
-                        entryPrice = stock?.price ?? 0;
-                    }
-                }
-                if (entryPrice <= 0) {
-                    console.warn(`[${bot.id}] No price for "${entrySymbol}" — skipping`);
-                    continue;
-                }
-                // ── Position sizing: cannot spend more than freeCash ──
-                const cost = entryPrice * decision.quantity;
-                if (cost > freeCash) {
-                    decision.quantity = Math.floor(freeCash / entryPrice);
-                    console.warn(`[${bot.id}] Quantity capped — cost ₹${cost.toFixed(2)} > freeCash ₹${freeCash.toFixed(2)} → qty reduced to ${decision.quantity}`);
-                }
-                if (decision.quantity < 1) {
-                    console.warn(`[${bot.id}] Insufficient cash (₹${freeCash.toFixed(2)}) to buy 1 unit of "${entrySymbol}" @₹${entryPrice.toFixed(2)} — skipping`);
-                    continue;
-                }
-                await openPosition(bot.id, decision, entryPrice, atr, entrySymbol);
-            }
-            catch (botErr) {
-                console.error(`[${bot.id}] Error:`, botErr);
-            }
-        }
-        console.log(`[Cycle] Done — NIFTY ₹${lastNiftyPrice} | candles: ${niftyCandles.length}`);
-    }
-    catch (err) {
-        console.error("[Cycle] Fatal:", err);
-    }
-    finally {
-        cycleRunning = false;
-    }
+    });
+    socket.on("error", (err) => console.error("[BTC] WS error:", err.message));
+    socket.on("close", () => { console.warn("[BTC] WS closed — reconnecting in 5s..."); setTimeout(connectBinanceWS, 5000); });
 }
 // ══════════════════════════════════════════════════════════════
-// BTC trading cycle — every 60s, 24/7
-// ══════════════════════════════════════════════════════════════
-let btcCycleRunning = false;
-async function runBtcTradingCycle() {
-    if (btcCycleRunning)
-        return;
-    btcCycleRunning = true;
-    try {
-        if (btcCandles.length < 60) {
-            console.log(`[BTC Cycle] Waiting for candles (${btcCandles.length}/60)...`);
-            return;
-        }
-        if (!btcPrice) {
-            console.log("[BTC Cycle] No BTC price yet — skipping");
-            return;
-        }
-        for (const bot of BOTS) {
-            try {
-                console.log(`[BTC:${bot.id}] Starting cycle...`);
-                const capital = await getBtcCapital(bot.id);
-                const openPositions = await getOpenBtcPositions(bot.id);
-                // entry_inr for each position = quantity * entry_price (no separate column)
-                const deployed = openPositions.reduce((sum, p) => sum + p.quantity * p.entry_price, 0);
-                const freeCash = capital.allocated_capital - deployed;
-                console.log(`[BTC:${bot.id}] capital=₹${capital.allocated_capital} deployed=₹${deployed.toFixed(2)} freeCash=₹${freeCash.toFixed(2)} openPos=${openPositions.length}`);
-                const prompt = buildBtcPrompt({
-                    botName: bot.name,
-                    botProvider: bot.provider,
-                    btcPrice,
-                    capitalInr: capital.allocated_capital,
-                    freeCash,
-                    totalPnl: capital.pnl,
-                    openPositions,
-                });
-                const rawResponse = await runAI(bot.provider, prompt);
-                console.log(`[BTC:${bot.id}] ── RAW RESPONSE (${rawResponse.length} chars) ──`);
-                console.log(rawResponse);
-                console.log(`[BTC:${bot.id}] ── END RAW RESPONSE ──`);
-                // Parse BTC decision
-                let action = "HOLD";
-                let quantity_inr = 0;
-                let reasoning = "No reasoning";
-                let direction = "LONG";
-                let leverage = 1;
-                let stop_loss = 0;
-                let take_profit = 0;
-                try {
-                    const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
-                    const cleaned = jsonMatch ? jsonMatch[0] : rawResponse.replace(/```json/g, "").replace(/```/g, "").trim();
-                    console.log(`[BTC:${bot.id}] Cleaned JSON string: ${cleaned}`);
-                    const parsed = JSON.parse(cleaned);
-                    console.log(`[BTC:${bot.id}] Parsed — action: "${parsed.action}" | dir: ${parsed.direction} | lev: ${parsed.leverage} | qty_inr: ${parsed.quantity_inr} | reasoning: "${String(parsed.reasoning ?? "").slice(0, 80)}"`);
-                    const rawAct = (parsed.action ?? "HOLD").toString().toUpperCase();
-                    // Accept both legacy (BUY/SELL) and new (OPEN/CLOSE) action names
-                    const actMap = { OPEN: "OPEN", BUY: "OPEN", CLOSE: "CLOSE", SELL: "CLOSE", HOLD: "HOLD" };
-                    action = actMap[rawAct] ?? "HOLD";
-                    if (!actMap[rawAct])
-                        console.warn(`[BTC:${bot.id}] Unrecognised action "${rawAct}" — defaulting to HOLD`);
-                    quantity_inr = Math.max(0, Number(parsed.quantity_inr) || 0);
-                    reasoning = parsed.reasoning ?? "No reasoning";
-                    const rawDir = (parsed.direction ?? "LONG").toString().toUpperCase();
-                    direction = rawDir === "SHORT" ? "SHORT" : "LONG";
-                    leverage = Math.min(100, Math.max(1, Number(parsed.leverage) || 1));
-                    stop_loss = Number(parsed.stop_loss) || 0;
-                    take_profit = Number(parsed.take_profit) || 0;
-                }
-                catch (parseErr) {
-                    console.error(`[BTC:${bot.id}] JSON parse FAILED:`, parseErr);
-                    console.error(`[BTC:${bot.id}] Failed raw string was: ${rawResponse.slice(0, 500)}`);
-                    action = "HOLD";
-                }
-                console.log(`[BTC:${bot.id}] ── DECISION: ${action} ${direction} × ${leverage}x | qty_inr=₹${quantity_inr} | freeCash=₹${freeCash.toFixed(2)} | SL:$${stop_loss} TP:$${take_profit}`);
-                console.log(`[BTC:${bot.id}] Reasoning: ${reasoning.slice(0, 200)}`);
-                if (action === "HOLD") {
-                    console.log(`[BTC:${bot.id}] HOLD — skipping this cycle`);
-                    continue;
-                }
-                // ── CLOSE: close all open BTC positions ──
-                if (action === "CLOSE") {
-                    if (!openPositions.length) {
-                        console.log(`[BTC:${bot.id}] CLOSE — no open positions to close`);
-                        continue;
-                    }
-                    const usdInr = getUsdToInr();
-                    let totalRealised = 0;
-                    for (const pos of openPositions) {
-                        const lev = pos.leverage ?? 1;
-                        const dir = pos.direction ?? "LONG";
-                        const grossPnl = dir === "SHORT"
-                            ? (pos.entry_price - btcPrice) * pos.quantity * lev * usdInr
-                            : (btcPrice - pos.entry_price) * pos.quantity * lev * usdInr;
-                        const sellValue = btcPrice * pos.quantity * usdInr;
-                        const closeCharges = Number((sellValue * lev * 0.001 * 1.18 + sellValue * 0.01).toFixed(2)); // fee + GST + 1% TDS
-                        const netPnl = Number((grossPnl - closeCharges - (pos.charges ?? 0)).toFixed(2));
-                        totalRealised += netPnl;
-                        console.log(`[BTC:${bot.id}] ${dir} × ${lev}x grossPnl: ₹${grossPnl.toFixed(2)} | closeCharges: ₹${closeCharges} | openCharges: ₹${pos.charges ?? 0} | netPnl: ₹${netPnl.toFixed(2)}`);
-                        const { error } = await supabase.from("btc_positions").update({
-                            status: "CLOSED",
-                            current_price: Number(btcPrice.toFixed(2)),
-                            pnl: netPnl,
-                            closed_at: new Date().toISOString(),
-                        }).eq("id", pos.id);
-                        if (error)
-                            console.error(`[BTC:${bot.id}] Close failed:`, error.message, JSON.stringify(error));
-                        else
-                            console.log(`[BTC:${bot.id}] CLOSED ${dir} ${pos.quantity.toFixed(6)} BTC × ${lev}x @ $${btcPrice.toFixed(2)}  Net PnL: ${netPnl >= 0 ? "+" : ""}₹${netPnl.toFixed(2)}`);
-                    }
-                    // Recompute totals from ALL closed positions for this bot
-                    const { data: allClosed } = await supabase
-                        .from("btc_positions")
-                        .select("pnl,charges")
-                        .eq("bot_id", bot.id)
-                        .eq("status", "CLOSED");
-                    const allClosedArr = (allClosed ?? []);
-                    const totalPnl = allClosedArr.reduce((s, p) => s + Number(p.pnl), 0);
-                    const wins = allClosedArr.filter(p => Number(p.pnl) > 0).length;
-                    const winRate = allClosedArr.length > 0 ? wins / allClosedArr.length : 0;
-                    const newCapital = Number((100000 + totalPnl).toFixed(2));
-                    const { error: capErr } = await supabase.from("btc_capital").update({
-                        allocated_capital: newCapital,
-                        pnl: Number(totalPnl.toFixed(2)),
-                        win_rate: Number(winRate.toFixed(4)),
-                        updated_at: new Date().toISOString(),
-                    }).eq("bot_id", bot.id);
-                    if (capErr)
-                        console.error(`[BTC:${bot.id}] btc_capital update failed:`, capErr.message);
-                    else
-                        console.log(`[BTC:${bot.id}] Capital updated to ₹${newCapital.toFixed(2)} (net PnL after charges: ₹${totalPnl.toFixed(2)} | win rate: ${(winRate * 100).toFixed(1)}%)`);
-                    continue;
-                }
-                // ── OPEN: open a LONG or SHORT position with leverage ──
-                if (action === "OPEN") {
-                    // Cap each trade at 10% of free cash (as margin)
-                    let spendInr = Math.min(quantity_inr, freeCash * 0.1);
-                    if (spendInr > freeCash)
-                        spendInr = freeCash;
-                    if (spendInr < 100) {
-                        console.warn(`[BTC:${bot.id}] Insufficient cash ₹${freeCash.toFixed(2)} (need ≥₹100) — skipping OPEN`);
-                        continue;
-                    }
-                    const usdInr = getUsdToInr();
-                    const btcPriceInr = btcPrice * usdInr;
-                    const btcQty = spendInr / btcPriceInr;
-                    const openCharges = Number((spendInr * leverage * 0.001 * 1.18).toFixed(2)); // fee + GST (leveraged)
-                    console.log(`[BTC:${bot.id}] OPEN ${direction} × ${leverage}x | ₹${spendInr.toFixed(2)} margin ÷ ($${btcPrice.toFixed(2)} × ₹${usdInr.toFixed(2)}) = ${btcQty.toFixed(8)} BTC | charges: ₹${openCharges} | SL:$${stop_loss} TP:$${take_profit}`);
-                    const insertPayload = {
-                        bot_id: bot.id,
-                        symbol: "BTC/USDT",
-                        side: direction === "LONG" ? "BUY" : "SELL",
-                        direction,
-                        leverage,
-                        quantity: Number(btcQty.toFixed(8)),
-                        entry_price: Number(btcPrice.toFixed(2)),
-                        current_price: Number(btcPrice.toFixed(2)),
-                        stop_loss,
-                        take_profit,
-                        pnl: 0,
-                        charges: openCharges,
-                        reasoning: reasoning.slice(0, 1000),
-                        status: "OPEN",
-                        opened_at: new Date().toISOString(),
-                    };
-                    console.log(`[BTC:${bot.id}] Inserting btc_positions:`, JSON.stringify(insertPayload));
-                    const { error, data: inserted } = await supabase.from("btc_positions").insert(insertPayload).select();
-                    if (error) {
-                        console.error(`[BTC:${bot.id}] Insert FAILED — code: ${error.code} | message: ${error.message} | details: ${error.details} | hint: ${error.hint}`);
-                    }
-                    else {
-                        console.log(`[BTC:${bot.id}] OPENED ${direction} ${btcQty.toFixed(6)} BTC × ${leverage}x @ $${btcPrice.toFixed(2)} (₹${spendInr.toFixed(2)} margin) | id: ${inserted?.[0]?.id}`);
-                    }
-                }
-            }
-            catch (botErr) {
-                console.error(`[BTC:${bot.id}] Error:`, botErr);
-            }
-        }
-        console.log(`[BTC Cycle] Done — $${btcPrice.toFixed(2)} | candles: ${btcCandles.length}`);
-    }
-    catch (err) {
-        console.error("[BTC Cycle] Fatal:", err);
-    }
-    finally {
-        btcCycleRunning = false;
-    }
-}
-// ══════════════════════════════════════════════════════════════
-// LTP poller — every second
-// ══════════════════════════════════════════════════════════════
-async function pollLTP() {
-    try {
-        const prices = await fetchIndexLTP();
-        if (prices.NIFTY) {
-            lastNiftyPrice = prices.NIFTY;
-            if (isMarketOpen())
-                processTick(prices.NIFTY, Date.now());
-        }
-        if (prices.BANKNIFTY)
-            lastBankniftyPrice = prices.BANKNIFTY;
-        if (prices.SENSEX)
-            lastSensexPrice = prices.SENSEX;
-        if (Object.keys(prices).length) {
-            console.log(`[LTP] NIFTY: ${prices.NIFTY ?? "--"} | BNF: ${prices.BANKNIFTY ?? "--"} | SENSEX: ${prices.SENSEX ?? "--"}`);
-        }
-    }
-    catch (err) {
-        console.error("[LTP] Poll error:", err);
-    }
-}
-// ══════════════════════════════════════════════════════════════
-// Upstox token management
+// Upstox token management (unchanged)
 // ══════════════════════════════════════════════════════════════
 async function loadTokenFromSupabase() {
     try {
-        const { data, error } = await supabase
-            .from("config")
-            .select("value")
-            .eq("key", "UPSTOX_ACCESS_TOKEN")
-            .single();
+        const { data, error } = await supabase.from("config").select("value").eq("key", "UPSTOX_ACCESS_TOKEN").single();
         if (error || !data?.value) {
-            console.log("[Token] No token found in Supabase config");
+            console.log("[Token] No token in Supabase config");
             return;
         }
         process.env.UPSTOX_ACCESS_TOKEN = data.value;
-        console.log("[Token] Loaded token from Supabase config");
+        console.log("[Token] Loaded from Supabase config");
     }
     catch (err) {
-        console.error("[Token] Failed to load from Supabase:", err);
+        console.error("[Token] Load failed:", err);
     }
 }
 let lastTokenRequestDate = "";
 function scheduleTokenRequest() {
     setInterval(() => {
-        const ist = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-        const day = ist.getDay();
-        if (day === 0 || day === 6)
-            return; // skip weekends
-        const hh = String(ist.getHours()).padStart(2, "0");
-        const mm = String(ist.getMinutes()).padStart(2, "0");
-        const today = ist.toISOString().split("T")[0];
+        const ist = getIST();
+        if (ist.getUTCDay() === 0 || ist.getUTCDay() === 6)
+            return;
+        const hh = String(ist.getUTCHours()).padStart(2, "0");
+        const mm = String(ist.getUTCMinutes()).padStart(2, "0");
+        const today = todayIST();
         if (`${hh}:${mm}` !== "08:30" || lastTokenRequestDate === today)
             return;
         lastTokenRequestDate = today;
@@ -1297,16 +1815,16 @@ function scheduleTokenRequest() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ client_secret: process.env.UPSTOX_API_SECRET }),
         })
-            .then(() => console.log("[Token] Approval request sent — check Upstox app to approve"))
-            .catch((err) => console.error("[Token] Failed to send approval request:", err));
+            .then(() => console.log("[Token] Approval request sent"))
+            .catch((err) => console.error("[Token] Request failed:", err));
     }, 60000);
 }
 // ══════════════════════════════════════════════════════════════
-// Express health endpoints
+// Express server
 // ══════════════════════════════════════════════════════════════
 const app = (0, express_1.default)();
 app.use(express_1.default.json());
-const PORT = Number(process.env.PORT ?? process.env.TRADING_SERVER_PORT ?? 4000);
+const PORT = Number(process.env.PORT ?? process.env.TRADING_SERVER_PORT ?? 8080);
 app.get("/ping", (_req, res) => {
     res.json({ status: "ok", time: new Date().toISOString() });
 });
@@ -1314,20 +1832,37 @@ app.get("/health", (_req, res) => {
     res.json({
         status: "running",
         marketOpen: isMarketOpen(),
-        candles: niftyCandles.length,
         prices: {
             nifty: lastNiftyPrice,
             banknifty: lastBankniftyPrice,
             sensex: lastSensexPrice,
+            vix: lastVix,
+        },
+        candles: {
+            nifty_30s: getCandles("NIFTY", "30s").length,
+            nifty_5m: getCandles("NIFTY", "5m").length,
+            nifty_15m: getCandles("NIFTY", "15m").length,
+            bnf_5m: getCandles("BANKNIFTY", "5m").length,
+        },
+        optionChain: {
+            nifty: getLatestChain("NIFTY")?.pcr?.toFixed(2) ?? "N/A",
+            banknifty: getLatestChain("BANKNIFTY")?.pcr?.toFixed(2) ?? "N/A",
         },
         timestamp: new Date().toISOString(),
     });
 });
 app.get("/candles", (_req, res) => {
-    res.json({ count: niftyCandles.length, candles: niftyCandles.slice(-20) });
+    res.json({
+        nifty_30s: getCandles("NIFTY", "30s").slice(-20),
+        nifty_5m: getCandles("NIFTY", "5m").slice(-10),
+    });
 });
 app.get("/btc/status", (_req, res) => {
-    res.json({ btcPrice, btcCandles: btcCandles.length, activeBots: BOTS.length });
+    res.json({
+        btcPrice,
+        btcCandles_30s: getCandles("BTC", "30s").length,
+        btcCandles_5m: getCandles("BTC", "5m").length,
+    });
 });
 app.post("/api/upstox/token-webhook", async (req, res) => {
     const { access_token, message_type } = req.body;
@@ -1335,15 +1870,10 @@ app.post("/api/upstox/token-webhook", async (req, res) => {
         res.json({ received: true });
         return;
     }
-    // Update in-memory token immediately
     process.env.UPSTOX_ACCESS_TOKEN = access_token;
-    // Persist to Supabase config table
-    const { error } = await supabase
-        .from("config")
-        .upsert({ key: "UPSTOX_ACCESS_TOKEN", value: access_token }, { onConflict: "key" });
-    if (error) {
+    const { error } = await supabase.from("config").upsert({ key: "UPSTOX_ACCESS_TOKEN", value: access_token }, { onConflict: "key" });
+    if (error)
         console.error("[Token] Failed to save to Supabase:", error.message);
-    }
     console.log("[Token] New Upstox token received and activated");
     res.json({ received: true });
 });
@@ -1357,25 +1887,27 @@ app.listen(PORT, () => {
 // ══════════════════════════════════════════════════════════════
 console.log("[Server] Starting...");
 console.log(`[Server] Supabase: ${process.env.NEXT_PUBLIC_SUPABASE_URL}`);
-console.log(`[Server] Upstox token set: ${!!process.env.UPSTOX_ACCESS_TOKEN}`);
+console.log(`[Server] Upstox token: ${!!process.env.UPSTOX_ACCESS_TOKEN}`);
 if (process.env.UPSTOX_ANALYTICS_TOKEN) {
-    console.log("[Token] Using Analytics Token for market data (expires 2027)");
+    console.log("[Token] Analytics Token active (expires 2027)");
 }
 else {
-    console.warn("[Token] UPSTOX_ANALYTICS_TOKEN not set — falling back to UPSTOX_ACCESS_TOKEN for market data");
+    console.warn("[Token] UPSTOX_ANALYTICS_TOKEN not set — using OAuth token for market data");
 }
-// Load Upstox token from Supabase config (overwrites .env value if present)
 loadTokenFromSupabase().catch(console.error);
-// Fetch live USD/INR rate immediately; getUsdToInr() will lazy-refresh every hour
 refreshUsdToInr().catch(console.error);
-// Schedule daily 8:30 AM IST token approval request
 scheduleTokenRequest();
-// Kick off immediately, then repeat
+// LTP every second
 pollLTP();
 setInterval(pollLTP, 1000);
-runTradingCycle();
-setInterval(runTradingCycle, 15000);
-// BTC — Binance live feed + trading cycle
+// Option chain every 60 seconds
+pollOptionChain();
+setInterval(pollOptionChain, 60000);
+// Equity strategy loop every 30 seconds
+runEquityStrategies();
+setInterval(runEquityStrategies, 30000);
+// BTC
 connectBinanceWS();
-runBtcTradingCycle();
-setInterval(runBtcTradingCycle, 15 * 60 * 1000);
+runBtcStrategies();
+setInterval(runBtcStrategies, 30000);
+setInterval(monitorBtcPositions, 5000);
