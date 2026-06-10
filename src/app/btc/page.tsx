@@ -594,13 +594,12 @@ export default function BtcArenaPage() {
     return () => clearInterval(iv);
   }, [refresh]);
 
-  // BTC price poll every 5s via API route (uses service role server-side)
+  // BTC price poll every 5s directly from config table (public RLS policy on BTC_PRICE_USD)
   useEffect(() => {
-    const fetchPrice = () =>
-      fetch("/api/btc/price")
-        .then(r => r.json())
-        .then((d: { price: number }) => { if (d.price > 0) setBtcPrice(d.price); })
-        .catch(() => {});
+    const fetchPrice = async () => {
+      const { data } = await supabase.from("config").select("value").eq("key", "BTC_PRICE_USD").single();
+      if (data?.value) setBtcPrice(parseFloat(data.value));
+    };
     fetchPrice();
     const iv = setInterval(fetchPrice, 5_000);
     return () => clearInterval(iv);
