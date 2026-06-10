@@ -428,7 +428,27 @@ function nextWeekday(weekday: number): Date {
 }
 
 async function getWeeklyExpiry(index: string): Promise<string> {
-  // NIFTY weekly: Tuesday; SENSEX: Thursday; BANKNIFTY: use nearest Tuesday
+  if (index === "BANKNIFTY") {
+    // BANKNIFTY: monthly expiry — last Thursday of current month
+    const now     = new Date();
+    const year    = now.getUTCFullYear();
+    const month   = now.getUTCMonth();
+    const lastDay = new Date(Date.UTC(year, month + 1, 0));
+    const diff    = (lastDay.getUTCDay() - 4 + 7) % 7;
+    lastDay.setUTCDate(lastDay.getUTCDate() - diff);
+    const today   = new Date(Date.UTC(year, month, now.getUTCDate()));
+    if (today > lastDay) {
+      // current month expiry passed — use next month
+      const nm  = month + 1 > 11 ? 0 : month + 1;
+      const ny  = month + 1 > 11 ? year + 1 : year;
+      const nld = new Date(Date.UTC(ny, nm + 1, 0));
+      const nd  = (nld.getUTCDay() - 4 + 7) % 7;
+      nld.setUTCDate(nld.getUTCDate() - nd);
+      return nld.toISOString().split("T")[0];
+    }
+    return lastDay.toISOString().split("T")[0];
+  }
+  // NIFTY: weekly Tuesday; SENSEX: weekly Thursday
   const weekday = index === "SENSEX" ? 4 : 2;
   const d = nextWeekday(weekday);
   return d.toISOString().split("T")[0];
@@ -461,7 +481,10 @@ async function fetchFullOptionChain(index: string, expiry: string): Promise<Full
       }>;
     };
     const chain = json.data ?? [];
-    if (!chain.length) return null;
+    if (!chain.length) {
+      console.warn(`[OptionChain:${index}] Empty data array (expiry ${expiry}) — wrong expiry date?`);
+      return null;
+    }
     const spotPrice = chain[0].underlying_spot_price ?? 0;
     const atmStrike = chain.reduce<number>(
       (nearest, row) =>
