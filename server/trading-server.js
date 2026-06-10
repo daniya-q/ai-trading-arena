@@ -397,8 +397,15 @@ async function fetchFullOptionChain(index, expiry) {
         const res = await fetch(url.toString(), {
             headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
         });
-        if (!res.ok)
+        if (!res.ok) {
+            let body = "";
+            try {
+                body = await res.text();
+            }
+            catch { /* ignore */ }
+            console.error(`[OptionChain:${index}] HTTP ${res.status} ${res.statusText} | expiry=${expiry} | body: ${body.slice(0, 400)}`);
             return null;
+        }
         const json = await res.json();
         const chain = json.data ?? [];
         if (!chain.length)
@@ -511,8 +518,10 @@ async function pollOptionChain() {
         try {
             const expiry = await getWeeklyExpiry(index);
             const chain = await fetchFullOptionChain(index, expiry);
-            if (!chain)
+            if (!chain) {
+                console.warn(`[Chain:${index}] No data returned (expiry ${expiry})`);
                 continue;
+            }
             if (!optionChainHistory[index])
                 optionChainHistory[index] = [];
             optionChainHistory[index].push(chain);
@@ -1680,10 +1689,11 @@ async function strategyBtcEmaCrossover() {
 async function strategyBtcOrion() {
     const now = new Date();
     const utcMins = now.getUTCHours() * 60 + now.getUTCMinutes();
+    const utcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
     if (utcMins < 30) {
-        const candles = getCandles("BTC", "30s");
-        const utcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-        const orbCandles = candles.filter(c => c.time >= utcMidnight && c.time < utcMidnight + 30 * 60000);
+        // Within the 00:00–00:30 UTC window — build ORB from those candles
+        const candles30s = getCandles("BTC", "30s");
+        const orbCandles = candles30s.filter(c => c.time >= utcMidnight && c.time < utcMidnight + 30 * 60000);
         if (orbCandles.length > 0) {
             btcOrbHigh = Math.max(...orbCandles.map(c => c.high));
             btcOrbLow = Math.min(...orbCandles.map(c => c.low));
@@ -1691,9 +1701,18 @@ async function strategyBtcOrion() {
         btcOrbSet = false;
         return;
     }
-    if (!btcOrbSet && btcOrbHigh > 0 && btcOrbLow > 0) {
+    // Past the ORB window — seed from all today's 15m candles if not yet set
+    if (!btcOrbSet) {
+        const candles15m = getCandles("BTC", "15m");
+        const todayCandles = candles15m.filter(c => c.time >= utcMidnight);
+        if (todayCandles.length === 0) {
+            console.log(`[BTC:orion] Past ORB window, no today 15m candles yet — waiting`);
+            return;
+        }
+        btcOrbHigh = Math.max(...todayCandles.map(c => c.high));
+        btcOrbLow = Math.min(...todayCandles.map(c => c.low));
         btcOrbSet = true;
-        console.log(`[BTC:orion] ORB locked — H=$${btcOrbHigh.toFixed(0)} L=$${btcOrbLow.toFixed(0)}`);
+        console.log(`[BTC:orion] ORB seeded from ${todayCandles.length} today 15m candles — H=$${btcOrbHigh.toFixed(0)} L=$${btcOrbLow.toFixed(0)}`);
     }
     const longs = btcDailyTradeCounts["btc_orion_LONG"] ?? 0;
     const shorts = btcDailyTradeCounts["btc_orion_SHORT"] ?? 0;
@@ -1703,11 +1722,8 @@ async function strategyBtcOrion() {
         .select("id")
         .eq("strategy_id", "btc_orion")
         .eq("status", "OPEN");
-    const orbStatus = btcOrbSet ? `H=$${btcOrbHigh.toFixed(0)} L=$${btcOrbLow.toFixed(0)}` : "ORB-not-set";
-    const posStr = btcOrbSet ? (btcPrice > btcOrbHigh ? "above-H" : btcPrice < btcOrbLow ? "below-L" : "inside") : "—";
-    console.log(`[BTC:orion] price=$${btcPrice.toFixed(0)} ${orbStatus} pos=${posStr} | open=${openPos?.length ?? 0} daily=${total}/2`);
-    if (!btcOrbSet)
-        return;
+    const posStr = btcPrice > btcOrbHigh ? "above-H" : btcPrice < btcOrbLow ? "below-L" : "inside";
+    console.log(`[BTC:orion] price=$${btcPrice.toFixed(0)} H=$${btcOrbHigh.toFixed(0)} L=$${btcOrbLow.toFixed(0)} pos=${posStr} | open=${openPos?.length ?? 0} daily=${total}/2`);
     if (total >= 2) {
         console.log(`[BTC:orion] Daily limit reached (${total}/2)`);
         return;
