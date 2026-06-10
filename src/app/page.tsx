@@ -278,7 +278,7 @@ function StrategyCard({
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderTop: `1px solid ${accent}30` }}>
         {[
           { label: "CAPITAL",   value: "₹1,00,000",      color: "#ffffff",        weight: 600 },
-          { label: "TOTAL PnL", value: pnlStr(pnl),       color: accent,           weight: 700 },
+          { label: "TOTAL PnL", value: pnlStr(pnl),       color: pnlColor(pnl),    weight: 700 },
           { label: "RETURN",    value: fmtPct(retPct),    color: pnlColor(retPct), weight: 600 },
           { label: "SHARPE",    value: sharpe.toFixed(2), color: "#ffffff",        weight: 600 },
           { label: "TODAY",     value: String(today),      color: "#ffffff",        weight: 600 },
@@ -512,7 +512,7 @@ function TradePopup({
                         <td style={{ padding: "7px 8px", fontSize: 11, color: "#6b7280", fontFamily: "monospace" }}>₹{pos.entry_price.toFixed(2)}</td>
                         <td style={{ padding: "7px 8px", fontSize: 11, color: "#f5d547", fontFamily: "monospace", fontWeight: 600 }}>₹{(pos.current_price ?? 0).toFixed(2)}</td>
                         <td style={{ padding: "7px 8px", fontSize: 11, color: "#9ca3af" }}>{pos.quantity}</td>
-                        <td style={{ padding: "7px 8px", fontSize: 11, fontFamily: "monospace", fontWeight: 600, color: "#f5d547" }}>{pnlStr(pos.pnl ?? 0)}</td>
+                        <td style={{ padding: "7px 8px", fontSize: 11, fontFamily: "monospace", fontWeight: 600, color: pnlColor(pos.pnl ?? 0) }}>{pnlStr(pos.pnl ?? 0)}</td>
                         <td style={{ padding: "7px 8px", fontSize: 10, color: "#4b5563" }}>{fmtTime(pos.opened_at)}</td>
                         <td style={{ padding: "7px 8px", fontSize: 11, color: "#ef4444", fontFamily: "monospace" }}>
                           {pos.stop_loss ? `₹${pos.stop_loss.toFixed(2)}` : "—"}
