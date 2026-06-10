@@ -192,8 +192,8 @@ function pnlStr(n: number): string {
   return `${n >= 0 ? "+" : "-"}₹${fmtINR(n)}`;
 }
 function pnlColor(n: number): string {
-  if (n === 0) return "#6b7280";
-  return n > 0 ? "#22c55e" : "#ef4444";
+  if (n === 0) return "#ffffff";
+  return n > 0 ? "#4ade80" : "#f87171";
 }
 function fmtTime(iso: string | null): string {
   if (!iso) return "—";

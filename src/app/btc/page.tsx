@@ -112,8 +112,8 @@ function pnlStr(n: number): string {
   return `${n >= 0 ? "+" : "-"}₹${fmtINR(n)}`;
 }
 function pnlColor(n: number): string {
-  if (n === 0) return "#6b7280";
-  return n > 0 ? "#22c55e" : "#ef4444";
+  if (n === 0) return "#ffffff";
+  return n > 0 ? "#4ade80" : "#f87171";
 }
 function fmtTime(iso: string | null): string {
   if (!iso) return "—";
@@ -568,13 +568,12 @@ export default function BtcArenaPage() {
   const [popup,          setPopup]          = useState<BtcStrategy | null>(null);
   const [popupPositions, setPopupPositions] = useState<BtcPosition[]>([]);
 
-  // Main 15s refresh
+  // Main 15s refresh (strategies + capital + positions)
   const refresh = useCallback(async () => {
-    const [sRes, cRes, pRes, priceRes] = await Promise.all([
+    const [sRes, cRes, pRes] = await Promise.all([
       supabase.from("btc_strategies").select("*").order("sort_order"),
       supabase.from("btc_strategy_capital").select("*"),
       supabase.from("btc_strategy_positions").select("*").order("opened_at", { ascending: false }).limit(300),
-      supabase.from("config").select("value").eq("key", "BTC_PRICE_USD").single(),
     ]);
 
     if (sRes.error || cRes.error || pRes.error) {
@@ -586,7 +585,6 @@ export default function BtcArenaPage() {
     setStrategies((sRes.data ?? []) as BtcStrategy[]);
     setCapitals((cRes.data ?? []) as BtcCapital[]);
     setPositions((pRes.data ?? []) as BtcPosition[]);
-    if (priceRes.data?.value) setBtcPrice(parseFloat(priceRes.data.value));
     setLastUpdate(new Date());
   }, []);
 
@@ -595,6 +593,18 @@ export default function BtcArenaPage() {
     const iv = setInterval(refresh, 15_000);
     return () => clearInterval(iv);
   }, [refresh]);
+
+  // BTC price poll every 5s via API route (uses service role server-side)
+  useEffect(() => {
+    const fetchPrice = () =>
+      fetch("/api/btc/price")
+        .then(r => r.json())
+        .then((d: { price: number }) => { if (d.price > 0) setBtcPrice(d.price); })
+        .catch(() => {});
+    fetchPrice();
+    const iv = setInterval(fetchPrice, 5_000);
+    return () => clearInterval(iv);
+  }, []);
 
   // Popup 5s position refresh
   useEffect(() => {
