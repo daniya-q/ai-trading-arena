@@ -33,6 +33,7 @@ type BtcPosition = {
   pnl_inr: number;
   stop_loss: number | null;
   trail_sl: number | null;
+  leverage: number | null;
   status: "OPEN" | "CLOSED";
   opened_at: string;
   closed_at: string | null;
@@ -418,7 +419,7 @@ function BtcTradePopup({
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 680 }}>
                 <thead>
                   <tr style={{ background: "#070A11" }}>
-                    {["Side", "Entry (USD)", "Current (USD)", "Live PnL (INR)", "Qty (INR)", "Opened (UTC)", "Stop Loss", "Trail SL"].map(h => (
+                    {["Side", "Entry (USD)", "Current (USD)", "Live PnL (INR)", "Qty (INR)", "Leverage", "Opened (UTC)", "Stop Loss", "Trail SL"].map(h => (
                       <th key={h} style={thStyle}>{h}</th>
                     ))}
                   </tr>
@@ -447,6 +448,9 @@ function BtcTradePopup({
                           {pnlStr(pos.pnl_inr ?? 0)}
                         </td>
                         <td style={{ padding: "7px 8px", fontSize: 11, color: "#9ca3af" }}>₹{pos.qty_inr.toFixed(0)}</td>
+                        <td style={{ padding: "7px 8px", fontSize: 11, fontFamily: "monospace", color: "#a78bfa", fontWeight: 600 }}>
+                          {pos.leverage != null ? `${pos.leverage}×` : "—"}
+                        </td>
                         <td style={{ padding: "7px 8px", fontSize: 10, color: "#4b5563" }}>{fmtTime(pos.opened_at)}</td>
                         <td style={{ padding: "7px 8px", fontSize: 11, color: "#ef4444", fontFamily: "monospace" }}>
                           {pos.stop_loss ? `$${pos.stop_loss.toFixed(2)}` : "—"}
@@ -457,7 +461,7 @@ function BtcTradePopup({
                       </tr>
                       {expandedTrade === pos.id && (
                         <tr style={{ borderTop: "1px solid #0f1520" }}>
-                          <td colSpan={8} style={{ padding: "14px 20px", background: "#080B12" }}>
+                          <td colSpan={9} style={{ padding: "14px 20px", background: "#080B12" }}>
                             <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
                               <div style={{ flex: 1, minWidth: 220 }}>
                                 <div style={{ fontSize: 9, fontWeight: 700, color: "#374151", letterSpacing: "0.1em", marginBottom: 7 }}>WHY THIS TRADE WAS ENTERED</div>
@@ -506,7 +510,7 @@ function BtcTradePopup({
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
                 <thead>
                   <tr style={{ background: "#070A11" }}>
-                    {["Side", "Entry (USD)", "Exit (USD)", "Final PnL (INR)", "Exit Reason", "Opened", "Closed"].map(h => (
+                    {["Side", "Entry (USD)", "Exit (USD)", "Final PnL (INR)", "Leverage", "Exit Reason", "Opened", "Closed"].map(h => (
                       <th key={h} style={thStyle}>{h}</th>
                     ))}
                   </tr>
@@ -534,6 +538,9 @@ function BtcTradePopup({
                         <td style={{ padding: "7px 8px", fontSize: 11, fontFamily: "monospace", fontWeight: 600, color: pnlColor(pos.pnl_inr ?? 0) }}>
                           {pnlStr(pos.pnl_inr ?? 0)}
                         </td>
+                        <td style={{ padding: "7px 8px", fontSize: 11, fontFamily: "monospace", color: "#a78bfa", fontWeight: 600 }}>
+                          {pos.leverage != null ? `${pos.leverage}×` : "—"}
+                        </td>
                         <td style={{ padding: "7px 8px", fontSize: 10, color: "#374151", whiteSpace: "nowrap" }}>
                           {pos.exit_reason?.replace(/_/g, " ") ?? "—"}
                         </td>
@@ -542,7 +549,7 @@ function BtcTradePopup({
                       </tr>
                       {expandedTrade === pos.id && (
                         <tr style={{ borderTop: "1px solid #0f1520" }}>
-                          <td colSpan={7} style={{ padding: "14px 20px", background: "#080B12" }}>
+                          <td colSpan={8} style={{ padding: "14px 20px", background: "#080B12" }}>
                             <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
                               <div style={{ flex: 1, minWidth: 220 }}>
                                 <div style={{ fontSize: 9, fontWeight: 700, color: "#374151", letterSpacing: "0.1em", marginBottom: 7 }}>WHY THIS TRADE WAS ENTERED</div>
