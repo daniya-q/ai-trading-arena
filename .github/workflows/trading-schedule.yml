@@ -2,6 +2,8 @@ name: Trading Schedule
 
 on:
   schedule:
+    # 8:30 AM IST = 3:00 AM UTC — Upstox token refresh
+    - cron: "0 3 * * 1-5"
     # 9:15 AM IST = 3:45 AM UTC — market open
     - cron: "45 3 * * 1-5"
     # 3:30 PM IST = 10:00 AM UTC — market close
@@ -9,6 +11,14 @@ on:
   workflow_dispatch: # allow manual trigger
 
 jobs:
+  refresh-token:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Upstox token refresh
+        run: |
+          echo "Triggering Upstox token refresh at 8:30 AM IST"
+          curl -f --max-time 30 -X POST "https://ai-trading-arena-backend-production.up.railway.app/api/upstox/token-webhook"
+
   ping:
     runs-on: ubuntu-latest
     steps:
