@@ -52,6 +52,7 @@ const ACCENT: Record<string, string> = {
   supertrend:     "#EF4444",
   pcr_reversal:   "#8B5CF6",
   gap_orb:        "#06B6D4",
+  vwap_scalper:   "#F97316",
 };
 
 const RULES: Record<string, string[]> = {
@@ -128,6 +129,36 @@ const RULES: Record<string, string[]> = {
     "Morning only: no new trades after 11:30 AM",
     "Max 2 trades per day",
   ],
+  vwap_scalper: [
+    "· VWAP + RSI Momentum Scalper — Nifty, BankNifty, Sensex options",
+    "· Timeframe: 1-minute candles | Window: 10:30 AM – 3:00 PM IST",
+    "",
+    "Entry — Buy CE (bullish bounce):",
+    "  · Price pulls back to VWAP then closes above it",
+    "  · RSI between 40–60 (neutral momentum)",
+    "  · OI rising on latest chain snapshot (volume proxy)",
+    "  · Previous candle made a higher low",
+    "  · Option premium in ₹50–80 range",
+    "",
+    "Entry — Buy PE (bearish rejection):",
+    "  · Price pulls back to VWAP then closes below it",
+    "  · RSI between 40–60",
+    "  · OI rising on latest chain snapshot",
+    "  · Previous candle made a lower high",
+    "  · Option premium in ₹50–80 range",
+    "",
+    "Expiry days: Tuesday (Nifty + BankNifty) · Thursday (Sensex)",
+    "Danger windows (11:30 12:30 13:00 14:00 14:45 15:00 IST):",
+    "  · SL tightens to 10% | Position size halved",
+    "  · Open positions: trail SL tightened to 5% below current price",
+    "",
+    "Normal day rules:",
+    "  · SL: 20% of premium | Max 1 position per index at a time",
+    "  · Trail SL: at +25% premium → move SL to breakeven",
+    "  · At +35% → trail at 12% below peak premium",
+    "",
+    "Exit priority: SL hit → Trail SL hit → 3:00 PM hard close → Opposite VWAP cross",
+  ],
 };
 
 function getEntryReason(strategyId: string, type: string): string {
@@ -156,6 +187,10 @@ function getEntryReason(strategyId: string, type: string): string {
       return type === "CE"
         ? "Gap down > 0.3% detected at open. Fade strategy — buying CE expecting price to recover back toward previous day's close."
         : "Gap up > 0.3% detected at open. Fade strategy — buying PE expecting price to pull back toward previous day's close.";
+    case "vwap_scalper":
+      return type === "CE"
+        ? "Price pulled back to VWAP and bounced above it on 1m candle. RSI 40–60 (neutral), OI rising, previous candle made a higher low — bullish VWAP reclaim entry."
+        : "Price pulled back to VWAP and rejected below it on 1m candle. RSI 40–60 (neutral), OI rising, previous candle made a lower high — bearish VWAP rejection entry.";
     default:
       return "Entry signal triggered.";
   }
@@ -178,6 +213,8 @@ function fallbackExitText(pos: Position): string {
     case "TARGET":
     case "GAP_FILL":
       return `Gap fill target reached. Exit: ₹${(pos.exit_price ?? 0).toFixed(2)}.`;
+    case "VWAP_CROSS":
+      return `Price crossed VWAP in opposite direction. Exit: ₹${(pos.exit_price ?? 0).toFixed(2)}.`;
     default:
       return pos.exit_reason?.replace(/_/g, " ") ?? "—";
   }

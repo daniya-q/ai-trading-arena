@@ -48,6 +48,7 @@ interface Candle {
   low:   number;
   close: number;
   time:  number; // ms epoch
+  ticks?: number; // counts price updates per candle bucket
 }
 
 interface OptionChainRow {
@@ -171,9 +172,46 @@ function checkDailyReset(): void {
     for (const k of Object.keys(dailyTradeCounts)) dailyTradeCounts[k] = 0;
     // Reset ORB state
     for (const k of Object.keys(orbSet)) orbSet[k] = false;
+    // Clear expiry day cache
+    for (const k of Object.keys(expiryDayCache)) delete expiryDayCache[k];
     gapCalcDate = "";
     console.log(`[Daily] Reset for ${today}`);
   }
+}
+
+// ── Expiry / danger window helpers ────────────────────────────
+
+const expiryDayCache: Record<string, boolean> = {};
+
+async function isExpiryDay(index: "NIFTY" | "BANKNIFTY" | "SENSEX"): Promise<boolean> {
+  const today    = todayIST();
+  const cacheKey = `${today}_${index}`;
+  if (expiryDayCache[cacheKey] !== undefined) return expiryDayCache[cacheKey];
+  const dayOfWeek = getIST().getUTCDay(); // 0=Sun,2=Tue,4=Thu
+  const targetDay = (index === "SENSEX") ? 4 : 2; // SENSEX=Thu, others=Tue
+  if (dayOfWeek !== targetDay) { expiryDayCache[cacheKey] = false; return false; }
+  const { data } = await supabase.from("nse_holidays").select("date").eq("date", today).limit(1);
+  const result = (data?.length ?? 0) === 0; // not a holiday → expiry day
+  expiryDayCache[cacheKey] = result;
+  return result;
+}
+
+// Danger windows: 11:30 12:30 13:00 14:00 14:45 15:00 IST (in minutes from midnight)
+const DANGER_WINDOW_MINS = [690, 750, 780, 840, 885, 900];
+
+function isDangerWindow(): boolean {
+  const m = istMins();
+  return DANGER_WINDOW_MINS.some(dw => m >= dw && m < dw + 15);
+}
+
+function isOIRising(index: "NIFTY" | "BANKNIFTY" | "SENSEX"): boolean {
+  const history = optionChainHistory[index];
+  if (!history || history.length < 2) return true;
+  const latest   = history[history.length - 1];
+  const prev     = history[history.length - 2];
+  const latestOI = latest.rows.reduce((s, r) => s + r.ceOI + r.peOI, 0);
+  const prevOI   = prev.rows.reduce((s, r)   => s + r.ceOI + r.peOI, 0);
+  return latestOI >= prevOI;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -182,6 +220,7 @@ function checkDailyReset(): void {
 
 const INTERVALS: Record<string, number> = {
   "30s": 30_000,
+  "1m":  60_000,
   "5m":  5 * 60_000,
   "15m": 15 * 60_000,
 };
@@ -197,7 +236,7 @@ function processTick(price: number, symbol: string, tsMs: number): void {
     const store = candleStores[key];
 
     if (!store.current) {
-      store.current = { open: price, high: price, low: price, close: price, time: bucket };
+      store.current = { open: price, high: price, low: price, close: price, time: bucket, ticks: 1 };
       store.bucket  = bucket;
       continue;
     }
@@ -205,7 +244,7 @@ function processTick(price: number, symbol: string, tsMs: number): void {
     if (bucket !== store.bucket) {
       store.candles.push({ ...store.current });
       if (store.candles.length > MAX_CANDLES) store.candles.shift();
-      store.current = { open: price, high: price, low: price, close: price, time: bucket };
+      store.current = { open: price, high: price, low: price, close: price, time: bucket, ticks: 1 };
       store.bucket  = bucket;
       continue;
     }
@@ -213,6 +252,7 @@ function processTick(price: number, symbol: string, tsMs: number): void {
     store.current.high  = Math.max(store.current.high, price);
     store.current.low   = Math.min(store.current.low,  price);
     store.current.close = price;
+    store.current.ticks = (store.current.ticks ?? 0) + 1;
   }
 }
 
@@ -707,9 +747,9 @@ function generateExitDetail(
   const ist   = getIST();
   const timeStr = `${String(ist.getUTCHours()).padStart(2,"0")}:${String(ist.getUTCMinutes()).padStart(2,"0")} IST`;
 
-  const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:25, gap_orb:20 };
-  const TRAIL_PCT: Record<string, number> = { ema_crossover:10, ema_confluence:10, orion:15, supertrend:12, pcr_reversal:12, gap_orb:12 };
-  const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:00 PM", orion:"2:00 PM", ema_confluence:"3:00 PM", supertrend:"3:00 PM", pcr_reversal:"3:00 PM", gap_orb:"3:00 PM" };
+  const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:25, gap_orb:20, vwap_scalper:20 };
+  const TRAIL_PCT: Record<string, number> = { ema_crossover:10, ema_confluence:10, orion:15, supertrend:12, pcr_reversal:12, gap_orb:12, vwap_scalper:12 };
+  const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:00 PM", orion:"2:00 PM", ema_confluence:"3:00 PM", supertrend:"3:00 PM", pcr_reversal:"3:00 PM", gap_orb:"3:00 PM", vwap_scalper:"3:00 PM" };
 
   switch (reason) {
     case "SL_HIT": {
@@ -745,6 +785,8 @@ function generateExitDetail(
     case "TARGET":
     case "GAP_FILL":
       return `Gap fill target reached at ${timeStr}. Price returned to previous day's close level. Trade objective achieved at ₹${exitPrice.toFixed(2)}.`;
+    case "VWAP_CROSS":
+      return `Price crossed VWAP in opposite direction at ${timeStr}. ${pos.type === "CE" ? "Price fell below" : "Price rose above"} VWAP — exit signal triggered at ₹${exitPrice.toFixed(2)}.`;
     default:
       return `Position closed at ${timeStr}. Reason: ${reason}. Exit: ₹${exitPrice.toFixed(2)}.`;
   }
@@ -839,6 +881,7 @@ async function monitorOpenPositions(): Promise<void> {
     supertrend:     900,
     pcr_reversal:   900,
     gap_orb:        900,
+    vwap_scalper:   900,  // 15:00
   };
 
   const currentMins = istMins();
@@ -885,6 +928,13 @@ async function monitorOpenPositions(): Promise<void> {
     } else if (pos.strategy_id === "orion") {
       trailActivationPct = 0.35;
       trailPct           = 0.15;
+    } else if (pos.strategy_id === "vwap_scalper") {
+      // Tier 1: 25% gain → move SL to breakeven
+      if (pnlPct >= 0.25 && pos.stop_loss && pos.stop_loss < pos.entry_price) {
+        await supabase.from("strategy_positions").update({ stop_loss: pos.entry_price }).eq("id", pos.id);
+      }
+      trailActivationPct = 0.35;
+      trailPct           = 0.12;
     }
 
     if (pnlPct >= trailActivationPct) {
@@ -1490,6 +1540,141 @@ async function monitorGapOrbPositions(): Promise<void> {
 }
 
 // ══════════════════════════════════════════════════════════════
+// Strategy 7 — VWAP Momentum Scalper (1m candles, 10:30–15:00)
+// ══════════════════════════════════════════════════════════════
+
+async function runStrategy7(): Promise<void> {
+  for (const index of ["NIFTY", "BANKNIFTY", "SENSEX"] as const) {
+    await runVwapScalperForIndex(index);
+  }
+}
+
+async function runVwapScalperForIndex(index: "NIFTY" | "BANKNIFTY" | "SENSEX"): Promise<void> {
+  if (!isMarketOpen()) return;
+  const mins = istMins();
+  if (mins < 630 || mins >= 900) return; // 10:30–15:00
+
+  const candles = getCandles(index, "1m");
+  const MIN_CANDLES = 22;
+  if (candles.length < MIN_CANDLES) {
+    console.log(`[S7:${index}] candles=${candles.length}/${MIN_CANDLES} — waiting`);
+    return;
+  }
+
+  const vwap  = calcVWAP(candles);
+  const rsi   = calcRSI(candles, 14);
+  const atr   = calcATR(candles, 14);
+  const curr  = candles[candles.length - 1];
+  const prev  = candles[candles.length - 2];
+  const prev2 = candles[candles.length - 3];
+
+  const oiRising = isOIRising(index);
+  const aboveVwap = curr.close > vwap;
+
+  // Bullish: pullback to VWAP then bounce above
+  const bullish = prev.close <= vwap && curr.close > vwap
+    && rsi >= 40 && rsi <= 60
+    && oiRising
+    && prev.low > prev2.low;
+
+  // Bearish: pullback to VWAP then reject below
+  const bearish = prev.close >= vwap && curr.close < vwap
+    && rsi >= 40 && rsi <= 60
+    && oiRising
+    && prev.high < prev2.high;
+
+  const signalTag = bullish ? "bull-bounce" : bearish ? "bear-reject" : "no-signal";
+  console.log(`[S7:${index}] candles=${candles.length} VWAP=${vwap.toFixed(0)} price=${curr.close.toFixed(0)} RSI=${rsi.toFixed(0)} OI=${oiRising ? "rising" : "flat"} | ${aboveVwap ? "above" : "below"}-vwap | ${signalTag}`);
+
+  if (!bullish && !bearish) return;
+
+  const openPositions = await getOpenStrategyPositions("vwap_scalper");
+  const indexOpen = openPositions.filter(p => p.symbol.startsWith(index));
+  if (indexOpen.length > 0) return;
+
+  const type: "CE" | "PE" = bullish ? "CE" : "PE";
+
+  const expiryDay = await isExpiryDay(index);
+  const danger    = expiryDay && isDangerWindow();
+
+  const chain = getLatestChain(index);
+  if (!chain) { console.log(`[S7:${index}] No option chain data`); return; }
+
+  const option = getATMOptionForIndex(chain, index, type, 50, 80);
+  if (!option) {
+    console.log(`[S7:${index}] No option in ₹50-80 range`);
+    return;
+  }
+
+  const slPct = danger ? 0.10 : 0.20;
+  const qty = index === "BANKNIFTY"
+    ? (danger ? 8  : 15)
+    : index === "SENSEX"
+    ? (danger ? 10 : 20)
+    : (danger ? 25 : 50); // NIFTY
+
+  const sl = Number((option.premium * (1 - slPct)).toFixed(2));
+
+  const entryNote = `VWAP ${type === "CE" ? "bounce above" : "reject below"} | RSI=${rsi.toFixed(0)} | ATR=${atr.toFixed(0)}${danger ? " | EXPIRY DANGER" : ""}`;
+  console.log(`[S7:${index}] SIGNAL ${type} — premium ₹${option.premium} | SL=${sl} qty=${qty}${danger ? " [EXPIRY DANGER]" : ""}`);
+
+  await openStrategyPosition("vwap_scalper", {
+    symbol:        option.symbol,
+    type,
+    side:          "LONG",
+    entry_price:   option.premium,
+    current_price: option.premium,
+    quantity:      qty,
+    stop_loss:     sl,
+    trail_sl:      null,
+    pnl:           0,
+    status:        "OPEN",
+  });
+  void entryNote; // suppress unused warning
+}
+
+async function monitorVwapPositions(): Promise<void> {
+  if (!isMarketOpen()) return;
+  const openPositions = await getOpenStrategyPositions("vwap_scalper");
+  if (!openPositions.length) return;
+
+  for (const pos of openPositions) {
+    const index: "NIFTY" | "BANKNIFTY" | "SENSEX" = pos.symbol.startsWith("BANKNIFTY")
+      ? "BANKNIFTY"
+      : pos.symbol.startsWith("SENSEX")
+      ? "SENSEX"
+      : "NIFTY";
+
+    const candles = getCandles(index, "1m");
+    if (candles.length < 2) continue;
+
+    const curr = candles[candles.length - 1];
+    const vwap = calcVWAP(candles);
+    const cp   = getCurrentPrice(pos.symbol);
+    if (!cp) continue;
+
+    // Opposite VWAP cross exit
+    if (pos.type === "CE" && curr.close < vwap) {
+      await closeStrategyPosition(pos.id, cp, "VWAP_CROSS");
+      continue;
+    }
+    if (pos.type === "PE" && curr.close > vwap) {
+      await closeStrategyPosition(pos.id, cp, "VWAP_CROSS");
+      continue;
+    }
+
+    // Expiry danger window: tighten trail SL to 5% below current price
+    const expiryDay = await isExpiryDay(index);
+    if (expiryDay && isDangerWindow()) {
+      const tightSL = Number((cp * 0.95).toFixed(2));
+      if (!pos.trail_sl || tightSL > pos.trail_sl) {
+        await supabase.from("strategy_positions").update({ trail_sl: tightSL }).eq("id", pos.id);
+      }
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
 // LTP poller — every second
 // ══════════════════════════════════════════════════════════════
 
@@ -1554,11 +1739,13 @@ async function runEquityStrategies(): Promise<void> {
       runStrategy4(),
       runStrategy5(),
       runStrategy6(),
+      runStrategy7(),
     ]);
     await Promise.allSettled([
       monitorOpenPositions(),
       monitorPCRPositions(),
       monitorGapOrbPositions(),
+      monitorVwapPositions(),
     ]);
   } catch (err) {
     console.error("[Equity] Strategy loop error:", err);
@@ -1661,6 +1848,8 @@ function generateBtcExitDetail(
       return `Supertrend flipped direction at $${exitPrice.toFixed(2)} — ${pnlStr} at ${ts}`;
     case "HARD_CLOSE":
       return `Hard close at $${exitPrice.toFixed(2)} — ${pnlStr} at ${ts}`;
+    case "VWAP_CROSS":
+      return `Price crossed VWAP in opposite direction at $${exitPrice.toFixed(2)} — ${pnlStr} at ${ts}`;
     default:
       return `Closed at $${exitPrice.toFixed(2)} — ${pnlStr} at ${ts}`;
   }
@@ -1674,6 +1863,7 @@ async function openBtcPosition(
   entryPriceUsd: number,
   stopLoss: number,
   entryReason: string,
+  qtyInrOverride?: number,
 ): Promise<string | null> {
   try {
     const { data, error } = await supabase
@@ -1683,7 +1873,7 @@ async function openBtcPosition(
         side,
         entry_price_usd:   entryPriceUsd,
         current_price_usd: entryPriceUsd,
-        qty_inr:           BTC_QTY_INR,
+        qty_inr:           qtyInrOverride ?? BTC_QTY_INR,
         pnl_inr:           0,
         stop_loss:         stopLoss,
         status:            "OPEN",
@@ -1824,6 +2014,29 @@ async function monitorBtcPositions(): Promise<void> {
         if (row.side === "LONG"  && btcPrice <= row.trail_sl)  { await closeBtcPosition(row.id, btcPrice, "TRAIL_SL"); continue; }
         if (row.side === "SHORT" && btcPrice >= row.trail_sl)  { await closeBtcPosition(row.id, btcPrice, "TRAIL_SL"); continue; }
       }
+
+      // VWAP cross exit for btc_vwap_scalper
+      if (row.strategy_id === "btc_vwap_scalper") {
+        const btcCandles1m = getCandles("BTC", "1m");
+        if (btcCandles1m.length >= 2) {
+          const btcCurr = btcCandles1m[btcCandles1m.length - 1];
+          const btcVwap = calcBtcVWAP(btcCandles1m);
+          if (row.side === "LONG"  && btcCurr.close < btcVwap) { await closeBtcPosition(row.id, btcPrice, "VWAP_CROSS"); continue; }
+          if (row.side === "SHORT" && btcCurr.close > btcVwap) { await closeBtcPosition(row.id, btcPrice, "VWAP_CROSS"); continue; }
+          // Danger window: tighten trail SL to 1% from current price
+          if (isDangerWindow()) {
+            const tightSL = row.side === "LONG"
+              ? btcPrice * 0.99
+              : btcPrice * 1.01;
+            if (row.side === "LONG"  && (!row.trail_sl || tightSL > row.trail_sl)) {
+              await supabase.from("btc_strategy_positions").update({ trail_sl: tightSL }).eq("id", row.id);
+            }
+            if (row.side === "SHORT" && (!row.trail_sl || tightSL < row.trail_sl)) {
+              await supabase.from("btc_strategy_positions").update({ trail_sl: tightSL }).eq("id", row.id);
+            }
+          }
+        }
+      }
     }
   } catch (err) {
     console.error("[BTC Monitor] Error:", err);
@@ -1836,6 +2049,7 @@ function btcTrailPct(strategyId: string): number {
     btc_orion:          0.005,
     btc_ema_confluence: 0.015,
     btc_supertrend:     0.008,
+    btc_vwap_scalper:   0.010,
   };
   return map[strategyId] ?? 0.01;
 }
@@ -2059,6 +2273,75 @@ async function strategyBtcSupertrend(): Promise<void> {
   }
 }
 
+// ── BTC Strategy 5: VWAP Momentum Scalper ────────────────────
+
+async function strategyBtcVwapScalper(): Promise<void> {
+  if (!btcPrice) return;
+  const candles = getCandles("BTC", "1m");
+  const MIN_CANDLES = 22;
+  if (candles.length < MIN_CANDLES) {
+    console.log(`[BTC:vwap_scalper] Waiting for 1m candles (${candles.length}/${MIN_CANDLES})`);
+    return;
+  }
+
+  const vwap  = calcBtcVWAP(candles);
+  const rsi   = calcRSI(candles, 14);
+  const atr   = calcATR(candles, 14);
+  const curr  = candles[candles.length - 1];
+  const prev  = candles[candles.length - 2];
+  const prev2 = candles[candles.length - 3];
+
+  // Volume: tick count vs 20-candle average
+  const avgTicks = candles.slice(-20).reduce((s, c) => s + (c.ticks ?? 1), 0) / 20;
+  const volOK    = (curr.ticks ?? 1) >= avgTicks;
+
+  const bullish = prev.close <= vwap && curr.close > vwap
+    && rsi >= 40 && rsi <= 60
+    && volOK
+    && prev.low > prev2.low;
+
+  const bearish = prev.close >= vwap && curr.close < vwap
+    && rsi >= 40 && rsi <= 60
+    && volOK
+    && prev.high < prev2.high;
+
+  const signalTag = bullish ? "long-signal" : bearish ? "short-signal" : "no-signal";
+  console.log(`[BTC:vwap_scalper] VWAP=${vwap.toFixed(0)} price=${btcPrice.toFixed(0)} RSI=${rsi.toFixed(0)} vol=${volOK ? "above" : "below"} | ${signalTag}`);
+
+  if (!bullish && !bearish) return;
+
+  const side: "LONG" | "SHORT" = bullish ? "LONG" : "SHORT";
+  const dayKey = `btc_vwap_scalper_${side}`;
+
+  if ((btcDailyTradeCounts[dayKey] ?? 0) >= 1) {
+    console.log(`[BTC:vwap_scalper] Daily ${side} limit reached`);
+    return;
+  }
+
+  // Check existing open position on same side
+  const { data: openPos } = await supabase
+    .from("btc_strategy_positions")
+    .select("id, side")
+    .eq("strategy_id", "btc_vwap_scalper")
+    .eq("status", "OPEN");
+  if ((openPos as Array<{ side: string }> | null)?.some(p => p.side === side)) return;
+
+  const danger  = isDangerWindow();
+  const qtyInr  = danger ? 5000 : 10000;
+  const slDist  = danger ? atr : atr * 2;
+  const stopLoss = side === "LONG" ? btcPrice - slDist : btcPrice + slDist;
+
+  await openBtcPosition(
+    "btc_vwap_scalper",
+    side,
+    btcPrice,
+    stopLoss,
+    `VWAP ${side === "LONG" ? "bounce above" : "reject below"} | VWAP=$${vwap.toFixed(0)} RSI=${rsi.toFixed(0)} vol=above`,
+    qtyInr,
+  );
+  btcDailyTradeCounts[dayKey] = (btcDailyTradeCounts[dayKey] ?? 0) + 1;
+}
+
 // ── Run all BTC strategies (every 30s) ───────────────────────
 
 let btcStrategiesRunning = false;
@@ -2068,11 +2351,12 @@ async function runBtcStrategies(): Promise<void> {
   btcStrategiesRunning = true;
   try {
     checkBtcDailyReset();
-    console.log(`[BTC] Cycle — price=$${btcPrice.toFixed(2)} candles30s=${getCandles("BTC","30s").length} candles5m=${getCandles("BTC","5m").length}`);
+    console.log(`[BTC] Cycle — price=$${btcPrice.toFixed(2)} candles30s=${getCandles("BTC","30s").length} candles1m=${getCandles("BTC","1m").length} candles5m=${getCandles("BTC","5m").length}`);
     await strategyBtcEmaCrossover();
     await strategyBtcOrion();
     await strategyBtcEmaConfluence();
     await strategyBtcSupertrend();
+    await strategyBtcVwapScalper();
   } catch (err) {
     console.error("[BTC Strategies] Error:", err);
   } finally {

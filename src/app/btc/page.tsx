@@ -48,6 +48,7 @@ const ACCENT: Record<string, string> = {
   btc_orion:          "#6366F1",
   btc_ema_confluence: "#10B981",
   btc_supertrend:     "#EF4444",
+  btc_vwap_scalper:   "#F97316",
 };
 
 const RULES: Record<string, string[]> = {
@@ -97,6 +98,26 @@ const RULES: Record<string, string[]> = {
     "Trail SL: 0.8% ratchet trail",
     "Max 2 trades per day",
     "₹5,000 INR allocation per trade (paper trading)",
+  ],
+  btc_vwap_scalper: [
+    "· BTC VWAP Momentum Scalper — Runs 24/7",
+    "· Timeframe: 1-minute candles | Same VWAP + RSI + volume logic as equity",
+    "",
+    "Entry — LONG (bullish bounce):",
+    "  · BTC price closes above VWAP after touching it",
+    "  · RSI between 40–60 | Tick volume above 20-candle average",
+    "  · Previous candle made a higher low",
+    "",
+    "Entry — SHORT (bearish rejection):",
+    "  · BTC price closes below VWAP after touching it",
+    "  · RSI between 40–60 | Tick volume above 20-candle average",
+    "  · Previous candle made a lower high",
+    "",
+    "Position size: ₹10,000 normal · ₹5,000 during IST expiry danger windows",
+    "SL: 2×ATR normal · 1×ATR during danger windows",
+    "Trail: 1% ratchet trail from peak price",
+    "VWAP cross exit: opposite VWAP signal closes open position",
+    "Max: 1 LONG + 1 SHORT per day",
   ],
 };
 
