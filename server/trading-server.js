@@ -1705,8 +1705,32 @@ function generateBtcExitDetail(reason, side, entryPrice, exitPrice, pnlInr, stop
             return `Closed at $${exitPrice.toFixed(2)} — ${pnlStr} at ${ts}`;
     }
 }
-const BTC_QTY_INR = 5000; // ₹5,000 per trade
-async function openBtcPosition(strategyId, side, entryPriceUsd, stopLoss, entryReason, qtyInrOverride) {
+// ── BTC Leverage Config ─────────────────────────────────────────
+// qty_inr = current_value × 0.90 × leverage
+const BTC_LEVERAGE = {
+    btc_ema_crossover: 1.5, // 90% × 1.5 = 135% effective exposure
+    btc_orion: 2.0, // 90% × 2.0 = 180%
+    btc_ema_confluence: 1.75, // 90% × 1.75 = 157.5%
+    btc_supertrend: 2.0, // 90% × 2.0 = 180%
+    btc_vwap_scalper: 3.0, // 90% × 3.0 = 270% (halved during danger windows)
+};
+async function getBtcCurrentValue(strategyId) {
+    try {
+        const { data } = await supabase
+            .from("btc_strategy_capital")
+            .select("allocated_inr, total_pnl_inr")
+            .eq("strategy_id", strategyId)
+            .single();
+        if (!data)
+            return 10000;
+        const d = data;
+        return (d.allocated_inr ?? 10000) + (d.total_pnl_inr ?? 0);
+    }
+    catch {
+        return 10000;
+    }
+}
+async function openBtcPosition(strategyId, side, entryPriceUsd, stopLoss, entryReason, qtyInr, leverage) {
     try {
         const { data, error } = await supabase
             .from("btc_strategy_positions")
@@ -1715,11 +1739,12 @@ async function openBtcPosition(strategyId, side, entryPriceUsd, stopLoss, entryR
             side,
             entry_price_usd: entryPriceUsd,
             current_price_usd: entryPriceUsd,
-            qty_inr: qtyInrOverride ?? BTC_QTY_INR,
+            qty_inr: qtyInr,
             pnl_inr: 0,
             stop_loss: stopLoss,
             status: "OPEN",
             entry_reason: entryReason,
+            leverage,
         })
             .select("id")
             .single();
@@ -1729,7 +1754,7 @@ async function openBtcPosition(strategyId, side, entryPriceUsd, stopLoss, entryR
         }
         const posId = data.id;
         btcPeakPrices[posId] = entryPriceUsd;
-        console.log(`[BTC ${strategyId}] Opened ${side} @ $${entryPriceUsd.toFixed(2)}, SL $${stopLoss.toFixed(2)}`);
+        console.log(`[BTC ${strategyId}] Opened ${side} @ $${entryPriceUsd.toFixed(2)} qty_inr=₹${Math.round(qtyInr).toLocaleString("en-IN")} (90% × ${leverage}×) SL=$${stopLoss.toFixed(2)}`);
         return posId;
     }
     catch (err) {
@@ -1937,12 +1962,17 @@ async function strategyBtcEmaCrossover() {
         }
         return;
     }
+    const leverage_ec = BTC_LEVERAGE["btc_ema_crossover"];
     if (bullCross && longs < 1) {
-        await openBtcPosition("btc_ema_crossover", "LONG", btcPrice, btcPrice - 1.5 * atr, `EMA9(${fastNow.toFixed(0)}) crossed above EMA21(${slowNow.toFixed(0)})`);
+        const cv = await getBtcCurrentValue("btc_ema_crossover");
+        const qtyInr = Math.round(cv * 0.90 * leverage_ec);
+        await openBtcPosition("btc_ema_crossover", "LONG", btcPrice, btcPrice - 1.5 * atr, `EMA9(${fastNow.toFixed(0)}) crossed above EMA21(${slowNow.toFixed(0)})`, qtyInr, leverage_ec);
         btcDailyTradeCounts["btc_ema_crossover_LONG"] = longs + 1;
     }
     else if (bearCross && shorts < 1) {
-        await openBtcPosition("btc_ema_crossover", "SHORT", btcPrice, btcPrice + 1.5 * atr, `EMA9(${fastNow.toFixed(0)}) crossed below EMA21(${slowNow.toFixed(0)})`);
+        const cv = await getBtcCurrentValue("btc_ema_crossover");
+        const qtyInr = Math.round(cv * 0.90 * leverage_ec);
+        await openBtcPosition("btc_ema_crossover", "SHORT", btcPrice, btcPrice + 1.5 * atr, `EMA9(${fastNow.toFixed(0)}) crossed below EMA21(${slowNow.toFixed(0)})`, qtyInr, leverage_ec);
         btcDailyTradeCounts["btc_ema_crossover_SHORT"] = shorts + 1;
     }
 }
@@ -1991,12 +2021,17 @@ async function strategyBtcOrion() {
     }
     if (openPos && openPos.length > 0)
         return;
+    const leverage_orion = BTC_LEVERAGE["btc_orion"];
     if (btcPrice > btcOrbHigh && longs < 1) {
-        await openBtcPosition("btc_orion", "LONG", btcPrice, btcOrbLow, `Price ($${btcPrice.toFixed(0)}) broke above ORB High ($${btcOrbHigh.toFixed(0)})`);
+        const cv = await getBtcCurrentValue("btc_orion");
+        const qtyInr = Math.round(cv * 0.90 * leverage_orion);
+        await openBtcPosition("btc_orion", "LONG", btcPrice, btcOrbLow, `Price ($${btcPrice.toFixed(0)}) broke above ORB High ($${btcOrbHigh.toFixed(0)})`, qtyInr, leverage_orion);
         btcDailyTradeCounts["btc_orion_LONG"] = longs + 1;
     }
     else if (btcPrice < btcOrbLow && shorts < 1) {
-        await openBtcPosition("btc_orion", "SHORT", btcPrice, btcOrbHigh, `Price ($${btcPrice.toFixed(0)}) broke below ORB Low ($${btcOrbLow.toFixed(0)})`);
+        const cv = await getBtcCurrentValue("btc_orion");
+        const qtyInr = Math.round(cv * 0.90 * leverage_orion);
+        await openBtcPosition("btc_orion", "SHORT", btcPrice, btcOrbHigh, `Price ($${btcPrice.toFixed(0)}) broke below ORB Low ($${btcOrbLow.toFixed(0)})`, qtyInr, leverage_orion);
         btcDailyTradeCounts["btc_orion_SHORT"] = shorts + 1;
     }
 }
@@ -2037,12 +2072,17 @@ async function strategyBtcEmaConfluence() {
     console.log(`[BTC:ema_confluence] EMA20=${ema20.toFixed(0)} EMA50=${ema50.toFixed(0)} | ${f1} ${f2} ${f3} ${f4} ${f5} | ${signal} | open=${openPos?.length ?? 0} L=${longs}/1 S=${shorts}/1`);
     if (openPos && openPos.length > 0)
         return;
+    const leverage_conf = BTC_LEVERAGE["btc_ema_confluence"];
     if (bullish && longs < 1) {
-        await openBtcPosition("btc_ema_confluence", "LONG", btcPrice, btcPrice - 2 * atr, `5-filter bullish: EMA20>EMA50, RSI ${rsi.toFixed(0)}, P>VWAP, ATR ${atrPct.toFixed(1)}%, slope+`);
+        const cv = await getBtcCurrentValue("btc_ema_confluence");
+        const qtyInr = Math.round(cv * 0.90 * leverage_conf);
+        await openBtcPosition("btc_ema_confluence", "LONG", btcPrice, btcPrice - 2 * atr, `5-filter bullish: EMA20>EMA50, RSI ${rsi.toFixed(0)}, P>VWAP, ATR ${atrPct.toFixed(1)}%, slope+`, qtyInr, leverage_conf);
         btcDailyTradeCounts["btc_ema_confluence_LONG"] = longs + 1;
     }
     else if (bearish && shorts < 1) {
-        await openBtcPosition("btc_ema_confluence", "SHORT", btcPrice, btcPrice + 2 * atr, `5-filter bearish: EMA20<EMA50, RSI ${rsi.toFixed(0)}, P<VWAP, ATR ${atrPct.toFixed(1)}%, slope-`);
+        const cv = await getBtcCurrentValue("btc_ema_confluence");
+        const qtyInr = Math.round(cv * 0.90 * leverage_conf);
+        await openBtcPosition("btc_ema_confluence", "SHORT", btcPrice, btcPrice + 2 * atr, `5-filter bearish: EMA20<EMA50, RSI ${rsi.toFixed(0)}, P<VWAP, ATR ${atrPct.toFixed(1)}%, slope-`, qtyInr, leverage_conf);
         btcDailyTradeCounts["btc_ema_confluence_SHORT"] = shorts + 1;
     }
 }
@@ -2085,12 +2125,17 @@ async function strategyBtcSupertrend() {
         console.log(`[BTC:supertrend] Daily limit reached (${total}/2)`);
         return;
     }
+    const leverage_st = BTC_LEVERAGE["btc_supertrend"];
     if (crossUp) {
-        await openBtcPosition("btc_supertrend", "LONG", btcPrice, stNow.value, `Supertrend flipped bullish (line $${stNow.value.toFixed(0)})`);
+        const cv = await getBtcCurrentValue("btc_supertrend");
+        const qtyInr = Math.round(cv * 0.90 * leverage_st);
+        await openBtcPosition("btc_supertrend", "LONG", btcPrice, stNow.value, `Supertrend flipped bullish (line $${stNow.value.toFixed(0)})`, qtyInr, leverage_st);
         btcDailyTradeCounts["btc_supertrend_LONG"] = longs + 1;
     }
     else if (crossDown) {
-        await openBtcPosition("btc_supertrend", "SHORT", btcPrice, stNow.value, `Supertrend flipped bearish (line $${stNow.value.toFixed(0)})`);
+        const cv = await getBtcCurrentValue("btc_supertrend");
+        const qtyInr = Math.round(cv * 0.90 * leverage_st);
+        await openBtcPosition("btc_supertrend", "SHORT", btcPrice, stNow.value, `Supertrend flipped bearish (line $${stNow.value.toFixed(0)})`, qtyInr, leverage_st);
         btcDailyTradeCounts["btc_supertrend_SHORT"] = shorts + 1;
     }
 }
@@ -2139,11 +2184,14 @@ async function strategyBtcVwapScalper() {
         .eq("status", "OPEN");
     if (openPos?.some(p => p.side === side))
         return;
+    const leverage_vwap = BTC_LEVERAGE["btc_vwap_scalper"];
     const danger = isDangerWindow();
-    const qtyInr = danger ? 5000 : 10000;
+    const cv = await getBtcCurrentValue("btc_vwap_scalper");
+    const baseQty = Math.round(cv * 0.90 * leverage_vwap);
+    const qtyInr = danger ? Math.round(baseQty / 2) : baseQty;
     const slDist = danger ? atr : atr * 2;
     const stopLoss = side === "LONG" ? btcPrice - slDist : btcPrice + slDist;
-    await openBtcPosition("btc_vwap_scalper", side, btcPrice, stopLoss, `VWAP ${side === "LONG" ? "bounce above" : "reject below"} | VWAP=$${vwap.toFixed(0)} RSI=${rsi.toFixed(0)} vol=above`, qtyInr);
+    await openBtcPosition("btc_vwap_scalper", side, btcPrice, stopLoss, `VWAP ${side === "LONG" ? "bounce above" : "reject below"} | VWAP=$${vwap.toFixed(0)} RSI=${rsi.toFixed(0)} vol=above`, qtyInr, leverage_vwap);
     btcDailyTradeCounts[dayKey] = (btcDailyTradeCounts[dayKey] ?? 0) + 1;
 }
 // ── Run all BTC strategies (every 30s) ───────────────────────
