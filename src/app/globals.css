@@ -39,3 +39,143 @@ button {
 .pulse {
   animation: pulse 2s infinite;
 }
+
+/* ─── Hamburger & Sidebar ────────────────────────────────────── */
+.hamburger-btn {
+  display: none;
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 1002;
+  background: #070A11;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #9ca3af;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+}
+
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 1000;
+}
+
+/* ─── Responsive Grids ───────────────────────────────────────── */
+.grid-eq {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.grid-btc {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.grid-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.grid-popup-stats {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+}
+
+/* ─── Mobile (< 768px) ───────────────────────────────────────── */
+@media (max-width: 767px) {
+  /* Hamburger visible on mobile */
+  .hamburger-btn {
+    display: flex;
+  }
+
+  /* Sidebar slides off-screen by default */
+  .sidebar-panel {
+    position: fixed !important;
+    top: 0;
+    left: -220px;
+    height: 100vh;
+    transition: left 0.25s ease;
+    z-index: 1001;
+    overflow-y: auto;
+  }
+  .sidebar-panel.open {
+    left: 0;
+  }
+
+  /* Overlay when sidebar open */
+  .sidebar-overlay.open {
+    display: block;
+  }
+
+  /* Page content: push down past hamburger */
+  .page-content {
+    padding-top: 56px !important;
+  }
+
+  /* Single-column card grids */
+  .grid-eq,
+  .grid-btc {
+    grid-template-columns: 1fr;
+  }
+
+  /* Stats → 2 columns */
+  .grid-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  /* Fix right border for even children in 2-col stats */
+  .grid-stats > div:nth-child(even) {
+    border-right: none !important;
+  }
+  /* Add top border to 3rd item (first of 2nd row in 2-col) */
+  .grid-stats > div:nth-child(3) {
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+  }
+
+  /* Popup stats → 2 columns */
+  .grid-popup-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* Hide breadcrumb text */
+  .breadcrumb {
+    display: none;
+  }
+
+  /* Popup: full screen */
+  .popup-outer {
+    padding: 0 !important;
+  }
+  .popup-inner {
+    max-width: 100vw !important;
+    min-height: 100vh;
+    border-radius: 0;
+  }
+
+  /* Slightly smaller text */
+  .strategy-name {
+    font-size: 15px !important;
+  }
+  .stat-value {
+    font-size: 14px !important;
+  }
+
+  /* BTC banner wraps on mobile */
+  .btc-banner {
+    flex-wrap: wrap;
+    gap: 10px 0;
+  }
+  .btc-banner-divider {
+    display: none;
+  }
+}

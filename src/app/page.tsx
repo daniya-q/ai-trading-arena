@@ -269,18 +269,21 @@ function LockedCard({ strategy }: { strategy: Strategy }) {
 function StrategyCard({
   strategy,
   capital,
+  liveCapital,
   onClick,
 }: {
   strategy: Strategy;
   capital: Capital | undefined;
+  liveCapital: number;
   onClick: () => void;
 }) {
-  const accent  = ACCENT[strategy.id] ?? "#6b7280";
-  const pnl     = capital?.total_pnl ?? 0;
-  const retPct  = (pnl / 100000) * 100;
-  const sharpe  = capital?.sharpe_ratio ?? 0;
-  const today   = capital?.today_trades ?? 0;
-  const life    = capital?.lifetime_trades ?? 0;
+  const accent    = ACCENT[strategy.id] ?? "#6b7280";
+  const allocated = capital?.allocated_capital ?? 100000;
+  const livePnl   = liveCapital - allocated;
+  const retPct    = (livePnl / allocated) * 100;
+  const sharpe    = capital?.sharpe_ratio ?? 0;
+  const today     = capital?.today_trades ?? 0;
+  const life      = capital?.lifetime_trades ?? 0;
 
   return (
     <div
@@ -302,7 +305,7 @@ function StrategyCard({
       <div style={{ padding: "16px 16px 14px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: "#ffffff" }}>{strategy.name}</div>
+            <div className="strategy-name" style={{ fontSize: 18, fontWeight: 700, color: "#ffffff" }}>{strategy.name}</div>
             <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4, lineHeight: 1.5 }}>{strategy.description}</div>
           </div>
           <div style={{ fontSize: 10, color: "#9ca3af", letterSpacing: "0.06em", marginTop: 3, whiteSpace: "nowrap" }}>
@@ -312,14 +315,14 @@ function StrategyCard({
       </div>
 
       {/* Stats grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderTop: `1px solid ${accent}30` }}>
+      <div className="grid-stats" style={{ borderTop: `1px solid ${accent}30` }}>
         {[
-          { label: "CAPITAL",   value: "₹1,00,000",      color: "#ffffff",        weight: 600 },
-          { label: "TOTAL PnL", value: pnlStr(pnl),       color: pnlColor(pnl),    weight: 700 },
-          { label: "RETURN",    value: fmtPct(retPct),    color: pnlColor(retPct), weight: 600 },
-          { label: "SHARPE",    value: sharpe.toFixed(2), color: "#ffffff",        weight: 600 },
-          { label: "TODAY",     value: String(today),      color: "#ffffff",        weight: 600 },
-          { label: "LIFETIME",  value: String(life),       color: "#ffffff",        weight: 600 },
+          { label: "CAPITAL",   value: `₹${fmtINR(liveCapital)}`, color: "#ffffff",        weight: 600 },
+          { label: "TOTAL PnL", value: pnlStr(livePnl),            color: pnlColor(livePnl), weight: 700 },
+          { label: "RETURN",    value: fmtPct(retPct),             color: pnlColor(retPct),  weight: 600 },
+          { label: "SHARPE",    value: sharpe.toFixed(2),          color: "#ffffff",         weight: 600 },
+          { label: "TODAY",     value: String(today),               color: "#ffffff",         weight: 600 },
+          { label: "LIFETIME",  value: String(life),                color: "#ffffff",         weight: 600 },
         ].map((s, i) => (
           <div key={s.label} style={{
             padding: "12px 14px",
@@ -327,7 +330,7 @@ function StrategyCard({
             borderTop:   i >= 3    ? `1px solid ${accent}25` : undefined,
           }}>
             <div style={{ fontSize: 11, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 5, textTransform: "uppercase" as const }}>{s.label}</div>
-            <div style={{ fontSize: 16, fontWeight: s.weight, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
+            <div className="stat-value" style={{ fontSize: 16, fontWeight: s.weight, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
           </div>
         ))}
       </div>
@@ -340,25 +343,27 @@ function StrategyCard({
 function TradePopup({
   strategy,
   capital,
+  liveCapital,
   positions,
   onClose,
 }: {
   strategy: Strategy;
   capital: Capital | undefined;
+  liveCapital: number;
   positions: Position[];
   onClose: () => void;
 }) {
-  const accent = ACCENT[strategy.id] ?? "#6b7280";
-  const rules  = RULES[strategy.id] ?? [];
+  const accent    = ACCENT[strategy.id] ?? "#6b7280";
+  const rules     = RULES[strategy.id] ?? [];
+  const allocated = capital?.allocated_capital ?? 100000;
+  const livePnl   = liveCapital - allocated;
+  const retPct    = (livePnl / allocated) * 100;
+  const sharpe    = capital?.sharpe_ratio ?? 0;
+  const today     = capital?.today_trades ?? 0;
+  const life      = capital?.lifetime_trades ?? 0;
 
   const [rulesOpen,     setRulesOpen]     = useState(false);
   const [expandedTrade, setExpandedTrade] = useState<string | null>(null);
-
-  const pnl    = capital?.total_pnl ?? 0;
-  const retPct = (pnl / 100000) * 100;
-  const sharpe = capital?.sharpe_ratio ?? 0;
-  const today  = capital?.today_trades ?? 0;
-  const life   = capital?.lifetime_trades ?? 0;
 
   const openTrades   = positions.filter(p => p.status === "OPEN");
   const closedTrades = positions
@@ -386,6 +391,7 @@ function TradePopup({
 
   return (
     <div
+      className="popup-outer"
       style={{
         position: "fixed",
         inset: 0,
@@ -400,6 +406,7 @@ function TradePopup({
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
+        className="popup-inner"
         style={{
           background: "#0B0E17",
           border: `1px solid ${accent}25`,
@@ -477,18 +484,14 @@ function TradePopup({
         </div>
 
         {/* ── Section B: Stats bar ── */}
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(6, 1fr)",
-          borderBottom: "1px solid #111827",
-        }}>
+        <div className="grid-popup-stats" style={{ borderBottom: "1px solid #111827" }}>
           {[
-            { label: "CAPITAL",   value: "₹1,00,000",       color: "#e5e7eb" },
-            { label: "TOTAL PnL", value: pnlStr(pnl),        color: pnlColor(pnl) },
-            { label: "RETURN",    value: fmtPct(retPct),     color: pnlColor(retPct) },
-            { label: "SHARPE",    value: sharpe.toFixed(2),  color: "#e5e7eb" },
-            { label: "TODAY",     value: String(today),       color: "#e5e7eb" },
-            { label: "LIFETIME",  value: String(life),        color: "#e5e7eb" },
+            { label: "CAPITAL",   value: `₹${fmtINR(liveCapital)}`, color: "#e5e7eb" },
+            { label: "TOTAL PnL", value: pnlStr(livePnl),            color: pnlColor(livePnl) },
+            { label: "RETURN",    value: fmtPct(retPct),             color: pnlColor(retPct) },
+            { label: "SHARPE",    value: sharpe.toFixed(2),          color: "#e5e7eb" },
+            { label: "TODAY",     value: String(today),               color: "#e5e7eb" },
+            { label: "LIFETIME",  value: String(life),                color: "#e5e7eb" },
           ].map((s, i) => (
             <div key={s.label} style={{
               padding: "14px 16px",
@@ -681,6 +684,7 @@ export default function DashboardPage() {
   const [strategies,     setStrategies]     = useState<Strategy[]>([]);
   const [capitals,       setCapitals]       = useState<Capital[]>([]);
   const [positions,      setPositions]      = useState<Position[]>([]);
+  const [openPositions,  setOpenPositions]  = useState<Position[]>([]);
   const [lastUpdate,     setLastUpdate]     = useState<Date | null>(null);
   const [error,          setError]          = useState<string | null>(null);
   const [popup,          setPopup]          = useState<Strategy | null>(null);
@@ -710,6 +714,20 @@ export default function DashboardPage() {
     return () => clearInterval(iv);
   }, [refresh]);
 
+  // 5s open positions poll — keeps card capital live
+  useEffect(() => {
+    const fetchOpen = async () => {
+      const { data } = await supabase
+        .from("strategy_positions")
+        .select("*")
+        .eq("status", "OPEN");
+      if (data) setOpenPositions(data as Position[]);
+    };
+    fetchOpen();
+    const iv = setInterval(fetchOpen, 5_000);
+    return () => clearInterval(iv);
+  }, []);
+
   // Popup 5s position refresh
   useEffect(() => {
     if (!popup) return;
@@ -727,6 +745,17 @@ export default function DashboardPage() {
     return () => clearInterval(iv);
   }, [popup]);
 
+  // current_capital = allocated + closed_pnl + sum(open_positions.pnl)
+  const computeLiveCapital = useCallback((strategyId: string): number => {
+    const cap = capitals.find(c => c.strategy_id === strategyId);
+    const allocated = cap?.allocated_capital ?? 100000;
+    const closedPnl = cap?.total_pnl ?? 0;
+    const openPnl   = openPositions
+      .filter(p => p.strategy_id === strategyId)
+      .reduce((sum, p) => sum + (p.pnl ?? 0), 0);
+    return allocated + closedPnl + openPnl;
+  }, [capitals, openPositions]);
+
   const active = strategies.filter(s => s.status !== "placeholder").sort((a, b) => a.slot_number - b.slot_number);
   const locked = strategies.filter(s => s.status === "placeholder").sort((a, b) => a.slot_number - b.slot_number);
 
@@ -736,11 +765,11 @@ export default function DashboardPage() {
   };
 
   return (
-    <div style={{ background: "#0A0D14", minHeight: "100vh", padding: "18px 16px 32px" }}>
+    <div className="page-content" style={{ background: "#0A0D14", minHeight: "100vh", padding: "18px 16px 32px" }}>
       {/* Page header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16 }}>
         <div>
-          <div style={{ fontSize: 9, color: "#1f2937", letterSpacing: "0.15em", marginBottom: 4 }}>
+          <div className="breadcrumb">
             AI TRADING ARENA · SEASON 1 · PAPER TRADING
           </div>
           <h1 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: "#e5e7eb" }}>
@@ -771,18 +800,15 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Active strategy cards — 3 per row */}
+      {/* Active strategy cards */}
       {active.length > 0 && (
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
-          gap: 16,
-        }}>
+        <div className="grid-eq">
           {active.map(s => (
             <StrategyCard
               key={s.id}
               strategy={s}
               capital={capitals.find(c => c.strategy_id === s.id)}
+              liveCapital={computeLiveCapital(s.id)}
               onClick={() => openPopup(s)}
             />
           ))}
@@ -816,6 +842,7 @@ export default function DashboardPage() {
         <TradePopup
           strategy={popup}
           capital={capitals.find(c => c.strategy_id === popup.id)}
+          liveCapital={computeLiveCapital(popup.id)}
           positions={popupPositions}
           onClose={() => setPopup(null)}
         />

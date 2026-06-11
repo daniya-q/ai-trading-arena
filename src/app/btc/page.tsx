@@ -154,17 +154,19 @@ function BtcStrategyCard({
   strategy,
   capital,
   openPositions,
+  liveCapital,
   onClick,
 }: {
   strategy: BtcStrategy;
   capital: BtcCapital | undefined;
   openPositions: BtcPosition[];
+  liveCapital: number;
   onClick: () => void;
 }) {
   const accent  = ACCENT[strategy.id] ?? "#6b7280";
-  const pnl     = capital?.total_pnl_inr ?? 0;
   const alloc   = capital?.allocated_inr ?? 10000;
-  const retPct  = (pnl / alloc) * 100;
+  const livePnl = liveCapital - alloc;
+  const retPct  = (livePnl / alloc) * 100;
   const trades  = capital?.total_trades ?? 0;
 
   return (
@@ -187,7 +189,7 @@ function BtcStrategyCard({
       <div style={{ padding: "16px 16px 14px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: "#ffffff" }}>{strategy.name}</div>
+            <div className="strategy-name" style={{ fontSize: 18, fontWeight: 700, color: "#ffffff" }}>{strategy.name}</div>
             <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4, lineHeight: 1.5 }}>{strategy.description}</div>
           </div>
           <div style={{ fontSize: 10, color: "#9ca3af", letterSpacing: "0.06em", marginTop: 3, whiteSpace: "nowrap" }}>
@@ -210,14 +212,14 @@ function BtcStrategyCard({
       </div>
 
       {/* Stats grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderTop: `1px solid ${accent}30` }}>
+      <div className="grid-stats" style={{ borderTop: `1px solid ${accent}30` }}>
         {[
-          { label: "CAPITAL",  value: `₹${fmtINR(alloc)}`,    color: "#ffffff",        weight: 600 },
-          { label: "TOTAL PnL", value: pnlStr(pnl),            color: pnlColor(pnl),    weight: 700 },
-          { label: "RETURN",   value: fmtPct(retPct),          color: pnlColor(retPct), weight: 600 },
-          { label: "WIN RATE", value: winRate(capital),        color: "#ffffff",        weight: 600 },
-          { label: "TRADES",   value: String(trades),           color: "#ffffff",        weight: 600 },
-          { label: "OPEN",     value: String(openPositions.length), color: openPositions.length > 0 ? "#f5d547" : "#4b5563", weight: 600 },
+          { label: "CAPITAL",  value: `₹${fmtINR(liveCapital)}`,       color: "#ffffff",        weight: 600 },
+          { label: "TOTAL PnL", value: pnlStr(livePnl),                 color: pnlColor(livePnl), weight: 700 },
+          { label: "RETURN",   value: fmtPct(retPct),                   color: pnlColor(retPct),  weight: 600 },
+          { label: "WIN RATE", value: winRate(capital),                  color: "#ffffff",         weight: 600 },
+          { label: "TRADES",   value: String(trades),                    color: "#ffffff",         weight: 600 },
+          { label: "OPEN",     value: String(openPositions.length),      color: openPositions.length > 0 ? "#f5d547" : "#4b5563", weight: 600 },
         ].map((s, i) => (
           <div key={s.label} style={{
             padding: "12px 14px",
@@ -225,7 +227,7 @@ function BtcStrategyCard({
             borderTop:   i >= 3    ? `1px solid ${accent}25` : undefined,
           }}>
             <div style={{ fontSize: 11, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 5, textTransform: "uppercase" as const }}>{s.label}</div>
-            <div style={{ fontSize: 16, fontWeight: s.weight, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
+            <div className="stat-value" style={{ fontSize: 16, fontWeight: s.weight, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
           </div>
         ))}
       </div>
@@ -238,24 +240,25 @@ function BtcStrategyCard({
 function BtcTradePopup({
   strategy,
   capital,
+  liveCapital,
   positions,
   onClose,
 }: {
   strategy: BtcStrategy;
   capital: BtcCapital | undefined;
+  liveCapital: number;
   positions: BtcPosition[];
   onClose: () => void;
 }) {
-  const accent = ACCENT[strategy.id] ?? "#6b7280";
-  const rules  = RULES[strategy.id] ?? [];
+  const accent  = ACCENT[strategy.id] ?? "#6b7280";
+  const rules   = RULES[strategy.id] ?? [];
+  const alloc   = capital?.allocated_inr ?? 10000;
+  const livePnl = liveCapital - alloc;
+  const retPct  = (livePnl / alloc) * 100;
+  const trades  = capital?.total_trades ?? 0;
 
   const [rulesOpen,     setRulesOpen]     = useState(false);
   const [expandedTrade, setExpandedTrade] = useState<string | null>(null);
-
-  const pnl    = capital?.total_pnl_inr ?? 0;
-  const alloc  = capital?.allocated_inr ?? 10000;
-  const retPct = (pnl / alloc) * 100;
-  const trades = capital?.total_trades ?? 0;
 
   const openTrades   = positions.filter(p => p.status === "OPEN");
   const closedTrades = positions
@@ -282,6 +285,7 @@ function BtcTradePopup({
 
   return (
     <div
+      className="popup-outer"
       style={{
         position: "fixed",
         inset: 0,
@@ -296,6 +300,7 @@ function BtcTradePopup({
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
+        className="popup-inner"
         style={{
           background: "#0B0E17",
           border: `1px solid ${accent}25`,
@@ -373,18 +378,14 @@ function BtcTradePopup({
         </div>
 
         {/* Section B: Stats bar */}
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(6, 1fr)",
-          borderBottom: "1px solid #111827",
-        }}>
+        <div className="grid-popup-stats" style={{ borderBottom: "1px solid #111827" }}>
           {[
-            { label: "CAPITAL",   value: `₹${fmtINR(alloc)}`,     color: "#e5e7eb" },
-            { label: "TOTAL PnL", value: pnlStr(pnl),              color: pnlColor(pnl) },
-            { label: "RETURN",    value: fmtPct(retPct),           color: pnlColor(retPct) },
-            { label: "WIN RATE",  value: winRate(capital),         color: "#e5e7eb" },
-            { label: "TRADES",    value: String(trades),            color: "#e5e7eb" },
-            { label: "OPEN NOW",  value: String(openTrades.length), color: openTrades.length > 0 ? "#f5d547" : "#4b5563" },
+            { label: "CAPITAL",   value: `₹${fmtINR(liveCapital)}`,   color: "#e5e7eb" },
+            { label: "TOTAL PnL", value: pnlStr(livePnl),              color: pnlColor(livePnl) },
+            { label: "RETURN",    value: fmtPct(retPct),               color: pnlColor(retPct) },
+            { label: "WIN RATE",  value: winRate(capital),             color: "#e5e7eb" },
+            { label: "TRADES",    value: String(trades),                color: "#e5e7eb" },
+            { label: "OPEN NOW",  value: String(openTrades.length),     color: openTrades.length > 0 ? "#f5d547" : "#4b5563" },
           ].map((s, i) => (
             <div key={s.label} style={{
               padding: "14px 16px",
@@ -615,7 +616,7 @@ export default function BtcArenaPage() {
     return () => clearInterval(iv);
   }, [refresh]);
 
-  // BTC price poll every 5s directly from config table (public RLS policy on BTC_PRICE_USD)
+  // BTC price poll every 5s — used for live capital computation
   useEffect(() => {
     const fetchPrice = async () => {
       const { data } = await supabase.from("config").select("value").eq("key", "BTC_PRICE_USD").single();
@@ -643,23 +644,43 @@ export default function BtcArenaPage() {
     return () => clearInterval(iv);
   }, [popup]);
 
+  // current_capital = allocated + closed_pnl + live_open_pnl (from btcPrice)
+  const computeLiveCapital = useCallback((strategyId: string): number => {
+    const cap = capitals.find(c => c.strategy_id === strategyId);
+    const alloc = cap?.allocated_inr ?? 10000;
+    const closedPnl = cap?.total_pnl_inr ?? 0;
+
+    if (!btcPrice) return alloc + closedPnl;
+
+    const liveOpenPnl = positions
+      .filter(p => p.strategy_id === strategyId && p.status === "OPEN")
+      .reduce((sum, p) => {
+        const pct = p.side === "LONG"
+          ? (btcPrice - p.entry_price_usd) / p.entry_price_usd
+          : (p.entry_price_usd - btcPrice) / p.entry_price_usd;
+        return sum + pct * p.qty_inr;
+      }, 0);
+
+    return alloc + closedPnl + liveOpenPnl;
+  }, [capitals, positions, btcPrice]);
+
   const openPopup = (s: BtcStrategy) => {
     setPopupPositions(positions.filter(p => p.strategy_id === s.id));
     setPopup(s);
   };
 
-  // Aggregate stats
-  const totalPnl   = capitals.reduce((s, c) => s + c.total_pnl_inr, 0);
-  const totalAlloc = capitals.reduce((s, c) => s + c.allocated_inr, 0) || 40000;
-  const retPct     = (totalPnl / totalAlloc) * 100;
+  // Aggregate banner stats
+  const totalPnl    = capitals.reduce((s, c) => s + c.total_pnl_inr, 0);
+  const totalAlloc  = capitals.reduce((s, c) => s + c.allocated_inr, 0) || 40000;
+  const retPct      = (totalPnl / totalAlloc) * 100;
   const totalTrades = capitals.reduce((s, c) => s + c.total_trades, 0);
 
   return (
-    <div style={{ background: "#0A0D14", minHeight: "100vh", padding: "18px 16px 32px" }}>
+    <div className="page-content" style={{ background: "#0A0D14", minHeight: "100vh", padding: "18px 16px 32px" }}>
       {/* Page header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16 }}>
         <div>
-          <div style={{ fontSize: 9, color: "#1f2937", letterSpacing: "0.15em", marginBottom: 4 }}>
+          <div className="breadcrumb">
             AI TRADING ARENA · SEASON 1 · PAPER TRADING
           </div>
           <h1 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: "#e5e7eb" }}>
@@ -674,23 +695,26 @@ export default function BtcArenaPage() {
       </div>
 
       {/* BTC price banner */}
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 24,
-        marginBottom: 16,
-        padding: "12px 16px",
-        background: "#0B0E17",
-        border: "1px solid rgba(247,147,26,0.2)",
-        borderRadius: 8,
-      }}>
+      <div
+        className="btc-banner"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 24,
+          marginBottom: 16,
+          padding: "12px 16px",
+          background: "#0B0E17",
+          border: "1px solid rgba(247,147,26,0.2)",
+          borderRadius: 8,
+        }}
+      >
         <div>
           <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.12em", marginBottom: 4 }}>BTC / USD · LIVE</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: btcPrice > 0 ? "#F7931A" : "#4b5563", fontFamily: "monospace" }}>
             {btcPrice > 0 ? `$${fmtUSD(btcPrice)}` : "CONNECTING..."}
           </div>
         </div>
-        <div style={{ height: 32, width: 1, background: "#1f2937" }} />
+        <div className="btc-banner-divider" style={{ height: 32, width: 1, background: "#1f2937" }} />
         <div>
           <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.12em", marginBottom: 4 }}>TOTAL PnL (ALL STRATEGIES)</div>
           <div style={{ fontSize: 16, fontWeight: 700, color: pnlColor(totalPnl), fontFamily: "monospace" }}>
@@ -698,7 +722,7 @@ export default function BtcArenaPage() {
             <span style={{ fontSize: 12, color: pnlColor(retPct) }}>({fmtPct(retPct)})</span>
           </div>
         </div>
-        <div style={{ height: 32, width: 1, background: "#1f2937" }} />
+        <div className="btc-banner-divider" style={{ height: 32, width: 1, background: "#1f2937" }} />
         <div>
           <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.12em", marginBottom: 4 }}>TOTAL TRADES</div>
           <div style={{ fontSize: 16, fontWeight: 700, color: "#9ca3af", fontFamily: "monospace" }}>
@@ -729,19 +753,16 @@ export default function BtcArenaPage() {
         </div>
       )}
 
-      {/* Strategy cards — 2×2 grid */}
+      {/* Strategy cards — responsive grid */}
       {strategies.length > 0 && (
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(2, 1fr)",
-          gap: 16,
-        }}>
+        <div className="grid-btc">
           {strategies.map(s => (
             <BtcStrategyCard
               key={s.id}
               strategy={s}
               capital={capitals.find(c => c.strategy_id === s.id)}
               openPositions={positions.filter(p => p.strategy_id === s.id && p.status === "OPEN")}
+              liveCapital={computeLiveCapital(s.id)}
               onClick={() => openPopup(s)}
             />
           ))}
@@ -763,6 +784,7 @@ export default function BtcArenaPage() {
         <BtcTradePopup
           strategy={popup}
           capital={capitals.find(c => c.strategy_id === popup.id)}
+          liveCapital={computeLiveCapital(popup.id)}
           positions={popupPositions}
           onClose={() => setPopup(null)}
         />
