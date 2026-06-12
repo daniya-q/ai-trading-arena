@@ -368,13 +368,13 @@ function TopBar() {
           const color  = change > 0 ? "#22c55e" : change < 0 ? "#f87171" : "#6b7280";
           return (
             <div key={idx} style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 2, fontWeight: 600 }}>
+              <div style={{ fontSize: 12, color: "#94a3b8", letterSpacing: "0.1em", marginBottom: 2, fontWeight: 600 }}>
                 {INDEX_LABELS[idx]}
               </div>
-              <div style={{ fontSize: 17, fontWeight: 700, color: "#ffffff", fontFamily: "monospace", lineHeight: 1 }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: "#ffffff", fontFamily: "monospace", lineHeight: 1 }}>
                 {ltp > 0 ? ltp.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—"}
               </div>
-              <div style={{ fontSize: 10, color, fontFamily: "monospace", marginTop: 2 }}>
+              <div style={{ fontSize: 12, color, fontFamily: "monospace", marginTop: 2 }}>
                 {ltp > 0
                   ? `${change >= 0 ? "+" : ""}${change.toFixed(2)} (${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)`
                   : "—"}
@@ -448,7 +448,7 @@ function CapitalSummaryBar({ capitals, openPositions }: { capitals: Capital[]; o
 
 // ── CandleChart ─────────────────────────────────────────────────
 
-function CandleChart({ index, label }: { index: string; label: string }) {
+function CandleChart({ index, label, flexFill = false }: { index: string; label: string; flexFill?: boolean }) {
   const containerRef    = useRef<HTMLDivElement>(null);
   const chartRef        = useRef<IChartApi | null>(null);
   const seriesRef       = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -566,6 +566,7 @@ function CandleChart({ index, label }: { index: string; label: string }) {
       border: "1px solid #1a1f2e",
       borderRadius: 12,
       overflow: "hidden",
+      ...(flexFill ? { display: "flex", flexDirection: "column" as const, height: "100%" } : {}),
     }}>
       {/* Header */}
       <div style={{
@@ -574,6 +575,7 @@ function CandleChart({ index, label }: { index: string; label: string }) {
         justifyContent: "space-between",
         alignItems: "center",
         borderBottom: "1px solid #1a1f2e",
+        flexShrink: 0,
       }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.1em" }}>
           {label}
@@ -601,7 +603,7 @@ function CandleChart({ index, label }: { index: string; label: string }) {
           ))}
         </div>
       </div>
-      <div ref={containerRef} style={{ width: "100%", height: 350 }} />
+      <div ref={containerRef} style={flexFill ? { width: "100%", flex: 1, height: 0 } : { width: "100%", height: 350 }} />
     </div>
   );
 }
@@ -1105,90 +1107,173 @@ export default function DashboardPage() {
   const active = strategies.filter(s => s.status !== "placeholder").sort((a, b) => a.slot_number - b.slot_number);
   const locked = strategies.filter(s => s.status === "placeholder").sort((a, b) => a.slot_number - b.slot_number);
 
+  const containerRef = useRef<HTMLDivElement>(null);
+  const scrollToSection = (idx: number) =>
+    containerRef.current?.scrollTo({ top: idx * window.innerHeight, behavior: "smooth" });
+
   return (
-    <div className="page-content" style={{ background: "#0A0D14", minHeight: "100vh", padding: "18px 16px 32px" }}>
-
-      {/* Page header */}
-      <div style={{ marginBottom: 16, textAlign: "center" }}>
-        <div className="breadcrumb" style={{ textAlign: "center" }}>
-          AI TRADING ARENA · SEASON 1 · PAPER TRADING
-        </div>
-        <h1 style={{ fontSize: 30, fontWeight: 700, margin: "6px 0 0", color: "#e5e7eb" }}>
-          Indian Strategies Dashboard
-        </h1>
-        <div style={{ fontSize: 9, color: "#374151", marginTop: 6 }}>
-          {lastUpdate
-            ? `UPDATED ${lastUpdate.toLocaleTimeString()} · AUTO-REFRESH 15s`
-            : "CONNECTING..."}
-        </div>
-      </div>
-
-      {/* ── 1. Top Bar: Market Status + Indices + IST Time ── */}
-      <TopBar />
-
-      {/* ── 2. Capital Summary Bar ── */}
-      <CapitalSummaryBar capitals={capitals} openPositions={openPositions} />
-
-      {/* ── 3. Live Candlestick Charts ── */}
-      <div className="grid-charts" style={{ marginBottom: 16 }}>
-        <CandleChart index="NIFTY"  label="NIFTY" />
-        <CandleChart index="SENSEX" label="SENSEX" />
-      </div>
-
-      {/* Error banner */}
-      {error && (
-        <div style={{
-          marginBottom: 12,
-          padding: "9px 12px",
-          background: "rgba(239,68,68,0.05)",
-          border: "1px solid rgba(239,68,68,0.15)",
-          color: "#ef4444",
-          fontSize: 11,
-        }}>
-          Supabase error: {error} —{" "}
-          <span style={{ color: "#4b5563" }}>
-            Run migration 003_strategy_tables.sql in your Supabase dashboard first.
-          </span>
-        </div>
-      )}
-
-      {/* ── 4. Active strategy cards ── */}
-      {active.length > 0 && (
-        <div className="grid-eq">
-          {active.map(s => (
-            <StrategyCard
-              key={s.id}
-              strategy={s}
-              capital={capitals.find(c => c.strategy_id === s.id)}
-              liveCapital={computeLiveCapital(s.id)}
-              onClick={() => router.push('/strategy/' + s.id)}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* ── 5. Locked placeholder cards ── */}
-      {locked.length > 0 && (
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: `repeat(${Math.min(locked.length, 4)}, 1fr)`,
-          gap: 16,
-          marginTop: 16,
-        }}>
-          {locked.map(s => <LockedCard key={s.id} strategy={s} />)}
-        </div>
-      )}
-
-      {/* Empty state */}
-      {strategies.length === 0 && !error && (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 300, gap: 8 }}>
-          <div style={{ fontSize: 12, color: "#374151" }}>Waiting for data...</div>
-          <div style={{ fontSize: 10, color: "#1f2937" }}>
-            Run supabase/migrations/003_strategy_tables.sql if tables are missing.
+    <div
+      ref={containerRef}
+      className="page-content"
+      style={{
+        background: "#0A0D14",
+        height: "100vh",
+        overflowY: "scroll",
+        scrollSnapType: "y mandatory",
+      }}
+    >
+      {/* ── SECTION 1: Market overview + Charts ── */}
+      <div style={{
+        height: "100vh",
+        scrollSnapAlign: "start",
+        display: "flex",
+        flexDirection: "column",
+        padding: "18px 16px 0",
+        overflow: "hidden",
+      }}>
+        {/* Page header */}
+        <div style={{ flexShrink: 0, marginBottom: 12, textAlign: "center" }}>
+          <div className="breadcrumb" style={{ textAlign: "center" }}>
+            AI TRADING ARENA · SEASON 1 · PAPER TRADING
+          </div>
+          <h1 style={{ fontSize: 30, fontWeight: 700, margin: "6px 0 0", color: "#e5e7eb" }}>
+            Indian Strategies Dashboard
+          </h1>
+          <div style={{ fontSize: 9, color: "#374151", marginTop: 6 }}>
+            {lastUpdate
+              ? `UPDATED ${lastUpdate.toLocaleTimeString()} · AUTO-REFRESH 15s`
+              : "CONNECTING..."}
           </div>
         </div>
-      )}
 
+        {/* TopBar */}
+        <div style={{ flexShrink: 0 }}>
+          <TopBar />
+        </div>
+
+        {/* CapitalSummaryBar */}
+        <div style={{ flexShrink: 0 }}>
+          <CapitalSummaryBar capitals={capitals} openPositions={openPositions} />
+        </div>
+
+        {/* 3 stacked charts — fill remaining height */}
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+            <CandleChart index="NIFTY" label="NIFTY" flexFill />
+          </div>
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+            <CandleChart index="SENSEX" label="SENSEX" flexFill />
+          </div>
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+            <CandleChart index="BANKNIFTY" label="BANK NIFTY" flexFill />
+          </div>
+        </div>
+
+        {/* NEXT pill */}
+        <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0 16px" }}>
+          <button
+            onClick={() => scrollToSection(1)}
+            onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
+            onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
+            style={{
+              background: "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.15)",
+              borderRadius: 999,
+              padding: "10px 28px",
+              color: "#ffffff",
+              fontSize: 12,
+              fontWeight: 600,
+              letterSpacing: "0.08em",
+              cursor: "pointer",
+            }}
+          >
+            NEXT ↓
+          </button>
+        </div>
+      </div>
+
+      {/* ── SECTION 2: Strategy Cards ── */}
+      <div style={{
+        minHeight: "100vh",
+        scrollSnapAlign: "start",
+        padding: "14px 16px 32px",
+      }}>
+        {/* PREV pill */}
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
+          <button
+            onClick={() => scrollToSection(0)}
+            onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
+            onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
+            style={{
+              background: "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.15)",
+              borderRadius: 999,
+              padding: "10px 28px",
+              color: "#ffffff",
+              fontSize: 12,
+              fontWeight: 600,
+              letterSpacing: "0.08em",
+              cursor: "pointer",
+            }}
+          >
+            ↑ PREV
+          </button>
+        </div>
+
+        {/* Error banner */}
+        {error && (
+          <div style={{
+            marginBottom: 12,
+            padding: "9px 12px",
+            background: "rgba(239,68,68,0.05)",
+            border: "1px solid rgba(239,68,68,0.15)",
+            color: "#ef4444",
+            fontSize: 11,
+          }}>
+            Supabase error: {error} —{" "}
+            <span style={{ color: "#4b5563" }}>
+              Run migration 003_strategy_tables.sql in your Supabase dashboard first.
+            </span>
+          </div>
+        )}
+
+        {/* Active strategy cards */}
+        {active.length > 0 && (
+          <div className="grid-eq">
+            {active.map(s => (
+              <StrategyCard
+                key={s.id}
+                strategy={s}
+                capital={capitals.find(c => c.strategy_id === s.id)}
+                liveCapital={computeLiveCapital(s.id)}
+                onClick={() => router.push('/strategy/' + s.id)}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Locked placeholder cards */}
+        {locked.length > 0 && (
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${Math.min(locked.length, 4)}, 1fr)`,
+            gap: 16,
+            marginTop: 16,
+          }}>
+            {locked.map(s => <LockedCard key={s.id} strategy={s} />)}
+          </div>
+        )}
+
+        {/* Empty state */}
+        {strategies.length === 0 && !error && (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 300, gap: 8 }}>
+            <div style={{ fontSize: 12, color: "#374151" }}>Waiting for data...</div>
+            <div style={{ fontSize: 10, color: "#1f2937" }}>
+              Run supabase/migrations/003_strategy_tables.sql if tables are missing.
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
