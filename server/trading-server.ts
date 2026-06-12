@@ -414,7 +414,9 @@ const OPTION_KEYS: Record<string, string> = {
 };
 
 function upstoxToken(): string {
-  return process.env.UPSTOX_ANALYTICS_TOKEN || process.env.UPSTOX_ACCESS_TOKEN || "";
+  // Prefer daily OAuth token (set via webhook) — use analytics token only as fallback
+  // Analytics token was taking priority but is returning 401; OAuth token is always fresh
+  return process.env.UPSTOX_ACCESS_TOKEN || process.env.UPSTOX_ANALYTICS_TOKEN || "";
 }
 
 async function fetchIndexLTP(): Promise<Partial<Record<"NIFTY" | "BANKNIFTY" | "SENSEX" | "VIX", number>>> {
