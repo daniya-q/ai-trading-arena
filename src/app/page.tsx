@@ -1,7 +1,11 @@
 "use client";
 
-import { Fragment, useEffect, useState, useCallback } from "react";
+import { Fragment, useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { createChart, CandlestickSeries, ColorType } from "lightweight-charts";
+import type { IChartApi, ISeriesApi, UTCTimestamp } from "lightweight-charts";
 import { supabase } from "@/lib/supabase/client";
+
+const BACKEND = "https://ai-trading-arena-backend-production.up.railway.app";
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -42,6 +46,10 @@ type Position = {
   exit_reason: string | null;
   exit_reason_detail: string | null;
 };
+
+type IndexQuote = { ltp: number; change: number; changePct: number };
+
+type OhlcCandle = { time: number; open: number; high: number; low: number; close: number };
 
 // ── Strategy Config ─────────────────────────────────────────────
 
@@ -240,6 +248,343 @@ function fmtPct(n: number): string {
   return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
 }
 
+// ── IST time hook ───────────────────────────────────────────────
+
+function useISTTime(): string {
+  const [time, setTime] = useState("--:--:--");
+  useEffect(() => {
+    const tick = () => {
+      const ist = new Date(Date.now() + (5 * 60 + 30) * 60_000);
+      const h = String(ist.getUTCHours()).padStart(2, "0");
+      const m = String(ist.getUTCMinutes()).padStart(2, "0");
+      const s = String(ist.getUTCSeconds()).padStart(2, "0");
+      setTime(`${h}:${m}:${s}`);
+    };
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, []);
+  return time;
+}
+
+// ── Market open hook (IST time + weekday + NSE holidays) ────────
+
+function useMarketOpen(): boolean {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const check = async () => {
+      const ist = new Date(Date.now() + (5 * 60 + 30) * 60_000);
+      const dow = ist.getUTCDay();
+      if (dow === 0 || dow === 6) { setOpen(false); return; }
+      const m = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+      if (m < 555 || m > 930) { setOpen(false); return; }
+      const today = `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, "0")}-${String(ist.getUTCDate()).padStart(2, "0")}`;
+      const { data } = await supabase.from("nse_holidays").select("date").eq("date", today).limit(1);
+      setOpen((data?.length ?? 0) === 0);
+    };
+    check();
+    const iv = setInterval(check, 60_000);
+    return () => clearInterval(iv);
+  }, []);
+  return open;
+}
+
+// ── TopBar ─────────────────────────────────────────────────────
+
+const INDEX_LABELS: Record<string, string> = {
+  NIFTY:      "NIFTY",
+  BANKNIFTY:  "BANK NIFTY",
+  SENSEX:     "SENSEX",
+  GIFT_NIFTY: "GIFT NIFTY",
+};
+
+function TopBar() {
+  const istTime = useISTTime();
+  const isOpen  = useMarketOpen();
+  const [indices, setIndices] = useState<Record<string, IndexQuote>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      fetch(`${BACKEND}/api/indices`)
+        .then(r => r.json())
+        .then(d => { if (!cancelled) setIndices(d as Record<string, IndexQuote>); })
+        .catch(() => {});
+    };
+    poll();
+    const iv = setInterval(poll, 1000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, []);
+
+  return (
+    <div style={{
+      background: "#0B0E17",
+      border: "1px solid #1a1f2e",
+      borderRadius: 12,
+      padding: "10px 20px",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      flexWrap: "wrap",
+      gap: 10,
+      marginBottom: 10,
+    }}>
+      {/* Market status */}
+      <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 140 }}>
+        <span
+          className={isOpen ? "pulse" : ""}
+          style={{
+            display: "inline-block",
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            background: isOpen ? "#22c55e" : "#ef4444",
+            boxShadow: isOpen ? "0 0 8px #22c55e88" : "none",
+            flexShrink: 0,
+          }}
+        />
+        <span style={{
+          fontSize: 11,
+          fontWeight: 700,
+          color: isOpen ? "#22c55e" : "#ef4444",
+          letterSpacing: "0.1em",
+          whiteSpace: "nowrap",
+        }}>
+          {isOpen ? "MARKET OPEN" : "MARKET CLOSED"}
+        </span>
+      </div>
+
+      {/* Index prices */}
+      <div className="top-bar-indices" style={{ display: "flex", gap: 28, flexWrap: "wrap", justifyContent: "center", flex: 1 }}>
+        {(["NIFTY", "BANKNIFTY", "SENSEX", "GIFT_NIFTY"] as const).map(idx => {
+          const q      = indices[idx];
+          const ltp    = q?.ltp ?? 0;
+          const change = q?.change ?? 0;
+          const pct    = q?.changePct ?? 0;
+          const color  = change > 0 ? "#22c55e" : change < 0 ? "#f87171" : "#6b7280";
+          return (
+            <div key={idx} style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 2, fontWeight: 600 }}>
+                {INDEX_LABELS[idx]}
+              </div>
+              <div style={{ fontSize: 17, fontWeight: 700, color: "#ffffff", fontFamily: "monospace", lineHeight: 1 }}>
+                {ltp > 0 ? ltp.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "—"}
+              </div>
+              <div style={{ fontSize: 10, color, fontFamily: "monospace", marginTop: 2 }}>
+                {ltp > 0
+                  ? `${change >= 0 ? "+" : ""}${change.toFixed(2)} (${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)`
+                  : "—"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* IST Clock */}
+      <div style={{ textAlign: "right", minWidth: 100 }}>
+        <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 2, fontWeight: 600 }}>
+          IST TIME
+        </div>
+        <div style={{ fontSize: 17, fontWeight: 700, color: "#ffffff", fontFamily: "monospace" }}>
+          {istTime}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Capital Summary Bar ─────────────────────────────────────────
+
+function CapitalSummaryBar({ capitals, openPositions }: { capitals: Capital[]; openPositions: Position[] }) {
+  const STARTING = 700_000;
+
+  const totalCurrent = useMemo(() => {
+    return capitals.reduce((sum, cap) => {
+      const openPnl = openPositions
+        .filter(p => p.strategy_id === cap.strategy_id)
+        .reduce((s, p) => s + (p.pnl ?? 0), 0);
+      return sum + cap.allocated_capital + (cap.total_pnl ?? 0) + openPnl;
+    }, 0);
+  }, [capitals, openPositions]);
+
+  const totalPnl  = totalCurrent - STARTING;
+  const returnPct = STARTING > 0 ? (totalPnl / STARTING) * 100 : 0;
+  const pColor    = totalPnl > 0 ? "#4ade80" : totalPnl < 0 ? "#f87171" : "#9ca3af";
+  const rColor    = returnPct > 0 ? "#4ade80" : returnPct < 0 ? "#f87171" : "#9ca3af";
+
+  const stats = [
+    { label: "STARTING CAPITAL", value: "₹7,00,000",                                                              color: "#9ca3af" },
+    { label: "TOTAL CAPITAL",    value: `₹${totalCurrent.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: "#ffffff" },
+    { label: "TOTAL PnL",        value: `${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: pColor },
+    { label: "TOTAL RETURN",     value: `${returnPct >= 0 ? "+" : ""}${returnPct.toFixed(2)}%`,                   color: rColor  },
+  ];
+
+  return (
+    <div style={{
+      background: "#0B0E17",
+      border: "1px solid #1a1f2e",
+      borderRadius: 12,
+      display: "flex",
+      marginBottom: 10,
+      overflow: "hidden",
+    }}>
+      {stats.map((s, i) => (
+        <div key={s.label} style={{
+          flex: 1,
+          padding: "12px 20px",
+          borderLeft: i > 0 ? "1px solid #1a1f2e" : undefined,
+        }}>
+          <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 5, fontWeight: 600 }}>{s.label}</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── CandleChart ─────────────────────────────────────────────────
+
+function CandleChart({ index, label }: { index: string; label: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef     = useRef<IChartApi | null>(null);
+  const seriesRef    = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const [timeframe, setTimeframe] = useState<"30s" | "5m" | "15m">("30s");
+
+  // Init chart once on mount
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const chart = createChart(containerRef.current, {
+      layout: {
+        background: { type: ColorType.Solid, color: "#0A0D14" },
+        textColor: "#6b7280",
+        fontSize: 10,
+      },
+      grid: {
+        vertLines: { color: "#1a1f2e" },
+        horzLines: { color: "#1a1f2e" },
+      },
+      rightPriceScale: { borderColor: "#1a1f2e" },
+      timeScale: {
+        borderColor: "#1a1f2e",
+        timeVisible: true,
+        secondsVisible: true,
+        fixLeftEdge: true,
+        rightOffset: 2,
+      },
+      crosshair: { mode: 1 },
+      handleScroll: true,
+      handleScale: true,
+    });
+    chartRef.current = chart;
+
+    seriesRef.current = chart.addSeries(CandlestickSeries, {
+      upColor:        "#22c55e",
+      downColor:      "#ef4444",
+      borderUpColor:  "#22c55e",
+      borderDownColor:"#ef4444",
+      wickUpColor:    "#22c55e",
+      wickDownColor:  "#ef4444",
+      lastValueVisible: true,
+      priceLineVisible: true,
+    });
+
+    const ro = new ResizeObserver(() => {
+      if (containerRef.current && chartRef.current) {
+        chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
+      }
+    });
+    ro.observe(containerRef.current);
+
+    return () => {
+      ro.disconnect();
+      chart.remove();
+      chartRef.current  = null;
+      seriesRef.current = null;
+    };
+  }, []);
+
+  // Update secondsVisible when timeframe changes
+  useEffect(() => {
+    if (!chartRef.current) return;
+    chartRef.current.timeScale().applyOptions({ secondsVisible: timeframe === "30s" });
+    if (seriesRef.current) seriesRef.current.setData([]);
+  }, [timeframe]);
+
+  // Poll candle data every second
+  useEffect(() => {
+    let cancelled = false;
+    const fetchData = async () => {
+      try {
+        const res = await fetch(`${BACKEND}/api/candles?index=${index}&interval=${timeframe}`);
+        if (!res.ok) return;
+        const raw: OhlcCandle[] = await res.json();
+        if (cancelled || !seriesRef.current) return;
+        const data = raw
+          .filter(c => c.open > 0 && c.high >= c.low && c.close > 0)
+          .map(c => ({
+            time:  Math.floor(c.time / 1000) as UTCTimestamp,
+            open:  c.open,
+            high:  c.high,
+            low:   c.low,
+            close: c.close,
+          }));
+        if (data.length > 0) {
+          seriesRef.current.setData(data);
+          chartRef.current?.timeScale().scrollToRealTime();
+        }
+      } catch { /* server may be starting up */ }
+    };
+    fetchData();
+    const iv = setInterval(fetchData, 1000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [index, timeframe]);
+
+  return (
+    <div style={{
+      background: "#0B0E17",
+      border: "1px solid #1a1f2e",
+      borderRadius: 12,
+      overflow: "hidden",
+    }}>
+      {/* Header */}
+      <div style={{
+        padding: "8px 14px",
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        borderBottom: "1px solid #1a1f2e",
+      }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.1em" }}>
+          {label}
+        </span>
+        <div style={{ display: "flex", gap: 4 }}>
+          {(["30s", "5m", "15m"] as const).map(tf => (
+            <button
+              key={tf}
+              onClick={() => setTimeframe(tf)}
+              style={{
+                padding: "2px 8px",
+                borderRadius: 20,
+                border: `1px solid ${timeframe === tf ? "#ffffff" : "#1f2937"}`,
+                background: timeframe === tf ? "#ffffff" : "transparent",
+                color: timeframe === tf ? "#000000" : "#6b7280",
+                fontSize: 10,
+                fontWeight: 600,
+                cursor: "pointer",
+                letterSpacing: "0.05em",
+                transition: "all 0.15s",
+              }}
+            >
+              {tf}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div ref={containerRef} style={{ width: "100%", height: 200 }} />
+    </div>
+  );
+}
+
 // ── LockedCard ─────────────────────────────────────────────────
 
 function LockedCard({ strategy }: { strategy: Strategy }) {
@@ -370,7 +715,6 @@ function TradePopup({
     .filter(p => p.status === "CLOSED")
     .sort((a, b) => new Date(b.closed_at ?? 0).getTime() - new Date(a.closed_at ?? 0).getTime());
 
-  // Lock body scroll while popup is open
   useEffect(() => {
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = ""; };
@@ -745,7 +1089,6 @@ export default function DashboardPage() {
     return () => clearInterval(iv);
   }, [popup]);
 
-  // current_capital = allocated + closed_pnl + sum(open_positions.pnl)
   const computeLiveCapital = useCallback((strategyId: string): number => {
     const cap = capitals.find(c => c.strategy_id === strategyId);
     const allocated = cap?.allocated_capital ?? 100000;
@@ -766,8 +1109,9 @@ export default function DashboardPage() {
 
   return (
     <div className="page-content" style={{ background: "#0A0D14", minHeight: "100vh", padding: "18px 16px 32px" }}>
+
       {/* Page header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 12 }}>
         <div>
           <div className="breadcrumb">
             AI TRADING ARENA · SEASON 1 · PAPER TRADING
@@ -781,6 +1125,19 @@ export default function DashboardPage() {
             ? `UPDATED ${lastUpdate.toLocaleTimeString()} · AUTO-REFRESH 15s`
             : "CONNECTING..."}
         </div>
+      </div>
+
+      {/* ── 1. Top Bar: Market Status + Indices + IST Time ── */}
+      <TopBar />
+
+      {/* ── 2. Capital Summary Bar ── */}
+      <CapitalSummaryBar capitals={capitals} openPositions={openPositions} />
+
+      {/* ── 3. Live Candlestick Charts ── */}
+      <div className="grid-charts" style={{ marginBottom: 16 }}>
+        <CandleChart index="NIFTY"     label="NIFTY" />
+        <CandleChart index="BANKNIFTY" label="BANK NIFTY" />
+        <CandleChart index="SENSEX"    label="SENSEX" />
       </div>
 
       {/* Error banner */}
@@ -800,7 +1157,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Active strategy cards */}
+      {/* ── 4. Active strategy cards ── */}
       {active.length > 0 && (
         <div className="grid-eq">
           {active.map(s => (
@@ -815,7 +1172,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Locked placeholder cards */}
+      {/* ── 5. Locked placeholder cards ── */}
       {locked.length > 0 && (
         <div style={{
           display: "grid",

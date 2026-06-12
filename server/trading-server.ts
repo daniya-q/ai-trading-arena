@@ -92,6 +92,7 @@ interface StrategyPosition {
 let lastNiftyPrice     = 0;
 let lastBankniftyPrice = 0;
 let lastSensexPrice    = 0;
+let lastGiftNiftyPrice = 0;
 let lastVix            = 0;
 
 // BTC (unchanged)
@@ -420,13 +421,16 @@ function upstoxToken(): string {
   return process.env.UPSTOX_ACCESS_TOKEN || process.env.UPSTOX_ANALYTICS_TOKEN || "";
 }
 
-async function fetchIndexLTP(): Promise<Partial<Record<"NIFTY" | "BANKNIFTY" | "SENSEX" | "VIX", number>>> {
+type LTPKey = "NIFTY" | "BANKNIFTY" | "SENSEX" | "GIFT_NIFTY" | "VIX";
+
+async function fetchIndexLTP(): Promise<Partial<Record<LTPKey, number>>> {
   const token = upstoxToken();
   if (!token) return {};
   const rawKeys = [
     "NSE_INDEX|Nifty 50",
     "NSE_INDEX|Nifty Bank",
     "BSE_INDEX|SENSEX",
+    "NSE_INDEX|GIFT Nifty",
     "NSE_INDEX|India VIX",
   ];
   const keys = rawKeys.map(encodeURIComponent).join(",");
@@ -437,13 +441,14 @@ async function fetchIndexLTP(): Promise<Partial<Record<"NIFTY" | "BANKNIFTY" | "
     );
     if (!res.ok) return {};
     const json = await res.json() as { data?: Record<string, { last_price?: number }> };
-    const keyMap: Record<string, "NIFTY" | "BANKNIFTY" | "SENSEX" | "VIX"> = {
+    const keyMap: Record<string, LTPKey> = {
       "NSE_INDEX:Nifty 50":    "NIFTY",
       "NSE_INDEX:Nifty Bank":  "BANKNIFTY",
       "BSE_INDEX:SENSEX":      "SENSEX",
+      "NSE_INDEX:GIFT Nifty":  "GIFT_NIFTY",
       "NSE_INDEX:India VIX":   "VIX",
     };
-    const prices: Partial<Record<"NIFTY" | "BANKNIFTY" | "SENSEX" | "VIX", number>> = {};
+    const prices: Partial<Record<LTPKey, number>> = {};
     for (const [k, v] of Object.entries(json.data ?? {})) {
       const sym = keyMap[k];
       if (sym && v?.last_price) prices[sym] = Number(v.last_price.toFixed(2));
@@ -1723,6 +1728,10 @@ async function pollLTP(): Promise<void> {
       lastSensexPrice = prices.SENSEX;
       processTick(prices.SENSEX, "SENSEX", ts);
     }
+    if (prices.GIFT_NIFTY) {
+      lastGiftNiftyPrice = prices.GIFT_NIFTY;
+      if (!prevDayClose["GIFT_NIFTY"]) prevDayClose["GIFT_NIFTY"] = prices.GIFT_NIFTY;
+    }
     if (prices.VIX) lastVix = prices.VIX;
 
     if (Object.keys(prices).length) {
@@ -2881,10 +2890,42 @@ function scheduleTokenRequest(): void {
 
 const app  = express();
 app.use(express.json());
+app.use((_req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+  next();
+});
 const PORT = Number(process.env.PORT ?? process.env.TRADING_SERVER_PORT ?? 8080);
 
 app.get("/ping", (_req, res) => {
   res.json({ status: "ok", time: new Date().toISOString() });
+});
+
+// ── /api/indices — live index prices with change vs prev close ──
+app.get("/api/indices", (_req, res) => {
+  const ltps: Record<string, number> = {
+    NIFTY:      lastNiftyPrice,
+    BANKNIFTY:  lastBankniftyPrice,
+    SENSEX:     lastSensexPrice,
+    GIFT_NIFTY: lastGiftNiftyPrice,
+  };
+  const result: Record<string, { ltp: number; change: number; changePct: number }> = {};
+  for (const [idx, ltp] of Object.entries(ltps)) {
+    const pdc        = prevDayClose[idx] ?? 0;
+    const change     = pdc > 0 ? Number((ltp - pdc).toFixed(2)) : 0;
+    const changePct  = pdc > 0 ? Number(((change / pdc) * 100).toFixed(2)) : 0;
+    result[idx]      = { ltp, change, changePct };
+  }
+  res.json(result);
+});
+
+// ── /api/candles — candle data per index + interval ─────────────
+// GET /api/candles?index=NIFTY&interval=30s  → last 100 candles
+app.get("/api/candles", (req, res) => {
+  const index    = String(req.query.index    ?? "NIFTY").toUpperCase();
+  const interval = String(req.query.interval ?? "30s");
+  const candles  = getCandles(index as "NIFTY" | "BANKNIFTY" | "SENSEX", interval);
+  res.json(candles.slice(-100));
 });
 
 app.get("/health", (_req, res) => {

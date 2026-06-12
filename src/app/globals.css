@@ -82,6 +82,12 @@ button {
   gap: 16px;
 }
 
+.grid-charts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
 .grid-stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -125,8 +131,15 @@ button {
 
   /* Single-column card grids */
   .grid-eq,
-  .grid-btc {
+  .grid-btc,
+  .grid-charts {
     grid-template-columns: 1fr;
+  }
+
+  /* Indices wrap on mobile */
+  .top-bar-indices {
+    justify-content: flex-start !important;
+    gap: 16px !important;
   }
 
   /* Stats → 2 columns */

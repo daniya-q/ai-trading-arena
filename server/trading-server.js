@@ -72,6 +72,7 @@ const supabase = (0, supabase_js_1.createClient)(process.env.NEXT_PUBLIC_SUPABAS
 let lastNiftyPrice = 0;
 let lastBankniftyPrice = 0;
 let lastSensexPrice = 0;
+let lastGiftNiftyPrice = 0;
 let lastVix = 0;
 // BTC (unchanged)
 let btcPrice = 0;
@@ -376,6 +377,7 @@ async function fetchIndexLTP() {
         "NSE_INDEX|Nifty 50",
         "NSE_INDEX|Nifty Bank",
         "BSE_INDEX|SENSEX",
+        "NSE_INDEX|GIFT Nifty",
         "NSE_INDEX|India VIX",
     ];
     const keys = rawKeys.map(encodeURIComponent).join(",");
@@ -388,6 +390,7 @@ async function fetchIndexLTP() {
             "NSE_INDEX:Nifty 50": "NIFTY",
             "NSE_INDEX:Nifty Bank": "BANKNIFTY",
             "BSE_INDEX:SENSEX": "SENSEX",
+            "NSE_INDEX:GIFT Nifty": "GIFT_NIFTY",
             "NSE_INDEX:India VIX": "VIX",
         };
         const prices = {};
@@ -1601,6 +1604,11 @@ async function pollLTP() {
             lastSensexPrice = prices.SENSEX;
             processTick(prices.SENSEX, "SENSEX", ts);
         }
+        if (prices.GIFT_NIFTY) {
+            lastGiftNiftyPrice = prices.GIFT_NIFTY;
+            if (!prevDayClose["GIFT_NIFTY"])
+                prevDayClose["GIFT_NIFTY"] = prices.GIFT_NIFTY;
+        }
         if (prices.VIX)
             lastVix = prices.VIX;
         if (Object.keys(prices).length) {
@@ -2641,9 +2649,39 @@ function scheduleTokenRequest() {
 // ══════════════════════════════════════════════════════════════
 const app = (0, express_1.default)();
 app.use(express_1.default.json());
+app.use((_req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+    next();
+});
 const PORT = Number(process.env.PORT ?? process.env.TRADING_SERVER_PORT ?? 8080);
 app.get("/ping", (_req, res) => {
     res.json({ status: "ok", time: new Date().toISOString() });
+});
+// ── /api/indices — live index prices with change vs prev close ──
+app.get("/api/indices", (_req, res) => {
+    const ltps = {
+        NIFTY: lastNiftyPrice,
+        BANKNIFTY: lastBankniftyPrice,
+        SENSEX: lastSensexPrice,
+        GIFT_NIFTY: lastGiftNiftyPrice,
+    };
+    const result = {};
+    for (const [idx, ltp] of Object.entries(ltps)) {
+        const pdc = prevDayClose[idx] ?? 0;
+        const change = pdc > 0 ? Number((ltp - pdc).toFixed(2)) : 0;
+        const changePct = pdc > 0 ? Number(((change / pdc) * 100).toFixed(2)) : 0;
+        result[idx] = { ltp, change, changePct };
+    }
+    res.json(result);
+});
+// ── /api/candles — candle data per index + interval ─────────────
+// GET /api/candles?index=NIFTY&interval=30s  → last 100 candles
+app.get("/api/candles", (req, res) => {
+    const index = String(req.query.index ?? "NIFTY").toUpperCase();
+    const interval = String(req.query.interval ?? "30s");
+    const candles = getCandles(index, interval);
+    res.json(candles.slice(-100));
 });
 app.get("/health", (_req, res) => {
     res.json({
