@@ -2752,24 +2752,60 @@ async function loadTokenFromSupabase(): Promise<void> {
   }
 }
 
-let lastTokenRequestDate = "";
+// IST times at which a token request is sent (initial + retries)
+const TOKEN_REQUEST_TIMES_IST = ["08:30", "09:30", "10:00", "10:30"];
 
-function scheduleTokenRequest(): void {
-  setInterval(() => {
-    const ist = getIST();
-    if (ist.getUTCDay() === 0 || ist.getUTCDay() === 6) return;
-    const hh  = String(ist.getUTCHours()).padStart(2,"0");
-    const mm  = String(ist.getUTCMinutes()).padStart(2,"0");
-    const today = todayIST();
-    if (`${hh}:${mm}` !== "08:30" || lastTokenRequestDate === today) return;
-    lastTokenRequestDate = today;
-    fetch("https://api.upstox.com/v3/login/auth/token/request/7NAEVR", {
+/** Send a push-notification approval request to Upstox. */
+async function sendTokenRequest(): Promise<void> {
+  const secret = process.env.UPSTOX_API_SECRET;
+  if (!secret) {
+    console.warn("[Token] UPSTOX_API_SECRET not set — cannot send token request");
+    return;
+  }
+  try {
+    const res  = await fetch("https://api.upstox.com/v3/login/auth/token/request/7NAEVR", {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ client_secret: process.env.UPSTOX_API_SECRET }),
-    })
-      .then(() => console.log("[Token] Approval request sent"))
-      .catch((err: Error) => console.error("[Token] Request failed:", err));
+      body:    JSON.stringify({ client_secret: secret }),
+    });
+    const text = await res.text().catch(() => "");
+    console.log(`[Token] Request sent — HTTP ${res.status} ${text.slice(0, 120)}`);
+  } catch (err) {
+    console.error("[Token] Request failed:", err);
+  }
+}
+
+/**
+ * Check Supabase config for UPSTOX_TOKEN_DATE — set by the webhook
+ * each time a fresh token arrives. Returns true if the value equals today.
+ */
+async function isTokenApprovedToday(): Promise<boolean> {
+  try {
+    const { data } = await supabase
+      .from("config")
+      .select("value")
+      .eq("key", "UPSTOX_TOKEN_DATE")
+      .single();
+    return (data as { value: string } | null)?.value === todayIST();
+  } catch {
+    return false;
+  }
+}
+
+function scheduleTokenRequest(): void {
+  setInterval(async () => {
+    const ist = getIST();
+    if (ist.getUTCDay() === 0 || ist.getUTCDay() === 6) return; // weekends
+    const timeStr = `${String(ist.getUTCHours()).padStart(2,"0")}:${String(ist.getUTCMinutes()).padStart(2,"0")}`;
+    if (!TOKEN_REQUEST_TIMES_IST.includes(timeStr)) return;
+
+    const approved = await isTokenApprovedToday();
+    if (approved) {
+      console.log(`[Token] Already approved today — skipping ${timeStr} IST retry`);
+      return;
+    }
+    console.log(`[Token] Not yet approved — sending request at ${timeStr} IST`);
+    await sendTokenRequest();
   }, 60_000);
 }
 
@@ -2834,10 +2870,30 @@ app.post("/api/upstox/token-webhook", async (req, res) => {
     return;
   }
   process.env.UPSTOX_ACCESS_TOKEN = access_token;
-  const { error } = await supabase.from("config").upsert({ key: "UPSTOX_ACCESS_TOKEN", value: access_token }, { onConflict: "key" });
-  if (error) console.error("[Token] Failed to save to Supabase:", error.message);
-  console.log("[Token] New Upstox token received and activated");
+  const today = todayIST();
+  const [e1, e2] = await Promise.all([
+    supabase.from("config").upsert({ key: "UPSTOX_ACCESS_TOKEN", value: access_token }, { onConflict: "key" }),
+    supabase.from("config").upsert({ key: "UPSTOX_TOKEN_DATE",   value: today          }, { onConflict: "key" }),
+  ]);
+  if (e1.error) console.error("[Token] Failed to save token to Supabase:", e1.error.message);
+  if (e2.error) console.error("[Token] Failed to save token date:", e2.error.message);
+  console.log(`[Token] New Upstox token received and activated (${today})`);
   res.json({ received: true });
+});
+
+// Endpoint called by GitHub Actions (and manually via curl) to trigger a
+// push-notification approval request to the Upstox app.
+// Server-side check prevents duplicate requests if already approved today.
+app.post("/api/request-upstox-token", async (_req, res) => {
+  const approved = await isTokenApprovedToday();
+  if (approved) {
+    console.log("[Token] /api/request-upstox-token called — already approved today, skipping");
+    res.json({ status: "already_approved", message: "Token already approved today" });
+    return;
+  }
+  console.log("[Token] /api/request-upstox-token called — sending request");
+  await sendTokenRequest();
+  res.json({ status: "requested", message: "Approval notification sent to Upstox app" });
 });
 
 app.listen(PORT, () => {
