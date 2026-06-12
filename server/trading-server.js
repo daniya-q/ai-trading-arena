@@ -1047,13 +1047,16 @@ async function runOrionForIndex(index, mins) {
         console.log(`[S2:${index}] SIGNAL ${optType} — no option in ₹60-70 (chain ₹${allPrem[0]?.toFixed(0) ?? "?"}-${allPrem[allPrem.length - 1]?.toFixed(0) ?? "?"})`);
         return;
     }
+    const s2Capital = await getEquityCurrentValue("orion");
+    const s2Quantity = Math.max(1, Math.floor((s2Capital * 0.30) / option.premium));
+    console.log(`[S2:${index}] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s2Capital).toLocaleString("en-IN")} qty=${s2Quantity} — opening trade`);
     await openStrategyPosition("orion", {
         symbol: option.symbol,
         type: optType,
         side: "LONG",
         entry_price: option.premium,
         current_price: option.premium,
-        quantity: index === "NIFTY" ? 50 : index === "BANKNIFTY" ? 15 : 20,
+        quantity: s2Quantity,
         stop_loss: Number((option.premium * 0.70).toFixed(2)), // 30% SL
         trail_sl: null,
         pnl: 0,
@@ -1134,14 +1137,16 @@ async function runStrategy3() {
         console.log(`[S3] SIGNAL ${optType} — no option in ₹60-70 (chain ₹${allPrem[0]?.toFixed(0) ?? "?"}-${allPrem[allPrem.length - 1]?.toFixed(0) ?? "?"})`);
         return;
     }
-    console.log(`[S3] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — opening trade`);
+    const s3Capital = await getEquityCurrentValue("ema_confluence");
+    const s3Quantity = Math.max(1, Math.floor((s3Capital * 0.60) / option.premium));
+    console.log(`[S3] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s3Capital).toLocaleString("en-IN")} qty=${s3Quantity} — opening trade`);
     await openStrategyPosition("ema_confluence", {
         symbol: option.symbol,
         type: optType,
         side: "LONG",
         entry_price: option.premium,
         current_price: option.premium,
-        quantity: 50,
+        quantity: s3Quantity,
         stop_loss: Number((option.premium * 0.85).toFixed(2)),
         trail_sl: null,
         pnl: 0,
@@ -1213,14 +1218,16 @@ async function runSupertrendForIndex(index) {
         console.log(`[S4:${index}] SIGNAL ${optType} — no option in ₹60-70 (chain ₹${allPrem[0]?.toFixed(0) ?? "?"}-${allPrem[allPrem.length - 1]?.toFixed(0) ?? "?"})`);
         return;
     }
-    console.log(`[S4:${index}] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — opening trade`);
+    const s4Capital = await getEquityCurrentValue("supertrend");
+    const s4Quantity = Math.max(1, Math.floor((s4Capital * 0.30) / option.premium));
+    console.log(`[S4:${index}] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s4Capital).toLocaleString("en-IN")} qty=${s4Quantity} — opening trade`);
     await openStrategyPosition("supertrend", {
         symbol: option.symbol,
         type: optType,
         side: "LONG",
         entry_price: option.premium,
         current_price: option.premium,
-        quantity: index === "NIFTY" ? 50 : 15,
+        quantity: s4Quantity,
         stop_loss: Number((option.premium * 0.80).toFixed(2)),
         trail_sl: null,
         pnl: 0,
@@ -1278,13 +1285,16 @@ async function runStrategy5() {
     const option = getATMOption(chain, optType, 60, 70);
     if (!option)
         return;
+    const s5Capital = await getEquityCurrentValue("pcr_reversal");
+    const s5Quantity = Math.max(1, Math.floor((s5Capital * 0.60) / option.premium));
+    console.log(`[S5] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s5Capital).toLocaleString("en-IN")} qty=${s5Quantity} — opening trade`);
     await openStrategyPosition("pcr_reversal", {
         symbol: option.symbol,
         type: optType,
         side: "LONG",
         entry_price: option.premium,
         current_price: option.premium,
-        quantity: 50,
+        quantity: s5Quantity,
         stop_loss: Number((option.premium * 0.75).toFixed(2)), // 25% SL
         trail_sl: null,
         pnl: 0,
@@ -1408,13 +1418,16 @@ async function runStrategy6() {
     const option = getATMOption(chain, optType, 60, 70);
     if (!option)
         return;
+    const s6Capital = await getEquityCurrentValue("gap_orb");
+    const s6Quantity = Math.max(1, Math.floor((s6Capital * 0.60) / option.premium));
+    console.log(`[S6] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s6Capital).toLocaleString("en-IN")} qty=${s6Quantity} — opening trade`);
     await openStrategyPosition("gap_orb", {
         symbol: option.symbol,
         type: optType,
         side: "LONG",
         entry_price: option.premium,
         current_price: option.premium,
-        quantity: 50,
+        quantity: s6Quantity,
         stop_loss: Number((option.premium * 0.80).toFixed(2)), // 20% SL
         trail_sl: null,
         pnl: 0,
@@ -1506,14 +1519,12 @@ async function runVwapScalperForIndex(index) {
         return;
     }
     const slPct = danger ? 0.10 : 0.20;
-    const qty = index === "BANKNIFTY"
-        ? (danger ? 8 : 15)
-        : index === "SENSEX"
-            ? (danger ? 10 : 20)
-            : (danger ? 25 : 50); // NIFTY
+    const s7Capital = await getEquityCurrentValue("vwap_scalper");
+    const s7BaseQty = Math.max(1, Math.floor((s7Capital * 0.30) / option.premium));
+    const qty = danger ? Math.max(1, Math.floor(s7BaseQty / 2)) : s7BaseQty;
     const sl = Number((option.premium * (1 - slPct)).toFixed(2));
     const entryNote = `VWAP ${type === "CE" ? "bounce above" : "reject below"} | RSI=${rsi.toFixed(0)} | ATR=${atr.toFixed(0)}${danger ? " | EXPIRY DANGER" : ""}`;
-    console.log(`[S7:${index}] SIGNAL ${type} — premium ₹${option.premium} | SL=${sl} qty=${qty}${danger ? " [EXPIRY DANGER]" : ""}`);
+    console.log(`[S7:${index}] SIGNAL ${type} — premium ₹${option.premium} | capital=₹${Math.round(s7Capital).toLocaleString("en-IN")} qty=${qty}${danger ? " [EXPIRY DANGER half-size]" : ""} | SL=${sl}`);
     await openStrategyPosition("vwap_scalper", {
         symbol: option.symbol,
         type,
