@@ -151,13 +151,13 @@ const RULES: Record<string, string[]> = {
 //          fontSize = available / (N_lines × lineHeight_2.0)
 // vwap_scalper subtracts 15px for its 3 empty-line spacers before dividing.
 const RULES_FONT: Record<string, number> = {
-  ema_crossover:  31,  // 10 lines  → 610 / (10 × 2.0) = 30.5 → 31
-  orion:          31,  // 10 lines
-  ema_confluence: 25,  // 12 lines  → 610 / (12 × 2.0) = 25.4 → 25
-  supertrend:     31,  // 10 lines
-  pcr_reversal:   34,  // 9 lines   → 610 / (9  × 2.0) = 33.9 → 34
-  gap_orb:        31,  // 10 lines
-  vwap_scalper:   23,  // 13 lines  → (610 − 15) / (13 × 2.0) = 22.9 → 23
+  ema_crossover:  25,  // 31 × 0.8 = 24.8 → 25
+  orion:          25,  // 31 × 0.8
+  ema_confluence: 20,  // 25 × 0.8
+  supertrend:     25,  // 31 × 0.8
+  pcr_reversal:   27,  // 34 × 0.8 = 27.2 → 27
+  gap_orb:        25,  // 31 × 0.8
+  vwap_scalper:   18,  // 23 × 0.8 = 18.4 → 18
 };
 
 const STRATEGY_CHARTS: Record<string, Array<{ index: string; interval: string }>> = {
@@ -816,8 +816,8 @@ export default function StrategyDetailPage() {
                     borderRadius: 10, padding: "clamp(10px,1.2vh,16px) 14px",
                     display: "flex", flexDirection: "column", justifyContent: "space-between",
                   }}>
-                    <div style={{ fontSize: "clamp(9px, 1vh, 11px)", fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase" }}>{s.label}</div>
-                    <div style={{ fontSize: "clamp(14px, 1.8vh, 18px)", fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
+                    <div style={{ fontSize: "clamp(18px, 2vh, 22px)", fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase" }}>{s.label}</div>
+                    <div style={{ fontSize: "clamp(21px, 2.7vh, 27px)", fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
                   </div>
                 ))}
               </div>
@@ -829,7 +829,7 @@ export default function StrategyDetailPage() {
               padding: "0 48px clamp(8px,1vh,14px) 40px",
               overflow: "hidden",
             }}>
-              <div style={{ fontSize: "clamp(16px, 2vh, 20px)", fontWeight: 700, color: accent, letterSpacing: "0.01em", marginBottom: "clamp(6px,0.8vh,12px)" }}>
+              <div style={{ fontSize: "clamp(22px, 2.8vh, 28px)", fontWeight: 700, color: accent, letterSpacing: "0.01em", marginBottom: "clamp(6px,0.8vh,12px)" }}>
                 Strategy Logic
               </div>
               <div style={{ display: "flex", flexDirection: "column" }}>
