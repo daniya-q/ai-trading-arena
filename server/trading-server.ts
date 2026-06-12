@@ -1029,14 +1029,16 @@ async function runStrategy1(): Promise<void> {
     return;
   }
 
-  console.log(`[S1] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — opening trade`);
+  const s1Capital  = await getEquityCurrentValue("ema_crossover");
+  const s1Quantity = Math.max(1, Math.floor((s1Capital * 0.60) / option.premium));
+  console.log(`[S1] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s1Capital).toLocaleString("en-IN")} qty=${s1Quantity} — opening trade`);
   await openStrategyPosition("ema_crossover", {
     symbol:       option.symbol,
     type:         optType,
     side:         "LONG",
     entry_price:  option.premium,
     current_price: option.premium,
-    quantity:     50,
+    quantity:     s1Quantity,
     stop_loss:    Number((option.premium * 0.85).toFixed(2)),
     trail_sl:     null,
     pnl:          0,
@@ -2150,6 +2152,21 @@ function generateBtcExitDetail(
       return `Price crossed VWAP in opposite direction at $${exitPrice.toFixed(2)} — ${pnlStr} at ${ts}`;
     default:
       return `Closed at $${exitPrice.toFixed(2)} — ${pnlStr} at ${ts}`;
+  }
+}
+
+// ── Equity capital helper ────────────────────────────────────────
+async function getEquityCurrentValue(strategyId: string): Promise<number> {
+  try {
+    const { data } = await supabase
+      .from("strategy_capital")
+      .select("current_value")
+      .eq("strategy_id", strategyId)
+      .single();
+    if (!data) return 100000;
+    return (data as { current_value: number }).current_value ?? 100000;
+  } catch {
+    return 100000;
   }
 }
 
