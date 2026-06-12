@@ -1131,9 +1131,8 @@ export default function DashboardPage() {
 
       {/* ── 3. Live Candlestick Charts ── */}
       <div className="grid-charts" style={{ marginBottom: 16 }}>
-        <CandleChart index="NIFTY"     label="NIFTY" />
-        <CandleChart index="SENSEX"    label="SENSEX" />
-        <CandleChart index="BANKNIFTY" label="BANK NIFTY" />
+        <CandleChart index="NIFTY"  label="NIFTY" />
+        <CandleChart index="SENSEX" label="SENSEX" />
       </div>
 
       {/* Error banner */}
