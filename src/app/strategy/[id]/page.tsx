@@ -3,8 +3,13 @@
 import { Fragment, useEffect, useRef, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { createChart, CandlestickSeries, LineSeries, ColorType, createSeriesMarkers } from "lightweight-charts";
-import type { IChartApi, ISeriesApi, IPriceLine, UTCTimestamp, ISeriesMarkersPluginApi, SeriesMarker, Time } from "lightweight-charts";
+import {
+  createChart, CandlestickSeries, LineSeries, ColorType, createSeriesMarkers,
+} from "lightweight-charts";
+import type {
+  IChartApi, ISeriesApi, IPriceLine, UTCTimestamp,
+  ISeriesMarkersPluginApi, SeriesMarker, Time,
+} from "lightweight-charts";
 import { supabase } from "@/lib/supabase/client";
 
 const BACKEND = "https://ai-trading-arena-backend-production.up.railway.app";
@@ -12,45 +17,23 @@ const BACKEND = "https://ai-trading-arena-backend-production.up.railway.app";
 // ── Types ────────────────────────────────────────────────────────
 
 type Strategy = {
-  id: string;
-  name: string;
-  description: string;
-  status: "active" | "paused" | "placeholder";
-  slot_number: number;
+  id: string; name: string; description: string;
+  status: "active" | "paused" | "placeholder"; slot_number: number;
 };
-
 type Capital = {
-  strategy_id: string;
-  allocated_capital: number;
-  current_value: number;
-  total_pnl: number;
-  win_rate: number;
-  sharpe_ratio: number;
-  today_trades: number;
-  lifetime_trades: number;
+  strategy_id: string; allocated_capital: number; current_value: number;
+  total_pnl: number; win_rate: number; sharpe_ratio: number;
+  today_trades: number; lifetime_trades: number;
 };
-
 type Position = {
-  id: string;
-  strategy_id: string;
-  symbol: string;
-  type: string;
-  entry_price: number;
-  current_price: number;
-  exit_price: number | null;
-  quantity: number;
-  stop_loss: number | null;
-  trail_sl: number | null;
-  pnl: number;
-  status: "OPEN" | "CLOSED";
-  opened_at: string;
-  closed_at: string | null;
-  exit_reason: string | null;
-  exit_reason_detail: string | null;
+  id: string; strategy_id: string; symbol: string; type: string;
+  entry_price: number; current_price: number; exit_price: number | null;
+  quantity: number; stop_loss: number | null; trail_sl: number | null;
+  pnl: number; status: "OPEN" | "CLOSED";
+  opened_at: string; closed_at: string | null;
+  exit_reason: string | null; exit_reason_detail: string | null;
 };
-
 type OhlcCandle = { time: number; open: number; high: number; low: number; close: number };
-
 type IndicatorData = {
   ema16?: Array<{ time: number; value: number }>;
   ema64?: Array<{ time: number; value: number }>;
@@ -58,22 +41,15 @@ type IndicatorData = {
   vwap?: Array<{ time: number; value: number }>;
   supertrendUp?: Array<{ time: number; value: number | null }>;
   supertrendDown?: Array<{ time: number; value: number | null }>;
-  orbHigh?: number;
-  orbLow?: number;
-  prevDayClose?: number;
+  orbHigh?: number; orbLow?: number; prevDayClose?: number;
   pcr?: Array<{ time: number; value: number }>;
 };
 
 // ── Strategy Config ──────────────────────────────────────────────
 
 const ACCENT: Record<string, string> = {
-  ema_crossover:  "#F59E0B",
-  orion:          "#6366F1",
-  ema_confluence: "#10B981",
-  supertrend:     "#EF4444",
-  pcr_reversal:   "#8B5CF6",
-  gap_orb:        "#06B6D4",
-  vwap_scalper:   "#F97316",
+  ema_crossover: "#F59E0B", orion: "#6366F1", ema_confluence: "#10B981",
+  supertrend: "#EF4444", pcr_reversal: "#8B5CF6", gap_orb: "#06B6D4", vwap_scalper: "#F97316",
 };
 
 const RULES: Record<string, string[]> = {
@@ -123,7 +99,7 @@ const RULES: Record<string, string[]> = {
     "Entry PE: Supertrend flips red → price crosses below Supertrend line (bearish flip)",
     "Stop loss: 20% of premium paid",
     "Trail SL: activates at 40% gain → trail at 12% below peak premium",
-    "Exit: SL hit | Supertrend flips opposite (close + open opposite) | trail SL | 3:00 PM hard close",
+    "Exit: SL hit | Supertrend flips opposite | trail SL | 3:00 PM hard close",
     "Trading window: 9:45 AM – 2:30 PM",
     "Max 2 trades per instrument per day",
   ],
@@ -151,104 +127,62 @@ const RULES: Record<string, string[]> = {
     "Max 2 trades per day",
   ],
   vwap_scalper: [
-    "· VWAP + RSI Momentum Scalper — Nifty, BankNifty, Sensex options",
-    "· Timeframe: 1-minute candles | Window: 10:30 AM – 3:00 PM IST",
+    "VWAP + RSI Momentum Scalper — Nifty, BankNifty, Sensex options",
+    "Timeframe: 1-minute candles | Window: 10:30 AM – 3:00 PM IST",
     "",
     "Entry — Buy CE (bullish bounce):",
-    "  · Price pulls back to VWAP then closes above it",
-    "  · RSI between 40–60 (neutral momentum)",
-    "  · OI rising on latest chain snapshot (volume proxy)",
-    "  · Previous candle made a higher low",
-    "  · Option premium in ₹50–80 range",
+    "  Price pulls back to VWAP then closes above it",
+    "  RSI between 40–60 (neutral momentum)",
+    "  OI rising on latest chain snapshot · Previous candle made a higher low",
+    "  Option premium in ₹50–80 range",
     "",
     "Entry — Buy PE (bearish rejection):",
-    "  · Price pulls back to VWAP then closes below it",
-    "  · RSI between 40–60",
-    "  · OI rising on latest chain snapshot",
-    "  · Previous candle made a lower high",
-    "  · Option premium in ₹50–80 range",
+    "  Price pulls back to VWAP then closes below it",
+    "  RSI between 40–60 · OI rising · Previous candle made a lower high",
+    "  Option premium in ₹50–80 range",
     "",
-    "Expiry days: Tuesday (Nifty + BankNifty) · Thursday (Sensex)",
-    "Normal day rules:",
-    "  · SL: 20% of premium | Max 1 position per index at a time",
-    "  · Trail SL: at +25% premium → move SL to breakeven",
-    "  · At +35% → trail at 12% below peak premium",
-    "",
-    "Exit priority: SL hit → Trail SL hit → 3:00 PM hard close → Opposite VWAP cross",
+    "SL: 20% of premium | Trail SL: at +25% → breakeven · at +35% → 12% below peak",
+    "Exit priority: SL hit → Trail SL → 3:00 PM hard close → Opposite VWAP cross",
   ],
 };
 
 const STRATEGY_CHARTS: Record<string, Array<{ index: string; interval: string }>> = {
-  ema_crossover:  [{ index: "NIFTY",     interval: "30s" }],
-  orion:          [{ index: "NIFTY",     interval: "15m" }, { index: "SENSEX", interval: "15m" }, { index: "BANKNIFTY", interval: "15m" }],
-  ema_confluence: [{ index: "NIFTY",     interval: "30s" }],
-  supertrend:     [{ index: "NIFTY",     interval: "5m"  }, { index: "BANKNIFTY", interval: "5m" }],
-  pcr_reversal:   [{ index: "NIFTY",     interval: "30s" }],
-  gap_orb:        [{ index: "NIFTY",     interval: "15m" }],
-  vwap_scalper:   [{ index: "NIFTY",     interval: "1m"  }, { index: "SENSEX", interval: "1m"  }, { index: "BANKNIFTY", interval: "1m" }],
+  ema_crossover:  [{ index: "NIFTY", interval: "30s" }],
+  orion:          [{ index: "NIFTY", interval: "15m" }, { index: "SENSEX", interval: "15m" }, { index: "BANKNIFTY", interval: "15m" }],
+  ema_confluence: [{ index: "NIFTY", interval: "30s" }],
+  supertrend:     [{ index: "NIFTY", interval: "5m" }, { index: "BANKNIFTY", interval: "5m" }],
+  pcr_reversal:   [{ index: "NIFTY", interval: "30s" }],
+  gap_orb:        [{ index: "NIFTY", interval: "15m" }],
+  vwap_scalper:   [{ index: "NIFTY", interval: "1m" }, { index: "SENSEX", interval: "1m" }, { index: "BANKNIFTY", interval: "1m" }],
 };
 
 // ── Formatters ───────────────────────────────────────────────────
 
-function fmtINR(n: number): string {
-  return Math.abs(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
-}
-function pnlStr(n: number): string {
-  return `${n >= 0 ? "+" : "-"}₹${fmtINR(n)}`;
-}
-function pnlColor(n: number): string {
-  if (n === 0) return "#ffffff";
-  return n > 0 ? "#4ade80" : "#f87171";
-}
-function fmtTime(iso: string | null): string {
+function fmtINR(n: number) { return Math.abs(n).toLocaleString("en-IN", { maximumFractionDigits: 2 }); }
+function pnlStr(n: number) { return `${n >= 0 ? "+" : "-"}₹${fmtINR(n)}`; }
+function pnlColor(n: number) { return n > 0 ? "#4ade80" : n < 0 ? "#f87171" : "#ffffff"; }
+function fmtTime(iso: string | null) {
   if (!iso) return "—";
   return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
-function fmtPct(n: number): string {
-  return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
-}
-function formatDuration(openedAt: string, closedAt: string | null): string {
-  const start = new Date(openedAt).getTime();
-  const end   = closedAt ? new Date(closedAt).getTime() : Date.now();
-  const ms    = Math.max(0, end - start);
-  const h     = Math.floor(ms / 3_600_000);
-  const m     = Math.floor((ms % 3_600_000) / 60_000);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
+function fmtPct(n: number) { return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`; }
+function formatDuration(openedAt: string, closedAt: string | null) {
+  const ms = Math.max(0, (closedAt ? new Date(closedAt) : new Date()).getTime() - new Date(openedAt).getTime());
+  const h = Math.floor(ms / 3_600_000), m = Math.floor((ms % 3_600_000) / 60_000);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-function getEntryReason(strategyId: string, type: string): string {
-  switch (strategyId) {
-    case "ema_crossover":
-      return type === "CE"
-        ? "16 EMA crossed above 64 EMA on 30s candle. Bullish crossover signal triggered."
-        : "16 EMA crossed below 64 EMA on 30s candle. Bearish crossover signal triggered.";
-    case "ema_confluence":
-      return type === "CE"
-        ? "All 5 confluence filters aligned: 16 EMA crossed above 64 EMA · RSI < 45 · price above VWAP · volume above 20-candle avg · price near 50–61.8% Fibonacci support zone."
-        : "All 5 confluence filters aligned: 16 EMA crossed below 64 EMA · RSI > 55 · price below VWAP · volume above 20-candle avg · price near 50–61.8% Fibonacci resistance zone.";
-    case "orion":
-      return type === "CE"
-        ? "Price broke and closed above ORB High. Price confirmed above VWAP. CE OI rising at ATM strike (long buildup confirmed)."
-        : "Price broke and closed below ORB Low. Price confirmed below VWAP. PE OI rising at ATM strike (short buildup confirmed).";
-    case "supertrend":
-      return type === "CE"
-        ? "Supertrend(7,3) flipped green on 5m candle. Price crossed above the Supertrend line — bullish directional flip."
-        : "Supertrend(7,3) flipped red on 5m candle. Price crossed below the Supertrend line — bearish directional flip.";
-    case "pcr_reversal":
-      return type === "CE"
-        ? "PCR exceeded 1.3 (market oversold). PE OI at ATM strike fell 10%+ over last 30 min — confirming PE unwinding. Reversal to upside expected."
-        : "PCR fell below 0.7 (market overbought). CE OI at ATM strike fell 10%+ over last 30 min — confirming CE unwinding. Reversal to downside expected.";
-    case "gap_orb":
-      return type === "CE"
-        ? "Gap down > 0.3% detected at open. Fade strategy — buying CE expecting price to recover back toward previous day's close."
-        : "Gap up > 0.3% detected at open. Fade strategy — buying PE expecting price to pull back toward previous day's close.";
-    case "vwap_scalper":
-      return type === "CE"
-        ? "Price pulled back to VWAP and bounced above it on 1m candle. RSI 40–60 (neutral), OI rising, previous candle made a higher low — bullish VWAP reclaim entry."
-        : "Price pulled back to VWAP and rejected below it on 1m candle. RSI 40–60 (neutral), OI rising, previous candle made a lower high — bearish VWAP rejection entry.";
-    default:
-      return "Entry signal triggered.";
+function getEntryReason(sid: string, type: string): string {
+  const CE = type === "CE";
+  switch (sid) {
+    case "ema_crossover":  return CE ? "16 EMA crossed above 64 EMA on 30s candle — bullish crossover signal." : "16 EMA crossed below 64 EMA on 30s candle — bearish crossover signal.";
+    case "ema_confluence": return CE ? "All 5 confluence filters aligned: EMA crossover · RSI < 45 · price above VWAP · volume spike · near 50–61.8% Fibonacci support." : "All 5 confluence filters aligned: EMA crossover · RSI > 55 · price below VWAP · volume spike · near 50–61.8% Fibonacci resistance.";
+    case "orion":          return CE ? "Price broke above ORB High and closed above VWAP. CE OI rising at ATM (long buildup confirmed)." : "Price broke below ORB Low and closed below VWAP. PE OI rising at ATM (short buildup confirmed).";
+    case "supertrend":     return CE ? "Supertrend(7,3) flipped green on 5m candle. Price crossed above the Supertrend line — bullish flip." : "Supertrend(7,3) flipped red on 5m candle. Price crossed below the Supertrend line — bearish flip.";
+    case "pcr_reversal":   return CE ? "PCR exceeded 1.3 (market oversold). PE OI at ATM fell 10%+ over 30 min — confirming PE unwinding." : "PCR fell below 0.7 (market overbought). CE OI at ATM fell 10%+ over 30 min — confirming CE unwinding.";
+    case "gap_orb":        return CE ? "Gap down > 0.3% at open. Fade strategy — buying CE expecting recovery to previous close." : "Gap up > 0.3% at open. Fade strategy — buying PE expecting pullback to previous close.";
+    case "vwap_scalper":   return CE ? "Price pulled back to VWAP and bounced above it on 1m candle. RSI 40–60 · OI rising · higher low formed." : "Price pulled back to VWAP and rejected below it on 1m candle. RSI 40–60 · OI rising · lower high formed.";
+    default: return "Entry signal triggered.";
   }
 }
 
@@ -257,9 +191,9 @@ function fallbackExitText(pos: Position): string {
     case "SL_HIT":      return `Stop loss hit. Entry: ₹${pos.entry_price.toFixed(2)}. Exit: ₹${(pos.exit_price ?? 0).toFixed(2)}.`;
     case "CROSSOVER":   return "Opposite EMA/Supertrend crossover detected. Position closed and flip trade opened.";
     case "TRAIL_SL":    return `Trailing stop loss triggered. Exit: ₹${(pos.exit_price ?? 0).toFixed(2)}.`;
-    case "HARD_CLOSE":  return "Position closed at hard close time per the strategy's trading window rule.";
+    case "HARD_CLOSE":  return "Position closed at hard close time per strategy trading window rule.";
     case "PCR_NEUTRAL": return "PCR reverted to neutral zone (0.9–1.1). Signal no longer valid.";
-    case "OI_REVERSE":  return "OI buildup detected on the opposite side. Signal reversed.";
+    case "OI_REVERSE":  return "OI buildup detected on opposite side. Signal reversed.";
     case "TARGET":
     case "GAP_FILL":    return `Gap fill target reached. Exit: ₹${(pos.exit_price ?? 0).toFixed(2)}.`;
     case "VWAP_CROSS":  return `Price crossed VWAP in opposite direction. Exit: ₹${(pos.exit_price ?? 0).toFixed(2)}.`;
@@ -270,23 +204,24 @@ function fallbackExitText(pos: Position): string {
 // ── IndicatorChart ───────────────────────────────────────────────
 
 function IndicatorChart({
-  strategyId,
-  index,
-  defaultInterval,
-  positions,
+  strategyId, index, defaultInterval, positions,
+  fullscreen = false,
+  onPriceUpdate,
 }: {
   strategyId: string;
   index: string;
   defaultInterval: string;
   positions: Position[];
+  fullscreen?: boolean;
+  onPriceUpdate?: (price: number, prevClose: number) => void;
 }) {
   const accent = ACCENT[strategyId] ?? "#6b7280";
 
   const allIntervals = ["30s", "1m", "5m", "15m"] as const;
   type TF = typeof allIntervals[number];
   const [timeframe, setTimeframe] = useState<TF>(defaultInterval as TF);
+  const [lastPcr, setLastPcr]     = useState<number | null>(null);
 
-  // Chart refs
   const mainContainerRef = useRef<HTMLDivElement>(null);
   const chartRef         = useRef<IChartApi | null>(null);
   const candleSeriesRef  = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -295,20 +230,14 @@ function IndicatorChart({
   const vwapRef          = useRef<ISeriesApi<"Line"> | null>(null);
   const stUpRef          = useRef<ISeriesApi<"Line"> | null>(null);
   const stDownRef        = useRef<ISeriesApi<"Line"> | null>(null);
-
-  // Markers plugin ref
   const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
-
-  // Price line refs
-  const orbHighLineRef = useRef<IPriceLine | null>(null);
-  const orbLowLineRef  = useRef<IPriceLine | null>(null);
-  const pdcLineRef     = useRef<IPriceLine | null>(null);
-
-  // PCR refs
-  const pcrContainerRef = useRef<HTMLDivElement>(null);
-  const pcrChartRef     = useRef<IChartApi | null>(null);
-  const pcrSeriesRef    = useRef<ISeriesApi<"Line"> | null>(null);
-  const [lastPcr, setLastPcr] = useState<number | null>(null);
+  const orbHighLineRef   = useRef<IPriceLine | null>(null);
+  const orbLowLineRef    = useRef<IPriceLine | null>(null);
+  const pdcLineRef       = useRef<IPriceLine | null>(null);
+  const pcrContainerRef  = useRef<HTMLDivElement>(null);
+  const pcrChartRef      = useRef<IChartApi | null>(null);
+  const pcrSeriesRef     = useRef<ISeriesApi<"Line"> | null>(null);
+  const lastCandleTimeRef = useRef<number>(0);
 
   const needsEMA  = ["ema_crossover", "ema_confluence"].includes(strategyId);
   const needsVWAP = ["ema_confluence", "orion", "vwap_scalper"].includes(strategyId);
@@ -317,10 +246,6 @@ function IndicatorChart({
   const needsORB  = ["orion", "gap_orb", "vwap_scalper"].includes(strategyId);
   const needsPDC  = ["gap_orb", "orion"].includes(strategyId);
 
-  // last candle time to skip redundant setData
-  const lastCandleTimeRef = useRef<number>(0);
-
-  // Market-open check (IST weekday + 9:15–15:30)
   const [isMarketOpen, setIsMarketOpen] = useState(false);
   useEffect(() => {
     const check = () => {
@@ -343,110 +268,51 @@ function IndicatorChart({
       layout: {
         background: { type: ColorType.Solid, color: "#0A0D14" },
         textColor: "#6b7280",
-        fontSize: 10,
+        fontSize: fullscreen ? 11 : 10,
       },
-      grid: {
-        vertLines: { color: "#1a1f2e" },
-        horzLines: { color: "#1a1f2e" },
-      },
-      rightPriceScale: {
-        borderColor: "#1a1f2e",
-        autoScale: true,
-        scaleMargins: { top: 0.1, bottom: 0.1 },
-      },
+      grid: { vertLines: { color: "#1a1f2e" }, horzLines: { color: "#1a1f2e" } },
+      rightPriceScale: { borderColor: "#1a1f2e", autoScale: true, scaleMargins: { top: 0.1, bottom: 0.1 } },
       timeScale: {
-        borderColor: "#1a1f2e",
-        timeVisible: true,
+        borderColor: "#1a1f2e", timeVisible: true,
         secondsVisible: defaultInterval === "30s" || defaultInterval === "1m",
-        fixLeftEdge: false,
-        rightOffset: 5,
+        fixLeftEdge: false, rightOffset: 5,
       },
       crosshair: { mode: 1 },
-      handleScroll: true,
-      handleScale: true,
+      handleScroll: true, handleScale: true,
     });
     chartRef.current = chart;
 
-    // ResizeObserver: keep chart width in sync with container
     const ro = new ResizeObserver(() => {
-      if (chartRef.current && mainContainerRef.current) {
+      if (chartRef.current && mainContainerRef.current)
         chartRef.current.applyOptions({ width: mainContainerRef.current.clientWidth });
-      }
     });
     ro.observe(mainContainerRef.current);
-    // store for cleanup
     (chart as unknown as { _ro: ResizeObserver })._ro = ro;
 
     candleSeriesRef.current = chart.addSeries(CandlestickSeries, {
-      upColor:         "#22c55e",
-      downColor:       "#ef4444",
-      borderUpColor:   "#22c55e",
-      borderDownColor: "#ef4444",
-      wickUpColor:     "#22c55e",
-      wickDownColor:   "#ef4444",
-      lastValueVisible: true,
-      priceLineVisible: true,
+      upColor: "#22c55e", downColor: "#ef4444",
+      borderUpColor: "#22c55e", borderDownColor: "#ef4444",
+      wickUpColor: "#22c55e", wickDownColor: "#ef4444",
+      lastValueVisible: true, priceLineVisible: true,
     });
-
     if (needsEMA) {
-      ema16Ref.current = chart.addSeries(LineSeries, {
-        color: "#3B82F6",
-        lineWidth: 1,
-        lastValueVisible: false,
-        priceLineVisible: false,
-        title: "EMA16",
-      });
-      ema64Ref.current = chart.addSeries(LineSeries, {
-        color: "#F97316",
-        lineWidth: 1,
-        lastValueVisible: false,
-        priceLineVisible: false,
-        title: "EMA64",
-      });
+      ema16Ref.current = chart.addSeries(LineSeries, { color: "#3B82F6", lineWidth: 1, lastValueVisible: false, priceLineVisible: false, title: "EMA16" });
+      ema64Ref.current = chart.addSeries(LineSeries, { color: "#F97316", lineWidth: 1, lastValueVisible: false, priceLineVisible: false, title: "EMA64" });
     }
-
     if (needsVWAP) {
-      vwapRef.current = chart.addSeries(LineSeries, {
-        color: "#A855F7",
-        lineWidth: 1,
-        lineStyle: 1, // dashed
-        lastValueVisible: false,
-        priceLineVisible: false,
-        title: "VWAP",
-      });
+      vwapRef.current = chart.addSeries(LineSeries, { color: "#A855F7", lineWidth: 1, lineStyle: 1, lastValueVisible: false, priceLineVisible: false, title: "VWAP" });
     }
-
     if (needsST) {
-      stUpRef.current = chart.addSeries(LineSeries, {
-        color: "#22c55e",
-        lineWidth: 2,
-        lastValueVisible: false,
-        priceLineVisible: false,
-        title: "ST Up",
-      });
-      stDownRef.current = chart.addSeries(LineSeries, {
-        color: "#ef4444",
-        lineWidth: 2,
-        lastValueVisible: false,
-        priceLineVisible: false,
-        title: "ST Down",
-      });
+      stUpRef.current   = chart.addSeries(LineSeries, { color: "#22c55e", lineWidth: 2, lastValueVisible: false, priceLineVisible: false, title: "ST Up" });
+      stDownRef.current = chart.addSeries(LineSeries, { color: "#ef4444", lineWidth: 2, lastValueVisible: false, priceLineVisible: false, title: "ST Down" });
     }
-
     return () => {
       (chart as unknown as { _ro?: ResizeObserver })._ro?.disconnect();
       chart.remove();
-      chartRef.current         = null;
-      candleSeriesRef.current  = null;
-      ema16Ref.current         = null;
-      ema64Ref.current         = null;
-      vwapRef.current          = null;
-      stUpRef.current          = null;
-      stDownRef.current        = null;
-      orbHighLineRef.current   = null;
-      orbLowLineRef.current    = null;
-      pdcLineRef.current       = null;
-      markersPluginRef.current = null;
+      chartRef.current = candleSeriesRef.current = ema16Ref.current = ema64Ref.current
+        = vwapRef.current = stUpRef.current = stDownRef.current
+        = orbHighLineRef.current = orbLowLineRef.current = pdcLineRef.current
+        = markersPluginRef.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -455,86 +321,66 @@ function IndicatorChart({
   useEffect(() => {
     if (!needsPCR || !pcrContainerRef.current) return;
     const chart = createChart(pcrContainerRef.current, {
-      autoSize: true,
-      height: 80,
-      layout: {
-        background: { type: ColorType.Solid, color: "#0A0D14" },
-        textColor: "#6b7280",
-        fontSize: 9,
-      },
-      grid: {
-        vertLines: { color: "#1a1f2e" },
-        horzLines: { color: "#1a1f2e" },
-      },
+      autoSize: true, layout: { background: { type: ColorType.Solid, color: "#0A0D14" }, textColor: "#6b7280", fontSize: 9 },
+      grid: { vertLines: { color: "#1a1f2e" }, horzLines: { color: "#1a1f2e" } },
       rightPriceScale: { borderColor: "#1a1f2e" },
       timeScale: { borderColor: "#1a1f2e", timeVisible: false },
       crosshair: { mode: 1 },
     });
-    pcrChartRef.current  = chart;
-    pcrSeriesRef.current = chart.addSeries(LineSeries, {
-      color: "#8B5CF6",
-      lineWidth: 1,
-      lastValueVisible: true,
-      priceLineVisible: false,
-    });
-    return () => {
-      chart.remove();
-      pcrChartRef.current  = null;
-      pcrSeriesRef.current = null;
-    };
+    pcrChartRef.current = chart;
+    pcrSeriesRef.current = chart.addSeries(LineSeries, { color: "#8B5CF6", lineWidth: 1, lastValueVisible: true, priceLineVisible: false });
+    return () => { chart.remove(); pcrChartRef.current = pcrSeriesRef.current = null; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Clear data when timeframe changes
+  // Clear on timeframe change
   useEffect(() => {
-    if (candleSeriesRef.current) candleSeriesRef.current.setData([]);
-    if (ema16Ref.current)  ema16Ref.current.setData([]);
-    if (ema64Ref.current)  ema64Ref.current.setData([]);
-    if (vwapRef.current)   vwapRef.current.setData([]);
-    if (stUpRef.current)   stUpRef.current.setData([]);
-    if (stDownRef.current) stDownRef.current.setData([]);
+    candleSeriesRef.current?.setData([]);
+    ema16Ref.current?.setData([]);
+    ema64Ref.current?.setData([]);
+    vwapRef.current?.setData([]);
+    stUpRef.current?.setData([]);
+    stDownRef.current?.setData([]);
     lastCandleTimeRef.current = 0;
-    chartRef.current?.timeScale().applyOptions({
-      secondsVisible: timeframe === "30s" || timeframe === "1m",
-    });
+    chartRef.current?.timeScale().applyOptions({ secondsVisible: timeframe === "30s" || timeframe === "1m" });
   }, [timeframe]);
 
-  // Poll data — 1s when market open, 60s when closed
+  // Poll
   useEffect(() => {
     let cancelled = false;
-
     const fetchAll = async () => {
       try {
-        const [candleRes, indRes] = await Promise.all([
+        const [cr, ir] = await Promise.all([
           fetch(`${BACKEND}/api/candles?index=${index}&interval=${timeframe}`),
           fetch(`${BACKEND}/api/indicators?strategy=${strategyId}&index=${index}`),
         ]);
-        if (!candleRes.ok || !indRes.ok) return;
-        const rawCandles: OhlcCandle[] = await candleRes.json();
-        const ind: IndicatorData       = await indRes.json();
-
+        if (!cr.ok || !ir.ok) return;
+        const rawCandles: OhlcCandle[] = await cr.json();
+        const ind: IndicatorData = await ir.json();
         if (cancelled || !candleSeriesRef.current) return;
 
         const candles = rawCandles
           .filter(c => c.open > 0 && c.high >= c.low && c.close > 0)
           .map(c => ({
-            time:  (c.time > 1e10 ? Math.floor(c.time / 1000) : c.time) as UTCTimestamp,
-            open:  c.open,
-            high:  c.high,
-            low:   c.low,
-            close: c.close,
+            time: (c.time > 1e10 ? Math.floor(c.time / 1000) : c.time) as UTCTimestamp,
+            open: c.open, high: c.high, low: c.low, close: c.close,
           }));
 
         if (candles.length > 0) {
-          const newestTime = candles[candles.length - 1].time as number;
-          const changed    = newestTime !== lastCandleTimeRef.current;
-          if (changed) {
-            lastCandleTimeRef.current = newestTime;
+          const newest = candles[candles.length - 1].time as number;
+          if (newest !== lastCandleTimeRef.current) {
+            lastCandleTimeRef.current = newest;
             candleSeriesRef.current.setData(candles);
             chartRef.current?.timeScale().scrollToRealTime();
+            // surface price to parent
+            if (onPriceUpdate) {
+              const last = candles[candles.length - 1].close;
+              const prev = candles.length > 1 ? candles[candles.length - 2].close : last;
+              onPriceUpdate(last, prev);
+            }
           }
 
-          // Entry markers via createSeriesMarkers plugin
+          const toTS = (t: number) => (t > 1e10 ? Math.floor(t / 1000) : t) as UTCTimestamp;
           const markers: SeriesMarker<UTCTimestamp>[] = positions.map(pos => ({
             time: (new Date(pos.opened_at).getTime() / 1000) as UTCTimestamp,
             position: pos.type === "CE" ? "belowBar" : "aboveBar" as const,
@@ -543,220 +389,134 @@ function IndicatorChart({
             text: `${pos.type} ${pos.entry_price.toFixed(0)}`,
           }));
           markers.sort((a, b) => (a.time as number) - (b.time as number));
-
-          if (!markersPluginRef.current) {
+          if (!markersPluginRef.current)
             markersPluginRef.current = createSeriesMarkers(candleSeriesRef.current, markers);
-          } else {
+          else
             markersPluginRef.current.setMarkers(markers);
+
+          if (ema16Ref.current && ind.ema16?.length)
+            ema16Ref.current.setData(ind.ema16.map(p => ({ time: toTS(p.time), value: p.value })));
+          if (ema64Ref.current && ind.ema64?.length)
+            ema64Ref.current.setData(ind.ema64.map(p => ({ time: toTS(p.time), value: p.value })));
+          if (vwapRef.current && ind.vwap?.length)
+            vwapRef.current.setData(ind.vwap.map(p => ({ time: toTS(p.time), value: p.value })));
+
+          if (stUpRef.current && stDownRef.current && ind.supertrendUp && ind.supertrendDown) {
+            const up   = ind.supertrendUp.filter((p): p is { time: number; value: number } => p.value !== null).map(p => ({ time: toTS(p.time), value: p.value }));
+            const down = ind.supertrendDown.filter((p): p is { time: number; value: number } => p.value !== null).map(p => ({ time: toTS(p.time), value: p.value }));
+            if (up.length)   stUpRef.current.setData(up);
+            if (down.length) stDownRef.current.setData(down);
           }
-        }
 
-        // EMA
-        if (ema16Ref.current && ind.ema16?.length) {
-          ema16Ref.current.setData(
-            ind.ema16.map(p => ({
-              time:  (p.time > 1e10 ? Math.floor(p.time / 1000) : p.time) as UTCTimestamp,
-              value: p.value,
-            }))
-          );
-        }
-        if (ema64Ref.current && ind.ema64?.length) {
-          ema64Ref.current.setData(
-            ind.ema64.map(p => ({
-              time:  (p.time > 1e10 ? Math.floor(p.time / 1000) : p.time) as UTCTimestamp,
-              value: p.value,
-            }))
-          );
-        }
-
-        // VWAP
-        if (vwapRef.current && ind.vwap?.length) {
-          vwapRef.current.setData(
-            ind.vwap.map(p => ({
-              time:  (p.time > 1e10 ? Math.floor(p.time / 1000) : p.time) as UTCTimestamp,
-              value: p.value,
-            }))
-          );
-        }
-
-        // Supertrend — split into up/down with null gaps at direction changes
-        if (stUpRef.current && stDownRef.current && ind.supertrendUp && ind.supertrendDown) {
-          const stUp = ind.supertrendUp
-            .filter((p): p is { time: number; value: number } => p.value !== null)
-            .map(p => ({
-              time:  (p.time > 1e10 ? Math.floor(p.time / 1000) : p.time) as UTCTimestamp,
-              value: p.value,
-            }));
-          const stDown = ind.supertrendDown
-            .filter((p): p is { time: number; value: number } => p.value !== null)
-            .map(p => ({
-              time:  (p.time > 1e10 ? Math.floor(p.time / 1000) : p.time) as UTCTimestamp,
-              value: p.value,
-            }));
-          if (stUp.length)   stUpRef.current.setData(stUp);
-          if (stDown.length) stDownRef.current.setData(stDown);
-        }
-
-        // ORB High/Low price lines
-        if (needsORB && candleSeriesRef.current) {
-          const orbH = ind.orbHigh ?? 0;
-          const orbL = ind.orbLow  ?? 0;
-          if (orbH > 0) {
-            if (!orbHighLineRef.current) {
-              orbHighLineRef.current = candleSeriesRef.current.createPriceLine({
-                price: orbH, color: "#22c55e", lineWidth: 1, lineStyle: 2,
-                axisLabelVisible: true, title: "ORB H",
-              });
-            } else {
-              orbHighLineRef.current.applyOptions({ price: orbH });
+          if (needsORB && candleSeriesRef.current) {
+            const orbH = ind.orbHigh ?? 0, orbL = ind.orbLow ?? 0;
+            if (orbH > 0) {
+              if (!orbHighLineRef.current) orbHighLineRef.current = candleSeriesRef.current.createPriceLine({ price: orbH, color: "#22c55e", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "ORB H" });
+              else orbHighLineRef.current.applyOptions({ price: orbH });
+            }
+            if (orbL > 0) {
+              if (!orbLowLineRef.current) orbLowLineRef.current = candleSeriesRef.current.createPriceLine({ price: orbL, color: "#ef4444", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "ORB L" });
+              else orbLowLineRef.current.applyOptions({ price: orbL });
             }
           }
-          if (orbL > 0) {
-            if (!orbLowLineRef.current) {
-              orbLowLineRef.current = candleSeriesRef.current.createPriceLine({
-                price: orbL, color: "#ef4444", lineWidth: 1, lineStyle: 2,
-                axisLabelVisible: true, title: "ORB L",
-              });
-            } else {
-              orbLowLineRef.current.applyOptions({ price: orbL });
+          if (needsPDC && candleSeriesRef.current) {
+            const pdc = ind.prevDayClose ?? 0;
+            if (pdc > 0) {
+              if (!pdcLineRef.current) pdcLineRef.current = candleSeriesRef.current.createPriceLine({ price: pdc, color: "#6b7280", lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: "PDC" });
+              else pdcLineRef.current.applyOptions({ price: pdc });
             }
           }
-        }
-
-        // prevDayClose price line
-        if (needsPDC && candleSeriesRef.current) {
-          const pdc = ind.prevDayClose ?? 0;
-          if (pdc > 0) {
-            if (!pdcLineRef.current) {
-              pdcLineRef.current = candleSeriesRef.current.createPriceLine({
-                price: pdc, color: "#6b7280", lineWidth: 1, lineStyle: 3,
-                axisLabelVisible: true, title: "PDC",
-              });
-            } else {
-              pdcLineRef.current.applyOptions({ price: pdc });
-            }
+          if (pcrSeriesRef.current && ind.pcr?.length) {
+            const pcrData = ind.pcr.map(p => ({ time: toTS(p.time), value: p.value })).sort((a, b) => (a.time as number) - (b.time as number));
+            pcrSeriesRef.current.setData(pcrData);
+            if (pcrData.length) setLastPcr(pcrData[pcrData.length - 1].value);
           }
         }
-
-        // PCR chart
-        if (pcrSeriesRef.current && ind.pcr?.length) {
-          const pcrData = ind.pcr
-            .map(p => ({
-              time:  (p.time > 1e10 ? Math.floor(p.time / 1000) : p.time) as UTCTimestamp,
-              value: p.value,
-            }))
-            .sort((a, b) => (a.time as number) - (b.time as number));
-          pcrSeriesRef.current.setData(pcrData);
-          if (pcrData.length > 0) {
-            setLastPcr(pcrData[pcrData.length - 1].value);
-          }
-        }
-
-      } catch (err) {
-        console.warn(`[IndicatorChart:${index}:${strategyId}] error:`, err);
-      }
+      } catch (err) { console.warn(`[chart:${index}:${strategyId}]`, err); }
     };
-
     fetchAll();
-    const pollMs = isMarketOpen ? 1_000 : 60_000;
-    const iv = setInterval(fetchAll, pollMs);
+    const iv = setInterval(fetchAll, isMarketOpen ? 1_000 : 60_000);
     return () => { cancelled = true; clearInterval(iv); };
-  }, [index, timeframe, strategyId, positions, needsORB, needsPDC, isMarketOpen]);
+  }, [index, timeframe, strategyId, positions, needsORB, needsPDC, isMarketOpen, onPriceUpdate]);
 
   const tfBtns = allIntervals.filter(tf => {
-    // Only show relevant intervals
     if (strategyId === "vwap_scalper") return ["1m", "5m"].includes(tf);
     if (strategyId === "supertrend")   return ["1m", "5m", "15m"].includes(tf);
     if (["orion", "gap_orb"].includes(strategyId)) return ["5m", "15m"].includes(tf);
-    return ["30s", "1m", "5m", "15m"].includes(tf);
+    return true;
   });
 
-  return (
-    <div style={{
-      background: "#0B0E17",
-      border: "1px solid #1a1f2e",
-      borderRadius: 12,
-      overflow: "hidden",
-      marginBottom: 12,
-    }}>
-      {/* Header */}
-      <div style={{
-        padding: "8px 14px",
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        borderBottom: "1px solid #1a1f2e",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.1em" }}>
-            {index}
-          </span>
-          {needsEMA && (
-            <span style={{ fontSize: 10, color: "#6b7280" }}>
-              <span style={{ color: "#3B82F6" }}>▬</span> EMA16&nbsp;
-              <span style={{ color: "#F97316" }}>▬</span> EMA64
-            </span>
-          )}
-          {needsVWAP && (
-            <span style={{ fontSize: 10, color: "#A855F7" }}>⋯ VWAP</span>
-          )}
-          {needsST && (
-            <span style={{ fontSize: 10, color: "#6b7280" }}>
-              <span style={{ color: "#22c55e" }}>▬</span> ST Up&nbsp;
-              <span style={{ color: "#ef4444" }}>▬</span> ST Down
-            </span>
-          )}
-        </div>
-        <div style={{ display: "flex", gap: 4 }}>
-          {tfBtns.map(tf => (
-            <button
-              key={tf}
-              onClick={() => setTimeframe(tf)}
-              style={{
-                padding: "2px 8px",
-                borderRadius: 20,
+  if (fullscreen) {
+    // Fullscreen mode — fills parent flex container
+    return (
+      <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "#0A0D14" }}>
+        {/* Compact header: legend left, TF right */}
+        <div style={{
+          flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "0 20px", height: 48, borderBottom: "1px solid #1a1f2e", background: "#0B0E17",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 12, color: "#6b7280" }}>
+            {needsEMA && <><span style={{ color: "#3B82F6" }}>▬</span><span>EMA16</span><span style={{ color: "#F97316" }}>▬</span><span>EMA64</span></>}
+            {needsVWAP && <><span style={{ color: "#A855F7" }}>⋯</span><span>VWAP</span></>}
+            {needsST && <><span style={{ color: "#22c55e" }}>▬</span><span>ST Up</span><span style={{ color: "#ef4444" }}>▬</span><span>ST Down</span></>}
+            {needsORB && <><span style={{ color: "#22c55e" }}>╌</span><span>ORB H</span><span style={{ color: "#ef4444" }}>╌</span><span>ORB L</span></>}
+            {needsPDC && <><span style={{ color: "#6b7280" }}>┄</span><span>PDC</span></>}
+          </div>
+          <div style={{ display: "flex", gap: 4 }}>
+            {tfBtns.map(tf => (
+              <button key={tf} onClick={() => setTimeframe(tf)} style={{
+                padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", letterSpacing: "0.05em", transition: "all 0.15s",
                 border: `1px solid ${timeframe === tf ? accent : "#1f2937"}`,
                 background: timeframe === tf ? accent : "transparent",
-                color: timeframe === tf ? "#000000" : "#6b7280",
-                fontSize: 10,
-                fontWeight: 600,
-                cursor: "pointer",
-                letterSpacing: "0.05em",
-                transition: "all 0.15s",
-              }}
-            >
-              {tf}
-            </button>
+                color: timeframe === tf ? "#000" : "#6b7280",
+              }}>{tf}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Chart fills remaining space */}
+        <div ref={mainContainerRef} style={{ flex: 1, minHeight: 0 }} />
+
+        {/* PCR panel */}
+        {needsPCR && (
+          <>
+            <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: "4px 20px", borderTop: "1px solid #1a1f2e", background: "#080B12" }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: "#374151", letterSpacing: "0.1em" }}>PCR</span>
+              {lastPcr !== null && (
+                <span style={{ fontSize: 14, fontFamily: "monospace", fontWeight: 700, color: lastPcr > 1.3 ? "#22c55e" : lastPcr < 0.7 ? "#ef4444" : "#9ca3af" }}>
+                  {lastPcr.toFixed(2)}
+                </span>
+              )}
+            </div>
+            <div ref={pcrContainerRef} style={{ flexShrink: 0, height: 80 }} />
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // Card mode (not used in this page, kept for compatibility)
+  return (
+    <div style={{ background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, overflow: "hidden", marginBottom: 12 }}>
+      <div style={{ padding: "8px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #1a1f2e" }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.1em" }}>{index}</span>
+        <div style={{ display: "flex", gap: 4 }}>
+          {tfBtns.map(tf => (
+            <button key={tf} onClick={() => setTimeframe(tf)} style={{
+              padding: "2px 8px", borderRadius: 20, fontSize: 10, fontWeight: 600, cursor: "pointer",
+              border: `1px solid ${timeframe === tf ? accent : "#1f2937"}`,
+              background: timeframe === tf ? accent : "transparent",
+              color: timeframe === tf ? "#000" : "#6b7280",
+            }}>{tf}</button>
           ))}
         </div>
       </div>
-
-      {/* Main chart */}
       <div ref={mainContainerRef} style={{ width: "100%", height: 400 }} />
-
-      {/* PCR panel */}
       {needsPCR && (
         <>
-          <div style={{
-            padding: "4px 14px",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            borderTop: "1px solid #1a1f2e",
-            borderBottom: "1px solid #1a1f2e",
-            background: "#080B12",
-          }}>
-            <span style={{ fontSize: 9, fontWeight: 700, color: "#374151", letterSpacing: "0.1em" }}>PCR</span>
-            {lastPcr !== null && (
-              <span style={{
-                fontSize: 12,
-                fontFamily: "monospace",
-                fontWeight: 600,
-                color: lastPcr > 1.3 ? "#22c55e" : lastPcr < 0.7 ? "#ef4444" : "#9ca3af",
-              }}>
-                {lastPcr.toFixed(2)}
-              </span>
-            )}
+          <div style={{ padding: "4px 14px", display: "flex", gap: 8, alignItems: "center", borderTop: "1px solid #1a1f2e", background: "#080B12" }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color: "#374151" }}>PCR</span>
+            {lastPcr !== null && <span style={{ fontSize: 12, fontFamily: "monospace", fontWeight: 600, color: lastPcr > 1.3 ? "#22c55e" : lastPcr < 0.7 ? "#ef4444" : "#9ca3af" }}>{lastPcr.toFixed(2)}</span>}
           </div>
           <div ref={pcrContainerRef} style={{ width: "100%", height: 80 }} />
         </>
@@ -765,7 +525,23 @@ function IndicatorChart({
   );
 }
 
-// ── Strategy Detail Page ─────────────────────────────────────────
+// ── ScrollHint ───────────────────────────────────────────────────
+
+function ScrollHint() {
+  return (
+    <div style={{
+      position: "absolute", bottom: 32, left: "50%", transform: "translateX(-50%)",
+      display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+      color: "#374151", fontSize: 11, letterSpacing: "0.1em", userSelect: "none",
+      animation: "scrollBounce 2s ease-in-out infinite",
+    }}>
+      <span>SCROLL</span>
+      <span style={{ fontSize: 16 }}>↓</span>
+    </div>
+  );
+}
+
+// ── Strategy Detail Page (3-section fullscreen) ──────────────────
 
 export default function StrategyDetailPage() {
   const params = useParams();
@@ -774,15 +550,29 @@ export default function StrategyDetailPage() {
   const rules  = RULES[id] ?? [];
   const charts = STRATEGY_CHARTS[id] ?? [{ index: "NIFTY", interval: "30s" }];
 
+  // Data
   const [strategy,  setStrategy]  = useState<Strategy | null>(null);
   const [capital,   setCapital]   = useState<Capital | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [openPos,   setOpenPos]   = useState<Position[]>([]);
-  const [rulesOpen, setRulesOpen] = useState(true);
   const [loading,   setLoading]   = useState(true);
-  const [expandedTrade, setExpandedTrade] = useState<string | null>(null);
 
-  // Load strategy + capital (15s)
+  // UI state
+  const [activeSection,  setActiveSection]  = useState(0);
+  const [activeChartIdx, setActiveChartIdx] = useState(0);
+  const [currentPrice,   setCurrentPrice]   = useState(0);
+  const [prevClose,      setPrevClose]      = useState(0);
+  const [expandedTrade,  setExpandedTrade]  = useState<string | null>(null);
+
+  // Refs
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sec0Ref   = useRef<HTMLElement>(null);
+  const sec1Ref   = useRef<HTMLElement>(null);
+  const sec2Ref   = useRef<HTMLElement>(null);
+  const sectionRefs = [sec0Ref, sec1Ref, sec2Ref];
+
+  // ── Data fetching (unchanged logic) ──
+
   const loadStrategyCapital = useCallback(async () => {
     const [sRes, cRes] = await Promise.all([
       supabase.from("strategies").select("*").eq("id", id).single(),
@@ -799,15 +589,10 @@ export default function StrategyDetailPage() {
     return () => clearInterval(iv);
   }, [loadStrategyCapital]);
 
-  // Load all positions (15s)
   useEffect(() => {
     const load = async () => {
-      const { data } = await supabase
-        .from("strategy_positions")
-        .select("*")
-        .eq("strategy_id", id)
-        .order("opened_at", { ascending: false })
-        .limit(300);
+      const { data } = await supabase.from("strategy_positions").select("*")
+        .eq("strategy_id", id).order("opened_at", { ascending: false }).limit(300);
       if (data) setPositions(data as Position[]);
     };
     load();
@@ -815,14 +600,10 @@ export default function StrategyDetailPage() {
     return () => clearInterval(iv);
   }, [id]);
 
-  // Live open positions (1s PnL update)
   useEffect(() => {
     const load = async () => {
-      const { data } = await supabase
-        .from("strategy_positions")
-        .select("*")
-        .eq("strategy_id", id)
-        .eq("status", "OPEN");
+      const { data } = await supabase.from("strategy_positions").select("*")
+        .eq("strategy_id", id).eq("status", "OPEN");
       if (data) setOpenPos(data as Position[]);
     };
     load();
@@ -830,323 +611,465 @@ export default function StrategyDetailPage() {
     return () => clearInterval(iv);
   }, [id]);
 
-  const allocated  = capital?.allocated_capital ?? 100_000;
-  const closedPnl  = capital?.total_pnl ?? 0;
-  const openPnl    = openPos.reduce((s, p) => s + (p.pnl ?? 0), 0);
-  const liveCapital = allocated + closedPnl + openPnl;
-  const livePnl    = liveCapital - allocated;
-  const retPct     = (livePnl / allocated) * 100;
-  const sharpe     = capital?.sharpe_ratio ?? 0;
-  const winRate    = capital?.win_rate ?? 0;
-  const today      = capital?.today_trades ?? 0;
-  const lifetime   = capital?.lifetime_trades ?? 0;
+  // ── Scroll & keyboard navigation ──
 
+  const scrollToSection = useCallback((idx: number) => {
+    sectionRefs[idx].current?.scrollIntoView({ behavior: "smooth" });
+    setActiveSection(idx);
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // IntersectionObserver to track active section
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach(e => {
+          if (e.isIntersecting && e.intersectionRatio >= 0.5) {
+            const idx = sectionRefs.findIndex(r => r.current === e.target);
+            if (idx !== -1) setActiveSection(idx);
+          }
+        });
+      },
+      { root: container, threshold: 0.5 }
+    );
+    sectionRefs.forEach(r => r.current && observer.observe(r.current));
+    return () => observer.disconnect();
+  }, [loading]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handle = (e: KeyboardEvent) => {
+      if (e.key === "ArrowDown" || e.key === "PageDown") {
+        e.preventDefault();
+        scrollToSection(Math.min(activeSection + 1, 2));
+      }
+      if (e.key === "ArrowUp" || e.key === "PageUp") {
+        e.preventDefault();
+        scrollToSection(Math.max(activeSection - 1, 0));
+      }
+    };
+    window.addEventListener("keydown", handle);
+    return () => window.removeEventListener("keydown", handle);
+  }, [activeSection, scrollToSection]);
+
+  // ── Derived values ──
+  const allocated   = capital?.allocated_capital ?? 100_000;
+  const closedPnl   = capital?.total_pnl ?? 0;
+  const openPnl     = openPos.reduce((s, p) => s + (p.pnl ?? 0), 0);
+  const liveCapital = allocated + closedPnl + openPnl;
+  const livePnl     = liveCapital - allocated;
+  const retPct      = (livePnl / allocated) * 100;
+  const sharpe      = capital?.sharpe_ratio ?? 0;
+  const winRate     = capital?.win_rate ?? 0;
+  const today       = capital?.today_trades ?? 0;
+  const lifetime    = capital?.lifetime_trades ?? 0;
+  const openTrades  = openPos;
   const closedTrades = positions
     .filter(p => p.status === "CLOSED")
     .sort((a, b) => new Date(b.closed_at ?? 0).getTime() - new Date(a.closed_at ?? 0).getTime());
+  const allPositions = [...openTrades, ...closedTrades];
 
-  // Merge openPos (1s) into display list
-  const openTrades = openPos;
+  const chartConfig  = charts[activeChartIdx] ?? charts[0];
+  const priceChange  = currentPrice - prevClose;
+  const changePct    = prevClose > 0 ? (priceChange / prevClose) * 100 : 0;
+  const priceColor   = priceChange > 0 ? "#4ade80" : priceChange < 0 ? "#f87171" : "#9ca3af";
 
-  const thStyle: React.CSSProperties = {
-    padding: "6px 10px",
-    fontSize: 9,
-    fontWeight: 600,
-    color: "#374151",
-    textAlign: "left",
-    letterSpacing: "0.08em",
-    whiteSpace: "nowrap",
-  };
+  // ── Stats bar data ──
+  const stats = [
+    { label: "INITIAL CAPITAL", value: `₹${fmtINR(allocated)}`,      color: "#9ca3af" },
+    { label: "TOTAL PnL",       value: pnlStr(livePnl),               color: pnlColor(livePnl) },
+    { label: "CURRENT CAPITAL", value: `₹${fmtINR(liveCapital)}`,     color: "#ffffff" },
+    { label: "RETURN",          value: fmtPct(retPct),                 color: pnlColor(retPct) },
+    { label: "SHARPE",          value: sharpe.toFixed(2),              color: "#ffffff" },
+    { label: "TOTAL TRADES",    value: String(lifetime),               color: "#ffffff" },
+    { label: "TODAY",           value: String(today),                  color: "#ffffff" },
+    { label: "WIN RATE",        value: `${winRate.toFixed(1)}%`,       color: winRate >= 50 ? "#4ade80" : "#f87171" },
+  ];
 
   if (loading) {
     return (
-      <div className="page-content" style={{ background: "#0A0D14", minHeight: "100vh", padding: "18px 16px 32px", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ fontSize: 12, color: "#374151" }}>Loading strategy...</div>
+      <div style={{ height: "100vh", background: "#0A0D14", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ fontSize: 14, color: "#374151", letterSpacing: "0.1em" }}>LOADING...</div>
       </div>
     );
   }
 
+  const thStyle: React.CSSProperties = {
+    padding: "14px 16px", fontSize: 11, fontWeight: 700, color: "#4b5563",
+    textAlign: "left", letterSpacing: "0.08em", whiteSpace: "nowrap",
+    borderBottom: "1px solid #1a1f2e",
+  };
+
   return (
-    <div className="page-content" style={{ background: "#0A0D14", minHeight: "100vh", padding: "18px 16px 32px" }}>
+    <>
+      {/* Inject keyframe for scroll bounce */}
+      <style>{`
+        @keyframes scrollBounce {
+          0%, 100% { opacity: 0.4; transform: translateX(-50%) translateY(0); }
+          50%       { opacity: 1;   transform: translateX(-50%) translateY(6px); }
+        }
+      `}</style>
 
-      {/* ── Header ── */}
-      <div style={{ marginBottom: 20 }}>
-        <Link href="/" style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 6,
-          fontSize: 11,
-          color: "#6b7280",
-          marginBottom: 12,
-          textDecoration: "none",
-        }}>
-          ← Indian Strategies Dashboard
-        </Link>
-        <div className="breadcrumb" style={{ textAlign: "center", fontSize: 9, color: "#374151", letterSpacing: "0.12em", marginBottom: 4 }}>
-          AI TRADING ARENA · SEASON 1 · PAPER TRADING
-        </div>
-        <h1 style={{
-          fontSize: 28,
-          fontWeight: 700,
-          color: accent,
-          textAlign: "center",
-          margin: 0,
-        }}>
-          {strategy?.slot_number != null ? `Strategy ${strategy.slot_number} — ` : ""}{strategy?.name ?? id.replace(/_/g, " ").toUpperCase()}
-        </h1>
-        {strategy?.description && (
-          <p style={{ fontSize: 12, color: "#6b7280", textAlign: "center", margin: "6px 0 0" }}>
-            {strategy.description}
-          </p>
-        )}
-      </div>
-
-      {/* ── Stats bar (8 cols) ── */}
-      <div className="detail-stats-bar" style={{
-        background: "#0B0E17",
-        border: "1px solid #1a1f2e",
-        borderTop: `3px solid ${accent}`,
-        borderRadius: 12,
-        overflow: "hidden",
-        marginBottom: 16,
+      {/* Dot navigation — fixed right */}
+      <div style={{
+        position: "fixed", right: 24, top: "50%", transform: "translateY(-50%)",
+        zIndex: 200, display: "flex", flexDirection: "column", gap: 14,
       }}>
-        {[
-          { label: "INITIAL CAPITAL", value: `₹${fmtINR(allocated)}`,         color: "#9ca3af" },
-          { label: "TOTAL PnL",       value: pnlStr(livePnl),                  color: pnlColor(livePnl) },
-          { label: "CURRENT CAPITAL", value: `₹${fmtINR(liveCapital)}`,        color: "#ffffff" },
-          { label: "RETURN",          value: fmtPct(retPct),                    color: pnlColor(retPct) },
-          { label: "SHARPE",          value: sharpe.toFixed(2),                 color: "#ffffff" },
-          { label: "TOTAL TRADES",    value: String(lifetime),                  color: "#ffffff" },
-          { label: "TODAY",           value: String(today),                     color: "#ffffff" },
-          { label: "WIN RATE",        value: `${winRate.toFixed(1)}%`,          color: winRate >= 50 ? "#4ade80" : "#f87171" },
-        ].map((s, i) => (
-          <div key={s.label} style={{
-            padding: "14px 12px",
-            borderLeft: i > 0 ? "1px solid #1a1f2e" : undefined,
-          }}>
-            <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 5, fontWeight: 600 }}>{s.label}</div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
-          </div>
+        {[0, 1, 2].map(i => (
+          <button key={i} onClick={() => scrollToSection(i)} title={["Overview", "Chart", "Trades"][i]} style={{
+            width: activeSection === i ? 10 : 6,
+            height: activeSection === i ? 10 : 6,
+            borderRadius: "50%",
+            background: activeSection === i ? accent : "#374151",
+            border: `1px solid ${activeSection === i ? accent : "#4b5563"}`,
+            cursor: "pointer", padding: 0, transition: "all 0.25s",
+          }} />
         ))}
       </div>
 
-      {/* ── Strategy Rules ── */}
-      <div style={{
-        background: "#0B0E17",
-        border: "1px solid #1a1f2e",
-        borderRadius: 12,
-        overflow: "hidden",
-        marginBottom: 16,
-      }}>
-        <div
-          onClick={() => setRulesOpen(v => !v)}
+      {/* Scroll container */}
+      <div
+        ref={scrollRef}
+        style={{
+          height: "100vh", overflowY: "auto",
+          scrollSnapType: "y mandatory", scrollBehavior: "smooth",
+          background: "#0A0D14",
+        }}
+      >
+
+        {/* ═══════════════════════════════════════
+            SECTION 1 — STRATEGY OVERVIEW
+        ═══════════════════════════════════════ */}
+        <section
+          ref={sec0Ref}
           style={{
-            padding: "10px 20px",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            cursor: "pointer",
-            userSelect: "none",
+            height: "100vh", scrollSnapAlign: "start",
+            display: "flex", flexDirection: "column",
+            position: "relative", overflow: "hidden",
           }}
         >
-          <span style={{ fontSize: 10, fontWeight: 700, color: "#4b5563", letterSpacing: "0.1em" }}>
-            STRATEGY RULES
-          </span>
-          <span style={{ fontSize: 10, color: "#374151" }}>{rulesOpen ? "▲ COLLAPSE" : "▼ EXPAND"}</span>
-        </div>
-        {rulesOpen && rules.length > 0 && (
-          <div style={{ padding: "0 20px 16px", borderTop: "1px solid #0f1520" }}>
-            {rules.map((line, i) => {
-              const isIndented = line.startsWith("  ");
-              return (
-                <div key={i} style={{
-                  fontSize: 11,
-                  color: isIndented ? "#6b7280" : "#9ca3af",
-                  padding: "2px 0",
-                  lineHeight: 1.65,
-                  paddingLeft: isIndented ? 20 : 0,
+          {/* Back link */}
+          <div style={{ flexShrink: 0, padding: "24px 40px 0" }}>
+            <Link href="/" style={{
+              display: "inline-flex", alignItems: "center", gap: 8,
+              fontSize: 12, color: "#4b5563", letterSpacing: "0.05em", textDecoration: "none",
+              transition: "color 0.15s",
+            }}
+              onMouseEnter={e => (e.currentTarget.style.color = "#9ca3af")}
+              onMouseLeave={e => (e.currentTarget.style.color = "#4b5563")}
+            >
+              ← Indian Strategies Dashboard
+            </Link>
+          </div>
+
+          {/* Center content */}
+          <div style={{
+            flex: 1, display: "flex", flexDirection: "column",
+            justifyContent: "center", padding: "0 60px 60px",
+            maxWidth: 1100, margin: "0 auto", width: "100%",
+          }}>
+            {/* Strategy label */}
+            <div style={{
+              fontSize: 11, fontWeight: 700, color: accent, letterSpacing: "0.25em",
+              textTransform: "uppercase", marginBottom: 14,
+            }}>
+              STRATEGY {strategy?.slot_number ?? ""}
+            </div>
+
+            {/* Strategy name */}
+            <h1 style={{
+              fontSize: "clamp(36px, 5vw, 64px)", fontWeight: 700,
+              color: "#ffffff", margin: "0 0 16px", lineHeight: 1.1,
+              letterSpacing: "-0.02em",
+            }}>
+              {strategy?.name ?? id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+            </h1>
+
+            {/* Description */}
+            {strategy?.description && (
+              <p style={{ fontSize: 18, color: "#6b7280", margin: "0 0 36px", lineHeight: 1.6, maxWidth: 700 }}>
+                {strategy.description}
+              </p>
+            )}
+
+            {/* Divider */}
+            <div style={{ height: 1, background: `linear-gradient(to right, ${accent}40, transparent)`, marginBottom: 36 }} />
+
+            {/* Stats bar */}
+            <div style={{
+              display: "grid", gridTemplateColumns: "repeat(8, 1fr)",
+              background: "#0B0E17", border: `1px solid ${accent}20`,
+              borderTop: `3px solid ${accent}`, borderRadius: 12,
+              overflow: "hidden", marginBottom: 48,
+            }} className="detail-stats-bar">
+              {stats.map((s, i) => (
+                <div key={s.label} style={{
+                  padding: "18px 14px",
+                  borderLeft: i > 0 ? "1px solid #1a1f2e" : undefined,
                 }}>
-                  {line === "" ? <br /> : isIndented ? line.trim() : `· ${line}`}
+                  <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 8, fontWeight: 700 }}>{s.label}</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
                 </div>
-              );
-            })}
+              ))}
+            </div>
+
+            {/* Strategy rules */}
+            {rules.length > 0 && (
+              <div style={{ maxWidth: 800 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#4b5563", letterSpacing: "0.15em", marginBottom: 20 }}>
+                  STRATEGY RULES
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  {rules.map((line, i) => {
+                    if (line === "") return <div key={i} style={{ height: 10 }} />;
+                    const isIndented = line.startsWith("  ");
+                    return (
+                      <div key={i} style={{
+                        fontSize: 16, lineHeight: 1.8,
+                        color: isIndented ? "#6b7280" : "#c9d1d9",
+                        paddingLeft: isIndented ? 24 : 0,
+                      }}>
+                        {isIndented ? `· ${line.trim()}` : line}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
-        )}
-      </div>
 
-      {/* ── Charts ── */}
-      <div style={{ marginBottom: 16 }}>
-        {charts.map(cfg => (
-          <IndicatorChart
-            key={`${cfg.index}-${cfg.interval}`}
-            strategyId={id}
-            index={cfg.index}
-            defaultInterval={cfg.interval}
-            positions={[...openTrades, ...closedTrades]}
-          />
-        ))}
-      </div>
+          <ScrollHint />
+        </section>
 
-      {/* ── Open Trades ── */}
-      {openTrades.length > 0 && (
-        <div style={{
-          background: "#0B0E17",
-          border: "1px solid #1a1f2e",
-          borderRadius: 12,
-          overflow: "hidden",
-          marginBottom: 16,
-        }}>
+        {/* ═══════════════════════════════════════
+            SECTION 2 — LIVE CHART
+        ═══════════════════════════════════════ */}
+        <section
+          ref={sec1Ref}
+          style={{
+            height: "100vh", scrollSnapAlign: "start",
+            display: "flex", flexDirection: "column",
+            position: "relative",
+          }}
+        >
+          {/* Chart top bar */}
           <div style={{
-            padding: "10px 20px",
-            borderBottom: "1px solid #111827",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            fontSize: 10,
-            fontWeight: 700,
-            color: "#f5d547",
-            letterSpacing: "0.1em",
+            flexShrink: 0, display: "flex", alignItems: "center",
+            justifyContent: "space-between", padding: "0 24px",
+            height: 60, background: "#0B0E17", borderBottom: "1px solid #1a1f2e",
+            gap: 16,
           }}>
-            <span
-              className="pulse"
-              style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: "#f5d547", flexShrink: 0 }}
+            {/* Index tabs */}
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              {charts.map((cfg, i) => (
+                <button key={cfg.index} onClick={() => { setActiveChartIdx(i); setCurrentPrice(0); setPrevClose(0); }} style={{
+                  padding: "6px 16px", borderRadius: 20, fontSize: 12, fontWeight: 700,
+                  cursor: "pointer", letterSpacing: "0.08em", transition: "all 0.15s",
+                  border: `1px solid ${activeChartIdx === i ? accent : "#1f2937"}`,
+                  background: activeChartIdx === i ? `${accent}18` : "transparent",
+                  color: activeChartIdx === i ? accent : "#4b5563",
+                }}>{cfg.index}</button>
+              ))}
+            </div>
+
+            {/* Current price */}
+            {currentPrice > 0 && (
+              <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+                <span style={{ fontSize: 22, fontWeight: 700, color: "#ffffff", fontFamily: "monospace" }}>
+                  {currentPrice.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+                </span>
+                <span style={{ fontSize: 13, fontFamily: "monospace", color: priceColor, fontWeight: 600 }}>
+                  {priceChange >= 0 ? "+" : ""}{priceChange.toFixed(2)} ({changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%)
+                </span>
+              </div>
+            )}
+
+            {/* Spacer */}
+            <div />
+          </div>
+
+          {/* Chart fills remaining height */}
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <IndicatorChart
+              key={chartConfig.index}
+              strategyId={id}
+              index={chartConfig.index}
+              defaultInterval={chartConfig.interval}
+              positions={allPositions}
+              fullscreen
+              onPriceUpdate={(price, prev) => { setCurrentPrice(price); setPrevClose(prev); }}
             />
-            OPEN TRADES ({openTrades.length}) · live PnL updates every 1s
           </div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
-              <thead>
-                <tr style={{ background: "#070A11" }}>
-                  {["Symbol", "Type", "Entry Price", "Entry Time", "Qty", "Current Price", "Live PnL", "Stop Loss", "Trail SL", "Duration"].map(h => (
-                    <th key={h} style={thStyle}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {openTrades.map(pos => (
-                  <Fragment key={pos.id}>
-                    <tr style={{ borderTop: "1px solid #0f1520", background: "rgba(245,213,71,0.01)", cursor: "pointer" }}
-                      onClick={() => setExpandedTrade(prev => prev === pos.id ? null : pos.id)}>
-                      <td style={{ padding: "7px 10px", fontSize: 11, color: "#c9d1d9", whiteSpace: "nowrap" }}>{pos.symbol}</td>
-                      <td style={{ padding: "7px 8px", fontSize: 11, fontWeight: 700, color: pos.type === "CE" ? "#22c55e" : "#ef4444" }}>{pos.type}</td>
-                      <td style={{ padding: "7px 8px", fontSize: 11, color: "#6b7280", fontFamily: "monospace" }}>₹{pos.entry_price.toFixed(2)}</td>
-                      <td style={{ padding: "7px 8px", fontSize: 10, color: "#4b5563" }}>{fmtTime(pos.opened_at)}</td>
-                      <td style={{ padding: "7px 8px", fontSize: 11, color: "#9ca3af" }}>{pos.quantity}</td>
-                      <td style={{ padding: "7px 8px", fontSize: 11, color: "#f5d547", fontFamily: "monospace", fontWeight: 600 }}>₹{(pos.current_price ?? 0).toFixed(2)}</td>
-                      <td style={{ padding: "7px 8px", fontSize: 11, fontFamily: "monospace", fontWeight: 600, color: pnlColor(pos.pnl ?? 0) }}>{pnlStr(pos.pnl ?? 0)}</td>
-                      <td style={{ padding: "7px 8px", fontSize: 11, color: "#ef4444", fontFamily: "monospace" }}>
-                        {pos.stop_loss ? `₹${pos.stop_loss.toFixed(2)}` : "—"}
-                      </td>
-                      <td style={{ padding: "7px 8px", fontSize: 11, fontFamily: "monospace", color: pos.trail_sl ? "#f5d547" : "#374151" }}>
-                        {pos.trail_sl ? `₹${pos.trail_sl.toFixed(2)}` : "inactive"}
-                      </td>
-                      <td style={{ padding: "7px 8px", fontSize: 10, color: "#6b7280" }}>{formatDuration(pos.opened_at, null)}</td>
-                    </tr>
-                    {expandedTrade === pos.id && (
-                      <tr style={{ borderTop: "1px solid #0f1520" }}>
-                        <td colSpan={10} style={{ padding: "14px 20px", background: "#080B12" }}>
-                          <div style={{ fontSize: 11, color: "#9ca3af", lineHeight: 1.7 }}>
-                            <strong style={{ fontSize: 9, color: "#374151", letterSpacing: "0.1em" }}>WHY THIS TRADE WAS ENTERED: </strong>
-                            {getEntryReason(pos.strategy_id, pos.type)}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
-      {/* ── Closed Trades ── */}
-      {closedTrades.length > 0 && (
-        <div style={{
-          background: "#0B0E17",
-          border: "1px solid #1a1f2e",
-          borderRadius: 12,
-          overflow: "hidden",
-          marginBottom: 16,
-        }}>
-          <div style={{
-            padding: "10px 20px",
-            borderBottom: "1px solid #111827",
-            fontSize: 10,
-            fontWeight: 700,
-            color: "#4b5563",
-            letterSpacing: "0.1em",
-          }}>
-            CLOSED TRADES ({closedTrades.length})
+          <ScrollHint />
+        </section>
+
+        {/* ═══════════════════════════════════════
+            SECTION 3 — TRADES
+        ═══════════════════════════════════════ */}
+        <section
+          ref={sec2Ref}
+          style={{
+            minHeight: "100vh", scrollSnapAlign: "start",
+            display: "flex", flexDirection: "column",
+            padding: "60px 40px 80px",
+          }}
+        >
+          {/* Section title */}
+          <div style={{ textAlign: "center", marginBottom: 56 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: accent, letterSpacing: "0.25em", marginBottom: 12 }}>
+              SECTION 3
+            </div>
+            <h2 style={{ fontSize: 48, fontWeight: 700, color: "#ffffff", margin: 0, letterSpacing: "-0.02em" }}>
+              Trades
+            </h2>
           </div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
-              <thead>
-                <tr style={{ background: "#070A11" }}>
-                  {["Symbol", "Type", "Entry", "Exit", "Entry Time", "Exit Time", "Duration", "Qty", "PnL", "Return %", "Exit Reason"].map(h => (
-                    <th key={h} style={thStyle}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {closedTrades.map(pos => {
-                  const ret = pos.entry_price > 0
-                    ? ((( pos.exit_price ?? pos.entry_price) - pos.entry_price) / pos.entry_price) * 100
-                    : 0;
-                  return (
-                    <Fragment key={pos.id}>
-                      <tr style={{ borderTop: "1px solid #0f1520", cursor: "pointer", background: expandedTrade === pos.id ? "rgba(255,255,255,0.02)" : "transparent" }}
-                        onClick={() => setExpandedTrade(prev => prev === pos.id ? null : pos.id)}>
-                        <td style={{ padding: "7px 10px", fontSize: 11, color: "#6b7280", whiteSpace: "nowrap" }}>{pos.symbol}</td>
-                        <td style={{ padding: "7px 8px", fontSize: 11, fontWeight: 700, color: pos.type === "CE" ? "#22c55e" : "#ef4444" }}>{pos.type}</td>
-                        <td style={{ padding: "7px 8px", fontSize: 11, color: "#6b7280", fontFamily: "monospace" }}>₹{pos.entry_price.toFixed(2)}</td>
-                        <td style={{ padding: "7px 8px", fontSize: 11, color: "#4b5563", fontFamily: "monospace" }}>
-                          {pos.exit_price != null ? `₹${pos.exit_price.toFixed(2)}` : "—"}
-                        </td>
-                        <td style={{ padding: "7px 8px", fontSize: 10, color: "#374151" }}>{fmtTime(pos.opened_at)}</td>
-                        <td style={{ padding: "7px 8px", fontSize: 10, color: "#374151" }}>{fmtTime(pos.closed_at)}</td>
-                        <td style={{ padding: "7px 8px", fontSize: 10, color: "#6b7280" }}>{formatDuration(pos.opened_at, pos.closed_at)}</td>
-                        <td style={{ padding: "7px 8px", fontSize: 11, color: "#6b7280" }}>{pos.quantity}</td>
-                        <td style={{ padding: "7px 8px", fontSize: 11, fontFamily: "monospace", fontWeight: 600, color: pnlColor(pos.pnl ?? 0) }}>
-                          {pnlStr(pos.pnl ?? 0)}
-                        </td>
-                        <td style={{ padding: "7px 8px", fontSize: 11, fontFamily: "monospace", color: pnlColor(ret) }}>
-                          {fmtPct(ret)}
-                        </td>
-                        <td style={{ padding: "7px 8px", fontSize: 10, color: "#374151", whiteSpace: "nowrap" }}>
-                          {pos.exit_reason?.replace(/_/g, " ") ?? "—"}
-                        </td>
-                      </tr>
-                      {expandedTrade === pos.id && (
-                        <tr style={{ borderTop: "1px solid #0f1520" }}>
-                          <td colSpan={11} style={{ padding: "14px 20px", background: "#080B12" }}>
-                            <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
-                              <div style={{ flex: 1, minWidth: 220 }}>
-                                <div style={{ fontSize: 9, fontWeight: 700, color: "#374151", letterSpacing: "0.1em", marginBottom: 7 }}>WHY THIS TRADE WAS ENTERED</div>
-                                <div style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.7 }}>{getEntryReason(pos.strategy_id, pos.type)}</div>
-                              </div>
-                              <div style={{ flex: 1, minWidth: 220 }}>
-                                <div style={{ fontSize: 9, fontWeight: 700, color: "#374151", letterSpacing: "0.1em", marginBottom: 7 }}>WHY THIS TRADE WAS CLOSED</div>
-                                <div style={{ fontSize: 11, color: "#9ca3af", lineHeight: 1.7 }}>{pos.exit_reason_detail ?? fallbackExitText(pos)}</div>
-                              </div>
-                            </div>
-                          </td>
+
+          {openTrades.length === 0 && closedTrades.length === 0 ? (
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 40, marginBottom: 20 }}>📊</div>
+                <div style={{ fontSize: 20, color: "#374151", fontWeight: 600 }}>No trades taken yet</div>
+                <div style={{ fontSize: 16, color: "#1f2937", marginTop: 8 }}>Strategy is scanning for signals</div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ flex: 1 }}>
+
+              {/* ── Open Trades ── */}
+              {openTrades.length > 0 && (
+                <div style={{ marginBottom: 60 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+                    <span className="pulse" style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#f5d547" }} />
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#f5d547", letterSpacing: "0.15em" }}>OPEN TRADES</span>
+                    <span style={{ fontSize: 13, color: "#4b5563" }}>· {openTrades.length} position{openTrades.length !== 1 ? "s" : ""} · live PnL every 1s</span>
+                  </div>
+                  <div style={{ overflowX: "auto", background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, overflow: "hidden" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
+                      <thead>
+                        <tr style={{ background: "#070A11" }}>
+                          {["Symbol", "Type", "Entry", "Current Price", "Qty", "Live PnL", "SL", "Trail SL", "Duration"].map(h => (
+                            <th key={h} style={thStyle}>{h}</th>
+                          ))}
                         </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+                      </thead>
+                      <tbody>
+                        {openTrades.map(pos => (
+                          <Fragment key={pos.id}>
+                            <tr
+                              onClick={() => setExpandedTrade(p => p === pos.id ? null : pos.id)}
+                              style={{ borderTop: "1px solid #111827", cursor: "pointer", transition: "background 0.15s",
+                                background: expandedTrade === pos.id ? `${accent}08` : "transparent" }}
+                              onMouseEnter={e => { if (expandedTrade !== pos.id) e.currentTarget.style.background = "rgba(255,255,255,0.02)"; }}
+                              onMouseLeave={e => { if (expandedTrade !== pos.id) e.currentTarget.style.background = "transparent"; }}
+                            >
+                              <td style={{ padding: "14px 16px", fontSize: 14, color: "#c9d1d9", whiteSpace: "nowrap", fontFamily: "monospace" }}>{pos.symbol}</td>
+                              <td style={{ padding: "14px 16px", fontSize: 14, fontWeight: 700, color: pos.type === "CE" ? "#22c55e" : "#ef4444" }}>{pos.type}</td>
+                              <td style={{ padding: "14px 16px", fontSize: 14, color: "#6b7280", fontFamily: "monospace" }}>₹{pos.entry_price.toFixed(2)}</td>
+                              <td style={{ padding: "14px 16px", fontSize: 14, color: "#f5d547", fontFamily: "monospace", fontWeight: 700 }}>₹{(pos.current_price ?? 0).toFixed(2)}</td>
+                              <td style={{ padding: "14px 16px", fontSize: 14, color: "#9ca3af" }}>{pos.quantity}</td>
+                              <td style={{ padding: "14px 16px", fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: pnlColor(pos.pnl ?? 0) }}>{pnlStr(pos.pnl ?? 0)}</td>
+                              <td style={{ padding: "14px 16px", fontSize: 14, color: "#ef4444", fontFamily: "monospace" }}>
+                                {pos.stop_loss ? `₹${pos.stop_loss.toFixed(2)}` : "—"}
+                              </td>
+                              <td style={{ padding: "14px 16px", fontSize: 14, fontFamily: "monospace", color: pos.trail_sl ? "#f5d547" : "#374151" }}>
+                                {pos.trail_sl ? `₹${pos.trail_sl.toFixed(2)}` : "—"}
+                              </td>
+                              <td style={{ padding: "14px 16px", fontSize: 14, color: "#6b7280" }}>{formatDuration(pos.opened_at, null)}</td>
+                            </tr>
+                            {expandedTrade === pos.id && (
+                              <tr style={{ borderTop: "1px solid #111827" }}>
+                                <td colSpan={9} style={{ padding: "20px 24px", background: "#080B12" }}>
+                                  <div style={{ fontSize: 11, color: "#4b5563", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 8 }}>WHY THIS TRADE WAS ENTERED</div>
+                                  <div style={{ fontSize: 16, color: "#9ca3af", lineHeight: 1.8 }}>{getEntryReason(pos.strategy_id, pos.type)}</div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
-      {openTrades.length === 0 && closedTrades.length === 0 && !loading && (
-        <div style={{ padding: "36px 20px", textAlign: "center", fontSize: 12, color: "#1f2937" }}>
-          No trades yet for this strategy.
-        </div>
-      )}
-    </div>
+              {/* ── Divider ── */}
+              {openTrades.length > 0 && closedTrades.length > 0 && (
+                <div style={{ height: 1, background: "#1a1f2e", marginBottom: 48 }} />
+              )}
+
+              {/* ── Closed Trades ── */}
+              {closedTrades.length > 0 && (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#4b5563", letterSpacing: "0.15em" }}>CLOSED TRADES</span>
+                    <span style={{ fontSize: 13, color: "#374151" }}>· {closedTrades.length} completed</span>
+                  </div>
+                  <div style={{ overflowX: "auto", background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, overflow: "hidden" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 960 }}>
+                      <thead>
+                        <tr style={{ background: "#070A11" }}>
+                          {["Symbol", "Type", "Entry", "Exit", "Duration", "Qty", "PnL", "Return %", "Exit Reason"].map(h => (
+                            <th key={h} style={thStyle}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {closedTrades.map(pos => {
+                          const ret = pos.entry_price > 0
+                            ? (((pos.exit_price ?? pos.entry_price) - pos.entry_price) / pos.entry_price) * 100 : 0;
+                          return (
+                            <Fragment key={pos.id}>
+                              <tr
+                                onClick={() => setExpandedTrade(p => p === pos.id ? null : pos.id)}
+                                style={{ borderTop: "1px solid #111827", cursor: "pointer", transition: "background 0.15s",
+                                  background: expandedTrade === pos.id ? "rgba(255,255,255,0.03)" : "transparent" }}
+                                onMouseEnter={e => { if (expandedTrade !== pos.id) e.currentTarget.style.background = "rgba(255,255,255,0.02)"; }}
+                                onMouseLeave={e => { if (expandedTrade !== pos.id) e.currentTarget.style.background = "transparent"; }}
+                              >
+                                <td style={{ padding: "14px 16px", fontSize: 14, color: "#6b7280", whiteSpace: "nowrap", fontFamily: "monospace" }}>{pos.symbol}</td>
+                                <td style={{ padding: "14px 16px", fontSize: 14, fontWeight: 700, color: pos.type === "CE" ? "#22c55e" : "#ef4444" }}>{pos.type}</td>
+                                <td style={{ padding: "14px 16px", fontSize: 14, color: "#6b7280", fontFamily: "monospace" }}>₹{pos.entry_price.toFixed(2)}</td>
+                                <td style={{ padding: "14px 16px", fontSize: 14, color: "#4b5563", fontFamily: "monospace" }}>
+                                  {pos.exit_price != null ? `₹${pos.exit_price.toFixed(2)}` : "—"}
+                                </td>
+                                <td style={{ padding: "14px 16px", fontSize: 14, color: "#6b7280" }}>{formatDuration(pos.opened_at, pos.closed_at)}</td>
+                                <td style={{ padding: "14px 16px", fontSize: 14, color: "#6b7280" }}>{pos.quantity}</td>
+                                <td style={{ padding: "14px 16px", fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: pnlColor(pos.pnl ?? 0) }}>{pnlStr(pos.pnl ?? 0)}</td>
+                                <td style={{ padding: "14px 16px", fontSize: 14, fontFamily: "monospace", color: pnlColor(ret) }}>{fmtPct(ret)}</td>
+                                <td style={{ padding: "14px 16px", fontSize: 13, color: "#374151", whiteSpace: "nowrap" }}>
+                                  {pos.exit_reason?.replace(/_/g, " ") ?? "—"}
+                                </td>
+                              </tr>
+                              {expandedTrade === pos.id && (
+                                <tr style={{ borderTop: "1px solid #111827" }}>
+                                  <td colSpan={9} style={{ padding: "20px 24px", background: "#080B12" }}>
+                                    <div style={{ display: "flex", gap: 48, flexWrap: "wrap" }}>
+                                      <div style={{ flex: 1, minWidth: 260 }}>
+                                        <div style={{ fontSize: 11, color: "#4b5563", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 8 }}>WHY THIS TRADE WAS ENTERED</div>
+                                        <div style={{ fontSize: 16, color: "#6b7280", lineHeight: 1.8 }}>{getEntryReason(pos.strategy_id, pos.type)}</div>
+                                      </div>
+                                      <div style={{ flex: 1, minWidth: 260 }}>
+                                        <div style={{ fontSize: 11, color: "#4b5563", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 8 }}>WHY THIS TRADE WAS CLOSED</div>
+                                        <div style={{ fontSize: 16, color: "#9ca3af", lineHeight: 1.8 }}>{pos.exit_reason_detail ?? fallbackExitText(pos)}</div>
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      </div>
+    </>
   );
 }
