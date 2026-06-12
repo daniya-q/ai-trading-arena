@@ -2740,6 +2740,11 @@ async function loadTokenFromSupabase(): Promise<void> {
   try {
     const { data, error } = await supabase.from("config").select("value").eq("key","UPSTOX_ACCESS_TOKEN").single();
     if (error || !data?.value) { console.log("[Token] No token in Supabase config"); return; }
+    // Don't overwrite a token already present from Railway env vars
+    if (process.env.UPSTOX_ACCESS_TOKEN) {
+      console.log("[Token] Railway env var present — skipping Supabase override");
+      return;
+    }
     process.env.UPSTOX_ACCESS_TOKEN = (data as { value: string }).value;
     console.log("[Token] Loaded from Supabase config");
   } catch (err) {
@@ -2847,11 +2852,14 @@ app.listen(PORT, () => {
 
 console.log("[Server] Starting...");
 console.log(`[Server] Supabase: ${process.env.NEXT_PUBLIC_SUPABASE_URL}`);
-console.log(`[Server] Upstox token: ${!!process.env.UPSTOX_ACCESS_TOKEN}`);
-if (process.env.UPSTOX_ANALYTICS_TOKEN) {
-  console.log("[Token] Analytics Token active (expires 2027)");
+const _accessTok   = process.env.UPSTOX_ACCESS_TOKEN   ?? "";
+const _analyticsTok = process.env.UPSTOX_ANALYTICS_TOKEN ?? "";
+console.log(`[Token] ACCESS_TOKEN   : ${_accessTok   ? _accessTok.substring(0, 10)   + "..." : "NOT SET"}`);
+console.log(`[Token] ANALYTICS_TOKEN: ${_analyticsTok ? _analyticsTok.substring(0, 10) + "..." : "NOT SET"}`);
+if (_analyticsTok) {
+  console.log("[Token] Analytics Token active (expires 2027) — will be used for all market data");
 } else {
-  console.warn("[Token] UPSTOX_ANALYTICS_TOKEN not set — using OAuth token for market data");
+  console.warn("[Token] UPSTOX_ANALYTICS_TOKEN not set — falling back to OAuth token for market data");
 }
 
 loadTokenFromSupabase().catch(console.error);
