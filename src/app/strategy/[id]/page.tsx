@@ -146,6 +146,20 @@ const RULES: Record<string, string[]> = {
   ],
 };
 
+// Per-strategy rules font size — calculated so rules fill the right column height.
+// Formula: available_for_rules = (800px − 160px) − 30px_heading = 610px
+//          fontSize = available / (N_lines × lineHeight_2.0)
+// vwap_scalper subtracts 15px for its 3 empty-line spacers before dividing.
+const RULES_FONT: Record<string, number> = {
+  ema_crossover:  31,  // 10 lines  → 610 / (10 × 2.0) = 30.5 → 31
+  orion:          31,  // 10 lines
+  ema_confluence: 25,  // 12 lines  → 610 / (12 × 2.0) = 25.4 → 25
+  supertrend:     31,  // 10 lines
+  pcr_reversal:   34,  // 9 lines   → 610 / (9  × 2.0) = 33.9 → 34
+  gap_orb:        31,  // 10 lines
+  vwap_scalper:   23,  // 13 lines  → (610 − 15) / (13 × 2.0) = 22.9 → 23
+};
+
 const STRATEGY_CHARTS: Record<string, Array<{ index: string; interval: string }>> = {
   ema_crossover:  [{ index: "NIFTY", interval: "30s" }],
   orion:          [{ index: "NIFTY", interval: "15m" }, { index: "SENSEX", interval: "15m" }, { index: "BANKNIFTY", interval: "15m" }],
@@ -671,6 +685,7 @@ export default function StrategyDetailPage() {
     .sort((a, b) => new Date(b.closed_at ?? 0).getTime() - new Date(a.closed_at ?? 0).getTime());
   const allPositions = [...openTrades, ...closedTrades];
 
+  const rulesFontSize = RULES_FONT[id] ?? 24;
   const chartConfig  = charts[activeChartIdx] ?? charts[0];
   const priceChange  = currentPrice - prevClose;
   const changePct    = prevClose > 0 ? (priceChange / prevClose) * 100 : 0;
@@ -819,18 +834,18 @@ export default function StrategyDetailPage() {
               </div>
               <div style={{ display: "flex", flexDirection: "column" }}>
                 {rules.map((line, i) => {
-                  if (line === "") return <div key={i} style={{ height: "clamp(4px,0.5vh,7px)" }} />;
+                  if (line === "") return <div key={i} style={{ height: 5 }} />;
                   const isIndented = line.startsWith("  ");
                   if (isIndented) {
                     return (
-                      <div key={i} style={{ fontSize: "clamp(11px, 1.2vh, 14px)", lineHeight: "clamp(1.6, 2vh, 1.9)", letterSpacing: "0.01em", color: "#9ca3af", paddingLeft: 20 }}>
+                      <div key={i} style={{ fontSize: rulesFontSize, lineHeight: 2.0, letterSpacing: "0.01em", color: "#9ca3af", paddingLeft: 20 }}>
                         · {line.trim()}
                       </div>
                     );
                   }
                   const colonIdx = line.indexOf(":");
                   return (
-                    <div key={i} style={{ fontSize: "clamp(11px, 1.2vh, 14px)", lineHeight: "clamp(1.6, 2vh, 1.9)", letterSpacing: "0.01em", color: "#e2e8f0" }}>
+                    <div key={i} style={{ fontSize: rulesFontSize, lineHeight: 2.0, letterSpacing: "0.01em", color: "#e2e8f0" }}>
                       {colonIdx > 0
                         ? <>• <strong style={{ color: "#ffffff" }}>{line.slice(0, colonIdx)}</strong>{line.slice(colonIdx)}</>
                         : <>• {line}</>
