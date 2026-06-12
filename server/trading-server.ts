@@ -97,6 +97,7 @@ let lastVix            = 0;
 
 // BTC (unchanged)
 let btcPrice       = 0;
+let ethPrice       = 0;
 let lastBtcLogTime = 0;
 
 // USD/INR
@@ -2755,22 +2756,28 @@ async function runBtcStrategies(): Promise<void> {
 function connectBinanceWS(): void {
   const socket = new ws("wss://ws.kraken.com");
   socket.on("open", () => {
-    console.log("[BTC] Kraken WebSocket connected — subscribing to XBT/USD trades");
-    socket.send(JSON.stringify({ event: "subscribe", pair: ["XBT/USD"], subscription: { name: "trade" } }));
+    console.log("[BTC] Kraken WebSocket connected — subscribing to XBT/USD + ETH/USD trades");
+    socket.send(JSON.stringify({ event: "subscribe", pair: ["XBT/USD", "ETH/USD"], subscription: { name: "trade" } }));
   });
   socket.on("message", (data: ws.RawData) => {
     try {
       const msg = JSON.parse(data.toString()) as unknown[];
-      if (!Array.isArray(msg) || msg[3] !== "XBT/USD") return;
+      if (!Array.isArray(msg)) return;
+      const pair = msg[3] as string;
+      if (pair !== "XBT/USD" && pair !== "ETH/USD") return;
       const trades = msg[1] as string[][];
       if (!Array.isArray(trades) || !trades[0]) return;
       const price = parseFloat(trades[0][0]);
       if (!price) return;
-      btcPrice = price;
-      processTick(price, "BTC", Date.now());
-      if (Date.now() - lastBtcLogTime > 5_000) {
-        console.log(`[BTC] Price: $${btcPrice.toFixed(2)}`);
-        lastBtcLogTime = Date.now();
+      if (pair === "XBT/USD") {
+        btcPrice = price;
+        processTick(price, "BTC", Date.now());
+        if (Date.now() - lastBtcLogTime > 5_000) {
+          console.log(`[BTC] Price: $${btcPrice.toFixed(2)}`);
+          lastBtcLogTime = Date.now();
+        }
+      } else {
+        ethPrice = price;
       }
     } catch (err) {
       console.error("[BTC] WS parse error:", err);
@@ -3019,6 +3026,111 @@ app.get("/api/indicators", (req, res) => {
   if (strategy === "pcr_reversal") {
     const hist = optionChainHistory[index];
     result.pcr = (hist ?? []).map(h => ({ time: h.timestamp, value: h.pcr }));
+  }
+
+  res.json(result);
+});
+
+// ── /api/btc/prices — live BTC + ETH prices ──────────────────────
+app.get("/api/btc/prices", (_req, res) => {
+  const candles1m    = getCandles("BTC", "1m");
+  const utcMidnight  = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
+  const todayCandles = candles1m.filter(c => c.time >= utcMidnight);
+  const sessionOpen  = todayCandles.length > 0 ? todayCandles[0].open : btcPrice;
+  const btcChange    = btcPrice > 0 && sessionOpen > 0 ? btcPrice - sessionOpen : 0;
+  const btcChangePct = sessionOpen > 0 ? (btcChange / sessionOpen) * 100 : 0;
+  res.json({ btcPrice, ethPrice, btcChange, btcChangePct });
+});
+
+// ── /api/btc/candles — BTC candle data ───────────────────────────
+// GET /api/btc/candles?interval=30s|1m|5m|15m
+app.get("/api/btc/candles", (req, res) => {
+  const interval = String(req.query.interval ?? "30s");
+  const candles  = getCandles("BTC", interval);
+  res.json(candles.slice(-100));
+});
+
+// ── /api/btc/indicators — BTC indicator series ───────────────────
+// GET /api/btc/indicators?strategy=btc_ema_crossover
+app.get("/api/btc/indicators", (req, res) => {
+  const strategy = String(req.query.strategy ?? "").toLowerCase();
+
+  let interval: string;
+  if (strategy === "btc_ema_crossover" || strategy === "btc_ema_confluence") {
+    interval = "30s";
+  } else if (strategy === "btc_orion") {
+    interval = "15m";
+  } else if (strategy === "btc_supertrend") {
+    interval = "5m";
+  } else if (strategy === "btc_vwap_scalper") {
+    interval = "1m";
+  } else {
+    interval = "30s";
+  }
+
+  const candles = getCandles("BTC", interval);
+  const closes  = candles.map(c => c.close);
+  const result: Record<string, unknown> = {};
+
+  // EMA9 + EMA21 + crossovers (btc_ema_crossover)
+  if (strategy === "btc_ema_crossover") {
+    const ema9arr  = emaValues(closes, 9);
+    const ema21arr = emaValues(closes, 21);
+    result.ema9  = ema9arr.map((v, i)  => ({ time: candles[i].time, value: v })).slice(-100);
+    result.ema21 = ema21arr.map((v, i) => ({ time: candles[i].time, value: v })).slice(-100);
+    const crossovers: Array<{ time: number; type: "bullish" | "bearish" }> = [];
+    for (let i = 1; i < ema9arr.length; i++) {
+      const prevDiff = ema9arr[i-1] - ema21arr[i-1];
+      const currDiff = ema9arr[i]   - ema21arr[i];
+      if (prevDiff <= 0 && currDiff > 0) crossovers.push({ time: candles[i].time, type: "bullish" });
+      else if (prevDiff >= 0 && currDiff < 0) crossovers.push({ time: candles[i].time, type: "bearish" });
+    }
+    result.crossovers = crossovers.slice(-20);
+  }
+
+  // EMA20 + EMA50 (btc_ema_confluence)
+  if (strategy === "btc_ema_confluence") {
+    const ema20arr = emaValues(closes, 20);
+    const ema50arr = emaValues(closes, 50);
+    result.ema20 = ema20arr.map((v, i) => ({ time: candles[i].time, value: v })).slice(-100);
+    result.ema50 = ema50arr.map((v, i) => ({ time: candles[i].time, value: v })).slice(-100);
+  }
+
+  // VWAP series anchored to UTC midnight (btc_orion, btc_ema_confluence, btc_vwap_scalper)
+  if (["btc_orion", "btc_ema_confluence", "btc_vwap_scalper"].includes(strategy)) {
+    const utcMidnight = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
+    let cumTP = 0, count = 0;
+    const vwapSeries: Array<{ time: number; value: number }> = [];
+    for (const c of candles) {
+      if (c.time >= utcMidnight) {
+        cumTP += (c.high + c.low + c.close) / 3;
+        count++;
+        vwapSeries.push({ time: c.time, value: cumTP / count });
+      }
+    }
+    result.vwap = vwapSeries.slice(-100);
+  }
+
+  // Supertrend series (btc_supertrend)
+  if (strategy === "btc_supertrend") {
+    const stSeries = calcSupertrendSeries(candles, 7, 3);
+    const offset   = candles.length - stSeries.length;
+    const stUpArr:   Array<{ time: number; value: number | null }> = [];
+    const stDownArr: Array<{ time: number; value: number | null }> = [];
+    for (let i = 0; i < stSeries.length; i++) {
+      const t = candles[offset + i].time;
+      const s = stSeries[i];
+      stUpArr.push(  { time: t, value: s.dir === "up"   ? s.value : null });
+      stDownArr.push({ time: t, value: s.dir === "down" ? s.value : null });
+    }
+    result.supertrendUp   = stUpArr.slice(-100);
+    result.supertrendDown = stDownArr.slice(-100);
+  }
+
+  // ORB High/Low (btc_orion)
+  if (strategy === "btc_orion") {
+    result.orbHigh = btcOrbHigh;
+    result.orbLow  = btcOrbLow;
   }
 
   res.json(result);
