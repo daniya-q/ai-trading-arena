@@ -2,8 +2,6 @@
 
 import { Fragment, useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { createChart, CandlestickSeries, ColorType } from "lightweight-charts";
-import type { IChartApi, ISeriesApi, UTCTimestamp } from "lightweight-charts";
 import { supabase } from "@/lib/supabase/client";
 
 const BACKEND = "https://ai-trading-arena-backend-production.up.railway.app";
@@ -446,169 +444,91 @@ function CapitalSummaryBar({ capitals, openPositions }: { capitals: Capital[]; o
   );
 }
 
-// ── CandleChart ─────────────────────────────────────────────────
+// ── OpenTradesPanel ─────────────────────────────────────────────
 
-function CandleChart({ index, label, flexFill = false }: { index: string; label: string; flexFill?: boolean }) {
-  const containerRef    = useRef<HTMLDivElement>(null);
-  const chartRef        = useRef<IChartApi | null>(null);
-  const seriesRef       = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const lastCandleTime  = useRef<number>(0);
-  const [timeframe, setTimeframe] = useState<"30s" | "5m" | "15m">("30s");
-  const isOpen = useMarketOpen();
-
-  // Init chart once on mount
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const chart = createChart(containerRef.current, {
-      autoSize: true,
-      layout: {
-        background: { type: ColorType.Solid, color: "#0A0D14" },
-        textColor: "#6b7280",
-        fontSize: 10,
-      },
-      grid: {
-        vertLines: { color: "#1a1f2e" },
-        horzLines: { color: "#1a1f2e" },
-      },
-      rightPriceScale: {
-        borderColor: "#1a1f2e",
-        autoScale: true,
-        scaleMargins: { top: 0.1, bottom: 0.1 },
-      },
-      timeScale: {
-        borderColor: "#1a1f2e",
-        timeVisible: true,
-        secondsVisible: true,
-        fixLeftEdge: false,
-        rightOffset: 5,
-      },
-      crosshair: { mode: 1 },
-      handleScroll: true,
-      handleScale: true,
-    });
-    chartRef.current = chart;
-
-    seriesRef.current = chart.addSeries(CandlestickSeries, {
-      upColor:         "#22c55e",
-      downColor:       "#ef4444",
-      borderUpColor:   "#22c55e",
-      borderDownColor: "#ef4444",
-      wickUpColor:     "#22c55e",
-      wickDownColor:   "#ef4444",
-      lastValueVisible: true,
-      priceLineVisible: true,
-    });
-
-    // ResizeObserver: keep chart width in sync with container
-    const ro = new ResizeObserver(() => {
-      if (chartRef.current && containerRef.current) {
-        chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
-      }
-    });
-    ro.observe(containerRef.current);
-
-    return () => {
-      ro.disconnect();
-      chart.remove();
-      chartRef.current  = null;
-      seriesRef.current = null;
-    };
-  }, []);
-
-  // Update secondsVisible + clear when timeframe changes
-  useEffect(() => {
-    if (!chartRef.current) return;
-    chartRef.current.timeScale().applyOptions({ secondsVisible: timeframe === "30s" });
-    if (seriesRef.current) seriesRef.current.setData([]);
-    lastCandleTime.current = 0;
-  }, [timeframe]);
-
-  // Poll candle data — 1s when market open, 60s when closed
-  useEffect(() => {
-    let cancelled = false;
-    const fetchData = async () => {
-      try {
-        const res = await fetch(`${BACKEND}/api/candles?index=${index}&interval=${timeframe}`);
-        if (!res.ok) return;
-        const raw: OhlcCandle[] = await res.json();
-        if (cancelled || !seriesRef.current) return;
-
-        const data = raw
-          .filter(c => c.open > 0 && c.high >= c.low && c.close > 0)
-          .map(c => ({
-            time:  (c.time > 1e10 ? Math.floor(c.time / 1000) : c.time) as UTCTimestamp,
-            open:  c.open,
-            high:  c.high,
-            low:   c.low,
-            close: c.close,
-          }));
-
-        if (data.length === 0) return;
-
-        // Skip setData if last candle hasn't changed
-        const newestTime = data[data.length - 1].time as number;
-        if (newestTime === lastCandleTime.current) return;
-        lastCandleTime.current = newestTime;
-
-        seriesRef.current.setData(data);
-        chartRef.current?.timeScale().scrollToRealTime();
-      } catch (err) { console.warn(`[candles:${index}] error:`, err); }
-    };
-    fetchData();
-    const interval = isOpen ? 1_000 : 60_000;
-    const iv = setInterval(fetchData, interval);
-    return () => { cancelled = true; clearInterval(iv); };
-  }, [index, timeframe, isOpen]);
+function OpenTradesPanel({
+  openPositions,
+  strategies,
+}: {
+  openPositions: Position[];
+  strategies: Strategy[];
+}) {
+  const rows = [...openPositions].sort(
+    (a, b) => new Date(b.opened_at).getTime() - new Date(a.opened_at).getTime()
+  );
+  const thStyle: React.CSSProperties = {
+    padding: "8px 12px", fontSize: 10, fontWeight: 700, color: "#4b5563",
+    textAlign: "left" as const, letterSpacing: "0.08em",
+    whiteSpace: "nowrap" as const, borderBottom: "1px solid #1a1f2e",
+    background: "#070A11",
+  };
 
   return (
     <div style={{
-      background: "#0B0E17",
-      border: "1px solid #1a1f2e",
-      borderRadius: 12,
-      overflow: "hidden",
-      ...(flexFill ? { display: "flex", flexDirection: "column" as const, height: "100%" } : {}),
+      display: "flex", flexDirection: "column", height: "100%",
+      background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, overflow: "hidden",
     }}>
-      {/* Header */}
       <div style={{
-        padding: "8px 14px",
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        borderBottom: "1px solid #1a1f2e",
-        flexShrink: 0,
+        flexShrink: 0, display: "flex", alignItems: "center", gap: 8,
+        padding: "10px 16px", borderBottom: "1px solid #1a1f2e",
       }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.1em" }}>
-          {label}
+        <span className="pulse" style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: "#f5d547", boxShadow: "0 0 6px #f5d54788", flexShrink: 0 }} />
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#f5d547", letterSpacing: "0.1em" }}>
+          LIVE OPEN TRADES
         </span>
-        <div style={{ display: "flex", gap: 4 }}>
-          {(["30s", "5m", "15m"] as const).map(tf => (
-            <button
-              key={tf}
-              onClick={() => setTimeframe(tf)}
-              style={{
-                padding: "2px 8px",
-                borderRadius: 20,
-                border: `1px solid ${timeframe === tf ? "#ffffff" : "#1f2937"}`,
-                background: timeframe === tf ? "#ffffff" : "transparent",
-                color: timeframe === tf ? "#000000" : "#6b7280",
-                fontSize: 10,
-                fontWeight: 600,
-                cursor: "pointer",
-                letterSpacing: "0.05em",
-                transition: "all 0.15s",
-              }}
-            >
-              {tf}
-            </button>
-          ))}
-        </div>
+        <span style={{ fontSize: 10, color: "#374151", marginLeft: "auto" }}>
+          {openPositions.length} open · 1s refresh
+        </span>
       </div>
-      <div ref={containerRef} style={flexFill ? { width: "100%", flex: 1, height: 0 } : { width: "100%", height: 350 }} />
+
+      {openPositions.length === 0 ? (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 13, color: "#374151", marginBottom: 4 }}>No open trades</div>
+            <div style={{ fontSize: 10, color: "#1f2937" }}>Market open: 10:30 AM – 3:00 PM IST</div>
+          </div>
+        </div>
+      ) : (
+        <div style={{ flex: 1, overflowY: "auto", overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+            <thead>
+              <tr>
+                {["Strategy", "Symbol", "Type", "Entry ₹", "Entry Time", "Current ₹", "Live PnL", "SL", "Trail SL"].map(h => (
+                  <th key={h} style={thStyle}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(pos => {
+                const stratName = strategies.find(s => s.id === pos.strategy_id)?.name ?? pos.strategy_id;
+                return (
+                  <tr key={pos.id} style={{ borderTop: "1px solid #0f1520" }}>
+                    <td style={{ padding: "8px 12px", fontSize: 12, color: ACCENT[pos.strategy_id] ?? "#9ca3af", fontWeight: 600, whiteSpace: "nowrap" }}>{stratName}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 11, color: "#c9d1d9", whiteSpace: "nowrap" }}>{pos.symbol}</td>
+                    <td style={{ padding: "8px 8px", fontSize: 12, fontWeight: 700, color: pos.type === "CE" ? "#22c55e" : "#ef4444" }}>{pos.type}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", color: "#6b7280" }}>₹{pos.entry_price.toFixed(2)}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 11, color: "#4b5563" }}>{fmtTime(pos.opened_at)}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", color: "#f5d547", fontWeight: 600 }}>₹{(pos.current_price ?? 0).toFixed(2)}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", fontWeight: 700, color: pnlColor(pos.pnl ?? 0) }}>{pnlStr(pos.pnl ?? 0)}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: "#ef4444" }}>
+                      {pos.stop_loss ? `₹${pos.stop_loss.toFixed(2)}` : "—"}
+                    </td>
+                    <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: pos.trail_sl ? "#f5d547" : "#374151" }}>
+                      {pos.trail_sl ? `₹${pos.trail_sl.toFixed(2)}` : "inactive"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
 
 // ── LockedCard ─────────────────────────────────────────────────
+
 
 function LockedCard({ strategy }: { strategy: Strategy }) {
   return (
@@ -1080,7 +1000,7 @@ export default function DashboardPage() {
     return () => clearInterval(iv);
   }, [refresh]);
 
-  // 5s open positions poll — keeps card capital live
+  // 1s open positions poll — keeps live trades panel and capital fresh
   useEffect(() => {
     const fetchOpen = async () => {
       const { data } = await supabase
@@ -1090,7 +1010,7 @@ export default function DashboardPage() {
       if (data) setOpenPositions(data as Position[]);
     };
     fetchOpen();
-    const iv = setInterval(fetchOpen, 5_000);
+    const iv = setInterval(fetchOpen, 1_000);
     return () => clearInterval(iv);
   }, []);
 
@@ -1156,17 +1076,9 @@ export default function DashboardPage() {
           <CapitalSummaryBar capitals={capitals} openPositions={openPositions} />
         </div>
 
-        {/* 3 stacked charts — fill remaining height */}
-        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-            <CandleChart index="NIFTY" label="NIFTY" flexFill />
-          </div>
-          <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-            <CandleChart index="SENSEX" label="SENSEX" flexFill />
-          </div>
-          <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-            <CandleChart index="BANKNIFTY" label="BANK NIFTY" flexFill />
-          </div>
+        {/* Live Open Trades panel — fills remaining height */}
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          <OpenTradesPanel openPositions={openPositions} strategies={strategies} />
         </div>
 
         {/* NEXT pill */}

@@ -299,28 +299,44 @@ function BtcIndicatorChart({
 
         if (candles.length > 0) {
           const newest = candles[candles.length - 1].time as number;
-          if (newest !== lastCandleTimeRef.current) {
+          const isNewCandle = newest !== lastCandleTimeRef.current;
+          if (isNewCandle) {
             lastCandleTimeRef.current = newest;
             candleSeriesRef.current.setData(candles);
             chartRef.current?.priceScale("right").applyOptions({ autoScale: true });
             chartRef.current?.timeScale().scrollToRealTime();
-            if (onPriceUpdate) {
-              const last = candles[candles.length - 1].close;
-              const prev = candles.length > 1 ? candles[candles.length - 2].close : last;
-              onPriceUpdate(last, prev);
-            }
+          } else {
+            // Update in-progress candle tick-by-tick
+            candleSeriesRef.current.update(candles[candles.length - 1]);
+          }
+          if (onPriceUpdate) {
+            const last = candles[candles.length - 1].close;
+            const prev = candles.length > 1 ? candles[candles.length - 2].close : last;
+            onPriceUpdate(last, prev);
           }
 
           const toTS = (t: number) => (t > 1e10 ? Math.floor(t / 1000) : t) as UTCTimestamp;
 
-          // Trade markers
-          const markers: SeriesMarker<UTCTimestamp>[] = positions.map(pos => ({
-            time: (new Date(pos.opened_at).getTime() / 1000) as UTCTimestamp,
-            position: pos.side === "LONG" ? "belowBar" : "aboveBar" as const,
-            color: pos.side === "LONG" ? "#22c55e" : "#ef4444",
-            shape: pos.side === "LONG" ? "arrowUp" : "arrowDown" as const,
-            text: `${pos.side} $${pos.entry_price_usd.toFixed(0)}`,
-          }));
+          // Trade markers — entry + exit per closed trade, entry only for open
+          const markers: SeriesMarker<UTCTimestamp>[] = [];
+          for (const pos of positions) {
+            markers.push({
+              time: (new Date(pos.opened_at).getTime() / 1000) as UTCTimestamp,
+              position: pos.side === "LONG" ? "belowBar" : "aboveBar" as const,
+              color: pos.side === "LONG" ? "#22c55e" : "#ef4444",
+              shape: pos.side === "LONG" ? "arrowUp" : "arrowDown" as const,
+              text: `${pos.side} $${pos.entry_price_usd.toFixed(0)}`,
+            });
+            if (pos.status === "CLOSED" && pos.closed_at && pos.exit_price_usd != null) {
+              markers.push({
+                time: (new Date(pos.closed_at).getTime() / 1000) as UTCTimestamp,
+                position: pos.side === "LONG" ? "aboveBar" : "belowBar" as const,
+                color: pos.side === "LONG" ? "#22c55e" : "#ef4444",
+                shape: pos.side === "LONG" ? "arrowDown" : "arrowUp" as const,
+                text: `EXIT $${pos.exit_price_usd.toFixed(0)}`,
+              });
+            }
+          }
           markers.sort((a, b) => (a.time as number) - (b.time as number));
           if (!markersPluginRef.current)
             markersPluginRef.current = createSeriesMarkers(candleSeriesRef.current, markers);
@@ -582,6 +598,15 @@ export default function BtcStrategyDetailPage() {
           50%       { opacity: 1;   transform: translateX(-50%) translateY(6px); }
         }
       `}</style>
+
+      {/* Fixed strategy name — visible across all 3 sections */}
+      <div style={{
+        position: "fixed", top: 14, left: "50%", transform: "translateX(-50%)",
+        fontSize: 14, fontWeight: 600, color: "#ffffff88", letterSpacing: "0.08em",
+        zIndex: 300, pointerEvents: "none", whiteSpace: "nowrap",
+      }}>
+        {strategy?.name ?? id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+      </div>
 
       {/* Back link — fixed */}
       <Link href="/btc" style={{

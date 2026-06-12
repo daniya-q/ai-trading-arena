@@ -727,6 +727,15 @@ export default function StrategyDetailPage() {
         }
       `}</style>
 
+      {/* Fixed strategy name — visible across all 3 sections */}
+      <div style={{
+        position: "fixed", top: 14, left: "50%", transform: "translateX(-50%)",
+        fontSize: 14, fontWeight: 600, color: "#ffffff88", letterSpacing: "0.08em",
+        zIndex: 300, pointerEvents: "none", whiteSpace: "nowrap",
+      }}>
+        {strategy?.name ?? id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+      </div>
+
       {/* Back link — fixed top left, always visible */}
       <Link href="/" style={{
         position: "fixed", top: 14, left: 180, zIndex: 300,
