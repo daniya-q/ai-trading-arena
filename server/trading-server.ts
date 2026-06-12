@@ -2757,19 +2757,30 @@ const TOKEN_REQUEST_TIMES_IST = ["08:30", "09:30", "10:00", "10:30"];
 
 /** Send a push-notification approval request to Upstox. */
 async function sendTokenRequest(): Promise<void> {
+  const apiKey = process.env.UPSTOX_API_KEY;
   const secret = process.env.UPSTOX_API_SECRET;
-  if (!secret) {
-    console.warn("[Token] UPSTOX_API_SECRET not set — cannot send token request");
-    return;
-  }
+
+  // Log first 10 chars so we can verify correct values in Railway logs
+  console.log(`[Token] UPSTOX_API_KEY    = ${apiKey ? apiKey.substring(0, 10) + "..." : "NOT SET"}`);
+  console.log(`[Token] UPSTOX_API_SECRET = ${secret ? secret.substring(0, 10) + "..." : "NOT SET"}`);
+
+  if (!apiKey) { console.warn("[Token] UPSTOX_API_KEY not set — cannot send token request"); return; }
+  if (!secret) { console.warn("[Token] UPSTOX_API_SECRET not set — cannot send token request"); return; }
+
+  const url  = `https://api.upstox.com/v3/login/auth/token/request/${apiKey}`;
+  const body = JSON.stringify({ client_secret: secret });
+
+  console.log(`[Token] POST ${url}`);
+  console.log(`[Token] Body: {"client_secret":"${secret.substring(0, 6)}...[masked]"}`);
+
   try {
-    const res  = await fetch("https://api.upstox.com/v3/login/auth/token/request/7NAEVR", {
+    const res  = await fetch(url, {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ client_secret: secret }),
+      headers: { "Content-Type": "application/json", "accept": "application/json" },
+      body,
     });
     const text = await res.text().catch(() => "");
-    console.log(`[Token] Request sent — HTTP ${res.status} ${text.slice(0, 120)}`);
+    console.log(`[Token] Response HTTP ${res.status}: ${text.slice(0, 300)}`);
   } catch (err) {
     console.error("[Token] Request failed:", err);
   }
