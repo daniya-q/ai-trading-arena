@@ -1780,6 +1780,293 @@ function getUsdToInr(): number {
 }
 
 // ══════════════════════════════════════════════════════════════
+// Historical candle seeding — runs once on startup
+// Fills candleStores so strategies fire within seconds of boot
+// instead of waiting hours for live ticks to accumulate.
+// ══════════════════════════════════════════════════════════════
+
+let btcCandlesSeeded    = false;
+let equityCandlesSeeded = false;
+
+/** Inject a completed historical candle directly into a CandleStore. */
+function injectCandle(symbol: string, interval: string, candle: Candle): void {
+  const key = `${symbol}_${interval}`;
+  if (!candleStores[key]) {
+    candleStores[key] = { candles: [], current: null, bucket: 0 };
+  }
+  const store = candleStores[key];
+  // Deduplicate by time bucket
+  const last = store.candles[store.candles.length - 1];
+  if (last && last.time === candle.time) return;
+  store.candles.push(candle);
+  if (store.candles.length > MAX_CANDLES) store.candles.shift();
+}
+
+/**
+ * Split a 1m candle into two synthetic 30s candles using the
+ * (open+close)/2 midpoint as the boundary price.
+ * Sufficient for EMA / RSI / VWAP / ATR / Supertrend calculations.
+ */
+function split1mTo30s(symbol: string, c: Candle): void {
+  const mid = (c.open + c.close) / 2;
+  injectCandle(symbol, "30s", {
+    time:  c.time,
+    open:  c.open,
+    high:  Math.max(c.open, mid),
+    low:   Math.min(c.open, mid),
+    close: mid,
+  });
+  injectCandle(symbol, "30s", {
+    time:  c.time + 30_000,
+    open:  mid,
+    high:  Math.max(mid, c.close),
+    low:   Math.min(mid, c.close),
+    close: c.close,
+  });
+}
+
+// ── BTC seeding via Kraken REST /0/public/OHLC ───────────────
+
+async function seedBtcCandlesFromKraken(): Promise<void> {
+  if (btcCandlesSeeded) return;
+  console.log("[BTC Seed] Fetching historical OHLC from Kraken...");
+
+  const requests: Array<{ interval: number; storeKey: string }> = [
+    { interval: 1,  storeKey: "1m"  },
+    { interval: 5,  storeKey: "5m"  },
+    { interval: 15, storeKey: "15m" },
+  ];
+
+  for (const { interval, storeKey } of requests) {
+    try {
+      const res = await fetch(
+        `https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=${interval}`
+      );
+      if (!res.ok) {
+        console.warn(`[BTC Seed] Kraken ${storeKey} → HTTP ${res.status}`);
+        continue;
+      }
+      const json = await res.json() as {
+        result?: Record<string, Array<[number, string, string, string, string, string, string, number]> | number>;
+        error?: string[];
+      };
+      if (json.error?.length) {
+        console.warn(`[BTC Seed] Kraken ${storeKey} error: ${json.error.join(", ")}`);
+        continue;
+      }
+
+      const resultMap = json.result ?? {};
+      // Kraken key for XBT/USD is "XXBTZUSD"; fallback: first array value
+      const rawData = resultMap["XXBTZUSD"]
+        ?? Object.values(resultMap).find(v => Array.isArray(v));
+      const pairData = Array.isArray(rawData)
+        ? rawData as Array<[number, string, string, string, string, string, string, number]>
+        : null;
+
+      if (!pairData?.length) {
+        console.warn(`[BTC Seed] Kraken ${storeKey}: empty OHLC data`);
+        continue;
+      }
+
+      // Kraken always appends the current (in-progress) candle as the last row — skip it.
+      // Also filter to completed buckets (belt-and-suspenders).
+      const durationMs = INTERVALS[storeKey] ?? interval * 60_000;
+      const currentBucket = Math.floor(Date.now() / durationMs) * durationMs;
+
+      let count = 0;
+      for (let i = 0; i < pairData.length - 1; i++) {
+        const row = pairData[i];
+        const timeMs = row[0] * 1_000;
+        if (timeMs >= currentBucket) continue; // skip in-progress
+        const c: Candle = {
+          time:  timeMs,
+          open:  parseFloat(row[1]),
+          high:  parseFloat(row[2]),
+          low:   parseFloat(row[3]),
+          close: parseFloat(row[4]),
+        };
+        injectCandle("BTC", storeKey, c);
+        if (storeKey === "1m") split1mTo30s("BTC", c);
+        count++;
+      }
+
+      const suffix = storeKey === "1m" ? ` (→ ${count * 2} × 30s)` : "";
+      console.log(`[BTC Seed] BTC_${storeKey}: ${count} candles${suffix}`);
+    } catch (err) {
+      console.error(`[BTC Seed] Kraken ${storeKey} error:`, err);
+    }
+  }
+
+  btcCandlesSeeded = true;
+  console.log(
+    `[BTC Seed] ✓  30s=${getCandles("BTC","30s").length}` +
+    ` 1m=${getCandles("BTC","1m").length}` +
+    ` 5m=${getCandles("BTC","5m").length}` +
+    ` 15m=${getCandles("BTC","15m").length}`
+  );
+}
+
+// ── Equity seeding via Upstox Historical Candle API ──────────
+
+async function fetchUpstoxHistorical(
+  instrKey: string,
+  upstoxInterval: string,
+  fromDate: string,
+  toDate: string,
+): Promise<Candle[]> {
+  const token = upstoxToken();
+  if (!token) return [];
+  const encoded = encodeURIComponent(instrKey);
+  const url = `https://api.upstox.com/v2/historical-candle/${encoded}/${upstoxInterval}/${toDate}/${fromDate}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+  });
+  if (!res.ok) {
+    console.warn(`[Equity Seed] Historical ${upstoxInterval} HTTP ${res.status} — ${instrKey}`);
+    return [];
+  }
+  const json = await res.json() as {
+    data?: { candles?: Array<[string, number, number, number, number, number, number]> };
+  };
+  // Upstox returns newest-first → reverse to oldest-first
+  return (json.data?.candles ?? []).map(row => ({
+    time:  new Date(row[0]).getTime(),
+    open:  row[1],
+    high:  row[2],
+    low:   row[3],
+    close: row[4],
+  })).reverse();
+}
+
+async function fetchUpstoxIntraday(
+  instrKey: string,
+  upstoxInterval: string,
+): Promise<Candle[]> {
+  const token = upstoxToken();
+  if (!token) return [];
+  const encoded = encodeURIComponent(instrKey);
+  const url = `https://api.upstox.com/v2/historical-candle/intraday/${encoded}/${upstoxInterval}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+  });
+  if (!res.ok) {
+    console.warn(`[Equity Seed] Intraday ${upstoxInterval} HTTP ${res.status} — ${instrKey}`);
+    return [];
+  }
+  const json = await res.json() as {
+    data?: { candles?: Array<[string, number, number, number, number, number, number]> };
+  };
+  return (json.data?.candles ?? []).map(row => ({
+    time:  new Date(row[0]).getTime(),
+    open:  row[1],
+    high:  row[2],
+    low:   row[3],
+    close: row[4],
+  })).reverse();
+}
+
+async function seedEquityCandlesFromUpstox(): Promise<void> {
+  if (equityCandlesSeeded) return;
+
+  const token = upstoxToken();
+  if (!token) {
+    console.warn("[Equity Seed] No Upstox token available — skipping equity candle seed");
+    return;
+  }
+
+  console.log("[Equity Seed] Fetching historical candles from Upstox...");
+
+  const today = todayIST();
+  // 10 calendar days back → covers at least 7 trading days
+  const fromDate = (() => {
+    const [y, m, d] = today.split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d - 10));
+    return [
+      dt.getUTCFullYear(),
+      String(dt.getUTCMonth() + 1).padStart(2, "0"),
+      String(dt.getUTCDate()).padStart(2, "0"),
+    ].join("-");
+  })();
+
+  // UTC epoch of IST midnight today — used to isolate yesterday vs today candles
+  const istD = getIST();
+  const istMidnightMs =
+    Date.UTC(istD.getUTCFullYear(), istD.getUTCMonth(), istD.getUTCDate()) -
+    (5 * 60 + 30) * 60_000;
+
+  const symbols: Array<{ sym: "NIFTY" | "BANKNIFTY" | "SENSEX"; instrKey: string }> = [
+    { sym: "NIFTY",     instrKey: "NSE_INDEX|Nifty 50"   },
+    { sym: "BANKNIFTY", instrKey: "NSE_INDEX|Nifty Bank" },
+    { sym: "SENSEX",    instrKey: "BSE_INDEX|SENSEX"      },
+  ];
+
+  const intervals: Array<{ upstox: string; store: string; durationMs: number }> = [
+    { upstox: "1minute",  store: "1m",  durationMs: 60_000      },
+    { upstox: "5minute",  store: "5m",  durationMs: 300_000     },
+    { upstox: "15minute", store: "15m", durationMs: 900_000     },
+  ];
+
+  for (const { sym, instrKey } of symbols) {
+    for (const { upstox, store, durationMs } of intervals) {
+      try {
+        // Fetch multi-day historical (gives prev-day close and recent candles)
+        let candles = await fetchUpstoxHistorical(instrKey, upstox, fromDate, today);
+
+        // During market hours also merge intraday to get the most recent bars
+        if (isMarketOpen() && candles.length > 0) {
+          const intraday = await fetchUpstoxIntraday(instrKey, upstox);
+          if (intraday.length > 0) {
+            // Replace today's historical portion with fresher intraday data
+            const prevDays = candles.filter(c => c.time < istMidnightMs);
+            const seen = new Set(prevDays.map(c => c.time));
+            const newToday = intraday.filter(c => !seen.has(c.time));
+            candles = [...prevDays, ...newToday].sort((a, b) => a.time - b.time);
+          }
+        }
+
+        if (!candles.length) {
+          console.warn(`[Equity Seed] ${sym} ${store}: no data`);
+          continue;
+        }
+
+        // Only inject candles from fully completed buckets (avoid in-progress duplicates)
+        const currentBucket = Math.floor(Date.now() / durationMs) * durationMs;
+        const completed = candles.filter(c => c.time < currentBucket);
+        const toSeed = completed.slice(-MAX_CANDLES);
+
+        for (const c of toSeed) {
+          injectCandle(sym, store, c);
+          if (store === "1m") split1mTo30s(sym, c);
+        }
+
+        // Seed prevDayClose for Strategy 6 gap calculation (1m gives finest granularity)
+        if (store === "1m" && !prevDayClose[sym]) {
+          const yesterdayCandles = toSeed.filter(c => c.time < istMidnightMs);
+          if (yesterdayCandles.length > 0) {
+            prevDayClose[sym] = yesterdayCandles[yesterdayCandles.length - 1].close;
+            console.log(`[Equity Seed] ${sym} prevDayClose = ${prevDayClose[sym]}`);
+          }
+        }
+
+        const suffix = store === "1m" ? ` (→ ${toSeed.length * 2} × 30s)` : "";
+        console.log(`[Equity Seed] ${sym}_${store}: ${toSeed.length} candles${suffix}`);
+      } catch (err) {
+        console.error(`[Equity Seed] ${sym} ${store} error:`, err);
+      }
+    }
+  }
+
+  equityCandlesSeeded = true;
+  console.log(
+    `[Equity Seed] ✓  NIFTY_30s=${getCandles("NIFTY","30s").length}` +
+    ` NIFTY_5m=${getCandles("NIFTY","5m").length}` +
+    ` NIFTY_15m=${getCandles("NIFTY","15m").length}` +
+    ` BNF_5m=${getCandles("BANKNIFTY","5m").length}` +
+    ` BNF_15m=${getCandles("BANKNIFTY","15m").length}`
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
 // BTC Rule-based Strategies
 // ══════════════════════════════════════════════════════════════
 
@@ -2570,6 +2857,10 @@ if (process.env.UPSTOX_ANALYTICS_TOKEN) {
 loadTokenFromSupabase().catch(console.error);
 refreshUsdToInr().catch(console.error);
 scheduleTokenRequest();
+
+// Seed historical candles immediately — strategies are ready within seconds of boot
+seedBtcCandlesFromKraken().catch(console.error);
+seedEquityCandlesFromUpstox().catch(console.error);
 
 // LTP every second
 pollLTP();
