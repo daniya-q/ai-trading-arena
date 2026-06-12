@@ -308,8 +308,11 @@ function TopBar() {
     const poll = () => {
       fetch(`${BACKEND}/api/indices`)
         .then(r => r.json())
-        .then(d => { if (!cancelled) setIndices(d as Record<string, IndexQuote>); })
-        .catch(() => {});
+        .then(d => {
+          console.log("[indices] response:", d);
+          if (!cancelled) setIndices(d as Record<string, IndexQuote>);
+        })
+        .catch(err => console.error("[indices] fetch error:", err));
     };
     poll();
     const iv = setInterval(poll, 1000);
@@ -454,6 +457,8 @@ function CandleChart({ index, label }: { index: string; label: string }) {
   useEffect(() => {
     if (!containerRef.current) return;
     const chart = createChart(containerRef.current, {
+      autoSize: true,
+      height: 200,
       layout: {
         background: { type: ColorType.Solid, color: "#0A0D14" },
         textColor: "#6b7280",
@@ -488,15 +493,7 @@ function CandleChart({ index, label }: { index: string; label: string }) {
       priceLineVisible: true,
     });
 
-    const ro = new ResizeObserver(() => {
-      if (containerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
-      }
-    });
-    ro.observe(containerRef.current);
-
     return () => {
-      ro.disconnect();
       chart.remove();
       chartRef.current  = null;
       seriesRef.current = null;
@@ -516,13 +513,14 @@ function CandleChart({ index, label }: { index: string; label: string }) {
     const fetchData = async () => {
       try {
         const res = await fetch(`${BACKEND}/api/candles?index=${index}&interval=${timeframe}`);
-        if (!res.ok) return;
+        if (!res.ok) { console.warn(`[candles:${index}] HTTP ${res.status}`); return; }
         const raw: OhlcCandle[] = await res.json();
+        console.log(`[candles:${index}:${timeframe}] received ${raw.length} candles`, raw.slice(-2));
         if (cancelled || !seriesRef.current) return;
         const data = raw
           .filter(c => c.open > 0 && c.high >= c.low && c.close > 0)
           .map(c => ({
-            time:  Math.floor(c.time / 1000) as UTCTimestamp,
+            time:  (c.time > 1e10 ? Math.floor(c.time / 1000) : c.time) as UTCTimestamp,
             open:  c.open,
             high:  c.high,
             low:   c.low,
@@ -532,7 +530,7 @@ function CandleChart({ index, label }: { index: string; label: string }) {
           seriesRef.current.setData(data);
           chartRef.current?.timeScale().scrollToRealTime();
         }
-      } catch { /* server may be starting up */ }
+      } catch (err) { console.warn(`[candles:${index}] error:`, err); }
     };
     fetchData();
     const iv = setInterval(fetchData, 1000);
@@ -1111,16 +1109,14 @@ export default function DashboardPage() {
     <div className="page-content" style={{ background: "#0A0D14", minHeight: "100vh", padding: "18px 16px 32px" }}>
 
       {/* Page header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 12 }}>
-        <div>
-          <div className="breadcrumb">
-            AI TRADING ARENA · SEASON 1 · PAPER TRADING
-          </div>
-          <h1 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: "#e5e7eb" }}>
-            Strategy Dashboard
-          </h1>
+      <div style={{ marginBottom: 16, textAlign: "center" }}>
+        <div className="breadcrumb" style={{ textAlign: "center" }}>
+          AI TRADING ARENA · SEASON 1 · PAPER TRADING
         </div>
-        <div style={{ fontSize: 9, color: "#374151" }}>
+        <h1 style={{ fontSize: 30, fontWeight: 700, margin: "6px 0 0", color: "#e5e7eb" }}>
+          Indian Strategies Dashboard
+        </h1>
+        <div style={{ fontSize: 9, color: "#374151", marginTop: 6 }}>
           {lastUpdate
             ? `UPDATED ${lastUpdate.toLocaleTimeString()} · AUTO-REFRESH 15s`
             : "CONNECTING..."}
@@ -1136,8 +1132,8 @@ export default function DashboardPage() {
       {/* ── 3. Live Candlestick Charts ── */}
       <div className="grid-charts" style={{ marginBottom: 16 }}>
         <CandleChart index="NIFTY"     label="NIFTY" />
-        <CandleChart index="BANKNIFTY" label="BANK NIFTY" />
         <CandleChart index="SENSEX"    label="SENSEX" />
+        <CandleChart index="BANKNIFTY" label="BANK NIFTY" />
       </div>
 
       {/* Error banner */}
