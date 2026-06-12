@@ -2740,15 +2740,31 @@ function connectBinanceWS(): void {
 
 async function loadTokenFromSupabase(): Promise<void> {
   try {
-    const { data, error } = await supabase.from("config").select("value").eq("key","UPSTOX_ACCESS_TOKEN").single();
-    if (error || !data?.value) { console.log("[Token] No token in Supabase config"); return; }
-    // Don't overwrite a token already present from Railway env vars
-    if (process.env.UPSTOX_ACCESS_TOKEN) {
-      console.log("[Token] Railway env var present — skipping Supabase override");
+    const [tokenRes, dateRes] = await Promise.all([
+      supabase.from("config").select("value").eq("key", "UPSTOX_ACCESS_TOKEN").single(),
+      supabase.from("config").select("value").eq("key", "UPSTOX_TOKEN_DATE").single(),
+    ]);
+
+    const supabaseToken = (tokenRes.data as { value: string } | null)?.value ?? "";
+    const supabaseDate  = (dateRes.data  as { value: string } | null)?.value ?? "";
+
+    if (!supabaseToken) {
+      console.log("[Token] No token in Supabase config — using Railway env var if set");
       return;
     }
-    process.env.UPSTOX_ACCESS_TOKEN = (data as { value: string }).value;
-    console.log("[Token] Loaded from Supabase config");
+
+    if (supabaseDate === todayIST()) {
+      // Token was approved today via webhook — always wins over any static Railway var
+      process.env.UPSTOX_ACCESS_TOKEN = supabaseToken;
+      console.log(`[Token] Loaded today's fresh token from Supabase (approved ${supabaseDate})`);
+    } else if (!process.env.UPSTOX_ACCESS_TOKEN) {
+      // No Railway var set — use Supabase as fallback even if from a prior day
+      process.env.UPSTOX_ACCESS_TOKEN = supabaseToken;
+      console.log(`[Token] Loaded fallback token from Supabase (last approved ${supabaseDate || "unknown"})`);
+    } else {
+      console.log(`[Token] Supabase token is from ${supabaseDate || "unknown"} — keeping Railway env var`);
+      console.log(`[Token] ACTION NEEDED: delete UPSTOX_ACCESS_TOKEN from Railway vars so daily webhook token is used`);
+    }
   } catch (err) {
     console.error("[Token] Load failed:", err);
   }
