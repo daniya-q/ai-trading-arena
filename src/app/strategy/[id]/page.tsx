@@ -775,34 +775,34 @@ export default function StrategyDetailPage() {
           }}>
 
             {/* ── Name + description — spans both columns ── */}
-            <div style={{ gridColumn: "1 / -1", padding: "72px 80px 24px", textAlign: "center" }}>
+            <div style={{ gridColumn: "1 / -1", padding: "clamp(40px,5vh,64px) 80px clamp(12px,1.5vh,20px)", textAlign: "center" }}>
               <h1 style={{
-                fontSize: 48, fontWeight: 700, color: "#ffffff",
-                margin: "0 0 12px", lineHeight: 1.1, letterSpacing: "-0.02em",
+                fontSize: "clamp(28px, 3.5vh, 36px)", fontWeight: 700, color: "#ffffff",
+                margin: "0 0 8px", lineHeight: 1.1, letterSpacing: "-0.02em",
               }}>
                 {strategy?.name ?? id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
               </h1>
               {strategy?.description && (
-                <p style={{ fontSize: 20, color: "#6b7280", margin: 0, lineHeight: 1.6 }}>
+                <p style={{ fontSize: "clamp(13px, 1.6vh, 16px)", color: "#6b7280", margin: 0, lineHeight: 1.5 }}>
                   {strategy.description}
                 </p>
               )}
             </div>
 
             {/* ── KPI grid — auto-placed row 2 col 1 ── */}
-            <div style={{ padding: "0 40px 16px", overflow: "hidden" }}>
+            <div style={{ padding: "0 40px clamp(8px,1vh,14px)", overflow: "hidden" }}>
               <div style={{
                 display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "repeat(4, 1fr)",
-                gap: 12, height: "100%",
+                gap: 8, height: "100%",
               }}>
                 {stats.map(s => (
                   <div key={s.label} style={{
                     background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
-                    borderRadius: 12, padding: "20px",
+                    borderRadius: 10, padding: "clamp(10px,1.2vh,16px) 14px",
                     display: "flex", flexDirection: "column", justifyContent: "space-between",
                   }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase" }}>{s.label}</div>
-                    <div style={{ fontSize: 24, fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
+                    <div style={{ fontSize: "clamp(9px, 1vh, 11px)", fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase" }}>{s.label}</div>
+                    <div style={{ fontSize: "clamp(14px, 1.8vh, 18px)", fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
                   </div>
                 ))}
               </div>
@@ -811,26 +811,26 @@ export default function StrategyDetailPage() {
             {/* ── Strategy Logic + rules — auto-placed row 2 col 2 ── */}
             <div style={{
               borderLeft: "1px solid rgba(255,255,255,0.08)",
-              padding: "0 56px 16px 48px",
-              overflowY: "auto",
+              padding: "0 48px clamp(8px,1vh,14px) 40px",
+              overflow: "hidden",
             }}>
-              <div style={{ fontSize: 28, fontWeight: 700, color: accent, letterSpacing: "0.01em", marginBottom: 20 }}>
+              <div style={{ fontSize: "clamp(16px, 2vh, 20px)", fontWeight: 700, color: accent, letterSpacing: "0.01em", marginBottom: "clamp(6px,0.8vh,12px)" }}>
                 Strategy Logic
               </div>
               <div style={{ display: "flex", flexDirection: "column" }}>
                 {rules.map((line, i) => {
-                  if (line === "") return <div key={i} style={{ height: 16 }} />;
+                  if (line === "") return <div key={i} style={{ height: "clamp(4px,0.5vh,7px)" }} />;
                   const isIndented = line.startsWith("  ");
                   if (isIndented) {
                     return (
-                      <div key={i} style={{ fontSize: 22, lineHeight: 2.4, letterSpacing: "0.01em", color: "#9ca3af", paddingLeft: 28 }}>
+                      <div key={i} style={{ fontSize: "clamp(11px, 1.2vh, 14px)", lineHeight: "clamp(1.6, 2vh, 1.9)", letterSpacing: "0.01em", color: "#9ca3af", paddingLeft: 20 }}>
                         · {line.trim()}
                       </div>
                     );
                   }
                   const colonIdx = line.indexOf(":");
                   return (
-                    <div key={i} style={{ fontSize: 22, lineHeight: 2.4, letterSpacing: "0.01em", color: "#e2e8f0" }}>
+                    <div key={i} style={{ fontSize: "clamp(11px, 1.2vh, 14px)", lineHeight: "clamp(1.6, 2vh, 1.9)", letterSpacing: "0.01em", color: "#e2e8f0" }}>
                       {colonIdx > 0
                         ? <>• <strong style={{ color: "#ffffff" }}>{line.slice(0, colonIdx)}</strong>{line.slice(colonIdx)}</>
                         : <>• {line}</>
