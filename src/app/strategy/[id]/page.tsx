@@ -712,6 +712,19 @@ export default function StrategyDetailPage() {
         }
       `}</style>
 
+      {/* Back link — fixed top left, always visible */}
+      <Link href="/" style={{
+        position: "fixed", top: 16, left: 180, zIndex: 300,
+        fontSize: 14, color: "#ffffff", opacity: 0.7,
+        textDecoration: "none", letterSpacing: "0.02em",
+        transition: "opacity 0.15s",
+      }}
+        onMouseEnter={e => (e.currentTarget.style.opacity = "1")}
+        onMouseLeave={e => (e.currentTarget.style.opacity = "0.7")}
+      >
+        ← Indian Strategies Dashboard
+      </Link>
+
       {/* Dot navigation — fixed right */}
       <div style={{
         position: "fixed", right: 24, top: "50%", transform: "translateY(-50%)",
@@ -750,26 +763,11 @@ export default function StrategyDetailPage() {
             position: "relative", overflow: "hidden",
           }}
         >
-          {/* Back link */}
-          <div style={{ flexShrink: 0, padding: "24px 40px 0" }}>
-            <Link href="/" style={{
-              display: "inline-flex", alignItems: "center", gap: 8,
-              fontSize: 12, color: "#4b5563", letterSpacing: "0.05em", textDecoration: "none",
-              transition: "color 0.15s",
-            }}
-              onMouseEnter={e => (e.currentTarget.style.color = "#9ca3af")}
-              onMouseLeave={e => (e.currentTarget.style.color = "#4b5563")}
-            >
-              ← Indian Strategies Dashboard
-            </Link>
-          </div>
-
           {/* Center content */}
           <div style={{
             flex: 1, display: "flex", flexDirection: "column",
             justifyContent: "center", padding: "0 40px 12px",
-            maxWidth: 1100, margin: "0 auto", width: "100%",
-            overflow: "hidden",
+            width: "100%", overflow: "hidden",
           }}>
             {/* Strategy name */}
             <h1 style={{
@@ -782,7 +780,7 @@ export default function StrategyDetailPage() {
 
             {/* Description */}
             {strategy?.description && (
-              <p style={{ fontSize: 15, color: "#6b7280", margin: "0 0 20px", lineHeight: 1.6, maxWidth: 700 }}>
+              <p style={{ fontSize: 18, color: "#6b7280", margin: "0 0 20px", lineHeight: 1.6, maxWidth: 700 }}>
                 {strategy.description}
               </p>
             )}
@@ -811,7 +809,7 @@ export default function StrategyDetailPage() {
             {/* Strategy rules */}
             {rules.length > 0 && (
               <div style={{ maxWidth: 800 }}>
-                <div style={{ fontSize: 18, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.02em", marginBottom: 16 }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: accent, letterSpacing: "0.02em", marginBottom: 16 }}>
                   Strategy Rules
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
@@ -821,7 +819,7 @@ export default function StrategyDetailPage() {
                     return (
                       <div key={i} style={{
                         fontSize: 13, lineHeight: 1.7,
-                        color: isIndented ? "#6b7280" : "#c9d1d9",
+                        color: isIndented ? "#9ca3af" : "#e2e8f0",
                         paddingLeft: isIndented ? 24 : 0,
                       }}>
                         {isIndented ? `· ${line.trim()}` : line}
@@ -859,25 +857,27 @@ export default function StrategyDetailPage() {
             position: "relative",
           }}
         >
-          {/* Chart top bar */}
-          <div style={{
-            flexShrink: 0, display: "flex", alignItems: "center",
-            justifyContent: "space-between", padding: "0 24px",
-            height: 60, background: "#0B0E17", borderBottom: "1px solid #1a1f2e",
-            gap: 16,
-          }}>
-            {/* ↑ PREV pill */}
+          {/* ↑ PREV pill strip */}
+          <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0" }}>
             <button
               onClick={() => scrollToSection(0)}
               onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
               onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
               style={{
                 background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
-                borderRadius: 999, padding: "6px 18px", color: "#9ca3af",
-                fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer", flexShrink: 0,
+                borderRadius: 999, padding: "10px 28px", color: "#ffffff",
+                fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer",
               }}
             >↑ PREV</button>
+          </div>
 
+          {/* Chart top bar */}
+          <div style={{
+            flexShrink: 0, display: "flex", alignItems: "center",
+            justifyContent: "space-between", padding: "0 24px",
+            height: 60, background: "#0B0E17", borderBottom: "1px solid #1a1f2e",
+            borderTop: "1px solid #1a1f2e", gap: 16,
+          }}>
             {/* Index tabs */}
             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
               {charts.map((cfg, i) => (
