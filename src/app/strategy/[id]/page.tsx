@@ -714,15 +714,17 @@ export default function StrategyDetailPage() {
 
       {/* Back link — fixed top left, always visible */}
       <Link href="/" style={{
-        position: "fixed", top: 16, left: 180, zIndex: 300,
-        fontSize: 18, fontWeight: 700, color: "#ffffff", opacity: 0.8,
+        position: "fixed", top: 14, left: 180, zIndex: 300,
+        fontSize: 20, fontWeight: 700, color: "#ffffff", opacity: 0.8,
         textDecoration: "none", letterSpacing: "0.01em",
+        display: "inline-flex", alignItems: "center", gap: 8,
         transition: "opacity 0.15s",
       }}
         onMouseEnter={e => (e.currentTarget.style.opacity = "1")}
         onMouseLeave={e => (e.currentTarget.style.opacity = "0.8")}
       >
-        ← Indian Strategies Dashboard
+        <span style={{ fontSize: 24, lineHeight: 1 }}>←</span>
+        Indian Strategies Dashboard
       </Link>
 
       {/* Dot navigation — fixed right */}
@@ -770,31 +772,34 @@ export default function StrategyDetailPage() {
             <div style={{
               width: "40%", flexShrink: 0,
               display: "flex", flexDirection: "column",
-              padding: "64px 40px 24px",
-              overflow: "hidden",
+              padding: "72px 40px 16px",
             }}>
-              {/* Strategy name */}
+              {/* Strategy name — centered */}
               <h1 style={{
                 fontSize: 48, fontWeight: 700, color: "#ffffff",
-                margin: "0 0 16px", lineHeight: 1.1, letterSpacing: "-0.02em",
+                margin: "0 0 12px", lineHeight: 1.1, letterSpacing: "-0.02em",
+                textAlign: "center",
               }}>
                 {strategy?.name ?? id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
               </h1>
 
-              {/* Description */}
+              {/* Description — centered */}
               {strategy?.description && (
-                <p style={{ fontSize: 18, color: "#6b7280", margin: "0 0 24px", lineHeight: 1.6 }}>
+                <p style={{ fontSize: 18, color: "#6b7280", margin: "0 0 20px", lineHeight: 1.6, textAlign: "center" }}>
                   {strategy.description}
                 </p>
               )}
 
-              {/* 2×4 KPI grid */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, flex: 1, alignContent: "start" }}>
+              {/* 2×4 KPI grid — stretches to fill remaining height */}
+              <div style={{
+                display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "repeat(4, 1fr)",
+                gap: 12, flex: 1,
+              }}>
                 {stats.map(s => (
                   <div key={s.label} style={{
                     background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
                     borderRadius: 12, padding: "20px",
-                    display: "flex", flexDirection: "column", gap: 8,
+                    display: "flex", flexDirection: "column", justifyContent: "space-between",
                   }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", letterSpacing: "0.1em", textTransform: "uppercase" }}>{s.label}</div>
                     <div style={{ fontSize: 24, fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
@@ -807,22 +812,22 @@ export default function StrategyDetailPage() {
             <div style={{
               flex: 1,
               display: "flex", flexDirection: "column",
-              padding: "64px 48px 24px 40px",
+              padding: "72px 56px 16px 48px",
               borderLeft: "1px solid rgba(255,255,255,0.08)",
               overflowY: "auto",
             }}>
-              <div style={{ fontSize: 22, fontWeight: 700, color: accent, letterSpacing: "0.01em", marginBottom: 24 }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: accent, letterSpacing: "0.01em", marginBottom: 28 }}>
                 Strategy Logic
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+              <div style={{ display: "flex", flexDirection: "column" }}>
                 {rules.map((line, i) => {
-                  if (line === "") return <div key={i} style={{ height: 14 }} />;
+                  if (line === "") return <div key={i} style={{ height: 18 }} />;
                   const isIndented = line.startsWith("  ");
                   return (
                     <div key={i} style={{
-                      fontSize: 16, lineHeight: 2.0,
+                      fontSize: 18, lineHeight: 2.2, letterSpacing: "0.01em",
                       color: isIndented ? "#9ca3af" : "#e2e8f0",
-                      paddingLeft: isIndented ? 24 : 0,
+                      paddingLeft: isIndented ? 28 : 0,
                     }}>
                       {isIndented ? `· ${line.trim()}` : line}
                     </div>
