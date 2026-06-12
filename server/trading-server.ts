@@ -314,11 +314,12 @@ function calcATR(candles: Candle[], period = 14): number {
 }
 
 function calcVWAP(candles: Candle[]): number {
-  // Approximate VWAP as avg of typical price (H+L+C)/3 from 9:15 AM IST (UTC 3:45 = 225 mins)
-  const todayCandles = candles.filter(c => {
-    const istD = new Date(c.time + (5 * 60 + 30) * 60_000);
-    return istD.getUTCHours() * 60 + istD.getUTCMinutes() >= 555;
-  });
+  // Only use today's session (9:15 AM IST onwards) — must anchor to today's DATE
+  // not just time-of-day, otherwise multi-day historical candles skew the VWAP
+  const istD2        = getIST();
+  const istMidnight2 = Date.UTC(istD2.getUTCFullYear(), istD2.getUTCMonth(), istD2.getUTCDate()) - (5*60+30)*60_000;
+  const sessionStart = istMidnight2 + (9*60+15)*60_000; // 9:15 AM IST today
+  const todayCandles = candles.filter(c => c.time >= sessionStart);
   if (!todayCandles.length) return candles[candles.length - 1]?.close ?? 0;
   const sum = todayCandles.reduce((s, c) => s + (c.high + c.low + c.close) / 3, 0);
   return sum / todayCandles.length;
@@ -1075,17 +1076,25 @@ async function runOrionForIndex(index: string, mins: number): Promise<void> {
     return;
   }
 
-  // Set ORB from first completed 15m candle (9:15–9:30 candle)
-  if (!orbSet[index] && candles15m.length >= 1) {
-    const orbCandle = candles15m[0];
-    const istH = new Date(orbCandle.time + (5 * 60 + 30) * 60_000);
-    if (istH.getUTCHours() === 9 && istH.getUTCMinutes() === 15) {
+  // Set ORB from the 9:15–9:30 AM candle of TODAY.
+  // Search the full array for today's 9:15 candle — candles[0] breaks when
+  // historical data is seeded because it points to a candle from days ago.
+  if (!orbSet[index]) {
+    const istDorb      = getIST();
+    const istMidOrb    = Date.UTC(istDorb.getUTCFullYear(), istDorb.getUTCMonth(), istDorb.getUTCDate()) - (5*60+30)*60_000;
+    const orb915Ms     = istMidOrb + (9*60+15)*60_000; // 9:15 AM IST today in UTC epoch
+    const orbCandle    = candles15m.find(c => c.time === orb915Ms);
+    if (orbCandle) {
       orbHigh[index] = orbCandle.high;
       orbLow[index]  = orbCandle.low;
       orbSet[index]  = true;
       console.log(`[S2:${index}] ORB set — H:${orbHigh[index]} L:${orbLow[index]}`);
     } else {
-      console.log(`[S2:${index}] ORB not set — first candle time ${istH.getUTCHours()}:${String(istH.getUTCMinutes()).padStart(2,"0")} IST (need 9:15)`);
+      const todayFirst = candles15m.filter(c => c.time >= istMidOrb)[0];
+      const hint = todayFirst
+        ? `earliest today candle: ${new Date(todayFirst.time + (5*60+30)*60_000).toISOString().slice(11,16)} IST`
+        : "no today candles yet";
+      console.log(`[S2:${index}] ORB not set — 9:15 candle not found (${hint})`);
     }
   }
   if (!orbSet[index]) return;
@@ -2947,13 +2956,15 @@ if (_analyticsTok) {
   console.warn("[Token] UPSTOX_ANALYTICS_TOKEN not set — falling back to OAuth token for market data");
 }
 
-loadTokenFromSupabase().catch(console.error);
 refreshUsdToInr().catch(console.error);
 scheduleTokenRequest();
 
-// Seed historical candles immediately — strategies are ready within seconds of boot
+// Load token first, THEN seed equity candles — seeding needs a valid Upstox token.
+// BTC uses public Kraken API so can start in parallel.
 seedBtcCandlesFromKraken().catch(console.error);
-seedEquityCandlesFromUpstox().catch(console.error);
+loadTokenFromSupabase()
+  .then(() => seedEquityCandlesFromUpstox())
+  .catch(console.error);
 
 // LTP every second
 pollLTP();
