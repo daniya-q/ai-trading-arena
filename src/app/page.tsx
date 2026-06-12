@@ -449,17 +449,18 @@ function CapitalSummaryBar({ capitals, openPositions }: { capitals: Capital[]; o
 // ── CandleChart ─────────────────────────────────────────────────
 
 function CandleChart({ index, label }: { index: string; label: string }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef     = useRef<IChartApi | null>(null);
-  const seriesRef    = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const containerRef    = useRef<HTMLDivElement>(null);
+  const chartRef        = useRef<IChartApi | null>(null);
+  const seriesRef       = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const lastCandleTime  = useRef<number>(0);
   const [timeframe, setTimeframe] = useState<"30s" | "5m" | "15m">("30s");
+  const isOpen = useMarketOpen();
 
   // Init chart once on mount
   useEffect(() => {
     if (!containerRef.current) return;
     const chart = createChart(containerRef.current, {
       autoSize: true,
-      height: 200,
       layout: {
         background: { type: ColorType.Solid, color: "#0A0D14" },
         textColor: "#6b7280",
@@ -469,13 +470,17 @@ function CandleChart({ index, label }: { index: string; label: string }) {
         vertLines: { color: "#1a1f2e" },
         horzLines: { color: "#1a1f2e" },
       },
-      rightPriceScale: { borderColor: "#1a1f2e" },
+      rightPriceScale: {
+        borderColor: "#1a1f2e",
+        autoScale: true,
+        scaleMargins: { top: 0.1, bottom: 0.1 },
+      },
       timeScale: {
         borderColor: "#1a1f2e",
         timeVisible: true,
         secondsVisible: true,
-        fixLeftEdge: true,
-        rightOffset: 2,
+        fixLeftEdge: false,
+        rightOffset: 5,
       },
       crosshair: { mode: 1 },
       handleScroll: true,
@@ -484,40 +489,50 @@ function CandleChart({ index, label }: { index: string; label: string }) {
     chartRef.current = chart;
 
     seriesRef.current = chart.addSeries(CandlestickSeries, {
-      upColor:        "#22c55e",
-      downColor:      "#ef4444",
-      borderUpColor:  "#22c55e",
-      borderDownColor:"#ef4444",
-      wickUpColor:    "#22c55e",
-      wickDownColor:  "#ef4444",
+      upColor:         "#22c55e",
+      downColor:       "#ef4444",
+      borderUpColor:   "#22c55e",
+      borderDownColor: "#ef4444",
+      wickUpColor:     "#22c55e",
+      wickDownColor:   "#ef4444",
       lastValueVisible: true,
       priceLineVisible: true,
     });
 
+    // ResizeObserver: keep chart width in sync with container
+    const ro = new ResizeObserver(() => {
+      if (chartRef.current && containerRef.current) {
+        chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
+      }
+    });
+    ro.observe(containerRef.current);
+
     return () => {
+      ro.disconnect();
       chart.remove();
       chartRef.current  = null;
       seriesRef.current = null;
     };
   }, []);
 
-  // Update secondsVisible when timeframe changes
+  // Update secondsVisible + clear when timeframe changes
   useEffect(() => {
     if (!chartRef.current) return;
     chartRef.current.timeScale().applyOptions({ secondsVisible: timeframe === "30s" });
     if (seriesRef.current) seriesRef.current.setData([]);
+    lastCandleTime.current = 0;
   }, [timeframe]);
 
-  // Poll candle data every second
+  // Poll candle data — 1s when market open, 60s when closed
   useEffect(() => {
     let cancelled = false;
     const fetchData = async () => {
       try {
         const res = await fetch(`${BACKEND}/api/candles?index=${index}&interval=${timeframe}`);
-        if (!res.ok) { console.warn(`[candles:${index}] HTTP ${res.status}`); return; }
+        if (!res.ok) return;
         const raw: OhlcCandle[] = await res.json();
-        console.log(`[candles:${index}:${timeframe}] received ${raw.length} candles`, raw.slice(-2));
         if (cancelled || !seriesRef.current) return;
+
         const data = raw
           .filter(c => c.open > 0 && c.high >= c.low && c.close > 0)
           .map(c => ({
@@ -527,16 +542,23 @@ function CandleChart({ index, label }: { index: string; label: string }) {
             low:   c.low,
             close: c.close,
           }));
-        if (data.length > 0) {
-          seriesRef.current.setData(data);
-          chartRef.current?.timeScale().scrollToRealTime();
-        }
+
+        if (data.length === 0) return;
+
+        // Skip setData if last candle hasn't changed
+        const newestTime = data[data.length - 1].time as number;
+        if (newestTime === lastCandleTime.current) return;
+        lastCandleTime.current = newestTime;
+
+        seriesRef.current.setData(data);
+        chartRef.current?.timeScale().scrollToRealTime();
       } catch (err) { console.warn(`[candles:${index}] error:`, err); }
     };
     fetchData();
-    const iv = setInterval(fetchData, 1000);
+    const interval = isOpen ? 1_000 : 60_000;
+    const iv = setInterval(fetchData, interval);
     return () => { cancelled = true; clearInterval(iv); };
-  }, [index, timeframe]);
+  }, [index, timeframe, isOpen]);
 
   return (
     <div style={{
@@ -579,7 +601,7 @@ function CandleChart({ index, label }: { index: string; label: string }) {
           ))}
         </div>
       </div>
-      <div ref={containerRef} style={{ width: "100%", height: 200 }} />
+      <div ref={containerRef} style={{ width: "100%", height: 350 }} />
     </div>
   );
 }

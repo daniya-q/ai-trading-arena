@@ -310,19 +310,36 @@ function IndicatorChart({
   const pcrSeriesRef    = useRef<ISeriesApi<"Line"> | null>(null);
   const [lastPcr, setLastPcr] = useState<number | null>(null);
 
-  const needsEMA       = ["ema_crossover", "ema_confluence"].includes(strategyId);
-  const needsVWAP      = ["ema_confluence", "orion", "vwap_scalper"].includes(strategyId);
-  const needsST        = strategyId === "supertrend";
-  const needsPCR       = strategyId === "pcr_reversal";
-  const needsORB       = ["orion", "gap_orb", "vwap_scalper"].includes(strategyId);
-  const needsPDC       = ["gap_orb", "orion"].includes(strategyId);
+  const needsEMA  = ["ema_crossover", "ema_confluence"].includes(strategyId);
+  const needsVWAP = ["ema_confluence", "orion", "vwap_scalper"].includes(strategyId);
+  const needsST   = strategyId === "supertrend";
+  const needsPCR  = strategyId === "pcr_reversal";
+  const needsORB  = ["orion", "gap_orb", "vwap_scalper"].includes(strategyId);
+  const needsPDC  = ["gap_orb", "orion"].includes(strategyId);
+
+  // last candle time to skip redundant setData
+  const lastCandleTimeRef = useRef<number>(0);
+
+  // Market-open check (IST weekday + 9:15–15:30)
+  const [isMarketOpen, setIsMarketOpen] = useState(false);
+  useEffect(() => {
+    const check = () => {
+      const ist = new Date(Date.now() + (5 * 60 + 30) * 60_000);
+      const dow = ist.getUTCDay();
+      if (dow === 0 || dow === 6) { setIsMarketOpen(false); return; }
+      const m = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+      setIsMarketOpen(m >= 555 && m <= 930);
+    };
+    check();
+    const iv = setInterval(check, 60_000);
+    return () => clearInterval(iv);
+  }, []);
 
   // Init main chart
   useEffect(() => {
     if (!mainContainerRef.current) return;
     const chart = createChart(mainContainerRef.current, {
       autoSize: true,
-      height: 250,
       layout: {
         background: { type: ColorType.Solid, color: "#0A0D14" },
         textColor: "#6b7280",
@@ -332,19 +349,33 @@ function IndicatorChart({
         vertLines: { color: "#1a1f2e" },
         horzLines: { color: "#1a1f2e" },
       },
-      rightPriceScale: { borderColor: "#1a1f2e" },
+      rightPriceScale: {
+        borderColor: "#1a1f2e",
+        autoScale: true,
+        scaleMargins: { top: 0.1, bottom: 0.1 },
+      },
       timeScale: {
         borderColor: "#1a1f2e",
         timeVisible: true,
         secondsVisible: defaultInterval === "30s" || defaultInterval === "1m",
-        fixLeftEdge: true,
-        rightOffset: 2,
+        fixLeftEdge: false,
+        rightOffset: 5,
       },
       crosshair: { mode: 1 },
       handleScroll: true,
       handleScale: true,
     });
     chartRef.current = chart;
+
+    // ResizeObserver: keep chart width in sync with container
+    const ro = new ResizeObserver(() => {
+      if (chartRef.current && mainContainerRef.current) {
+        chartRef.current.applyOptions({ width: mainContainerRef.current.clientWidth });
+      }
+    });
+    ro.observe(mainContainerRef.current);
+    // store for cleanup
+    (chart as unknown as { _ro: ResizeObserver })._ro = ro;
 
     candleSeriesRef.current = chart.addSeries(CandlestickSeries, {
       upColor:         "#22c55e",
@@ -403,17 +434,18 @@ function IndicatorChart({
     }
 
     return () => {
+      (chart as unknown as { _ro?: ResizeObserver })._ro?.disconnect();
       chart.remove();
-      chartRef.current      = null;
-      candleSeriesRef.current = null;
-      ema16Ref.current      = null;
-      ema64Ref.current      = null;
-      vwapRef.current       = null;
-      stUpRef.current        = null;
-      stDownRef.current      = null;
-      orbHighLineRef.current = null;
-      orbLowLineRef.current  = null;
-      pdcLineRef.current     = null;
+      chartRef.current         = null;
+      candleSeriesRef.current  = null;
+      ema16Ref.current         = null;
+      ema64Ref.current         = null;
+      vwapRef.current          = null;
+      stUpRef.current          = null;
+      stDownRef.current        = null;
+      orbHighLineRef.current   = null;
+      orbLowLineRef.current    = null;
+      pdcLineRef.current       = null;
       markersPluginRef.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -461,12 +493,13 @@ function IndicatorChart({
     if (vwapRef.current)   vwapRef.current.setData([]);
     if (stUpRef.current)   stUpRef.current.setData([]);
     if (stDownRef.current) stDownRef.current.setData([]);
+    lastCandleTimeRef.current = 0;
     chartRef.current?.timeScale().applyOptions({
       secondsVisible: timeframe === "30s" || timeframe === "1m",
     });
   }, [timeframe]);
 
-  // Poll data
+  // Poll data — 1s when market open, 60s when closed
   useEffect(() => {
     let cancelled = false;
 
@@ -493,8 +526,13 @@ function IndicatorChart({
           }));
 
         if (candles.length > 0) {
-          candleSeriesRef.current.setData(candles);
-          chartRef.current?.timeScale().scrollToRealTime();
+          const newestTime = candles[candles.length - 1].time as number;
+          const changed    = newestTime !== lastCandleTimeRef.current;
+          if (changed) {
+            lastCandleTimeRef.current = newestTime;
+            candleSeriesRef.current.setData(candles);
+            chartRef.current?.timeScale().scrollToRealTime();
+          }
 
           // Entry markers via createSeriesMarkers plugin
           const markers: SeriesMarker<UTCTimestamp>[] = positions.map(pos => ({
@@ -620,9 +658,10 @@ function IndicatorChart({
     };
 
     fetchAll();
-    const iv = setInterval(fetchAll, 1000);
+    const pollMs = isMarketOpen ? 1_000 : 60_000;
+    const iv = setInterval(fetchAll, pollMs);
     return () => { cancelled = true; clearInterval(iv); };
-  }, [index, timeframe, strategyId, positions, needsORB, needsPDC]);
+  }, [index, timeframe, strategyId, positions, needsORB, needsPDC, isMarketOpen]);
 
   const tfBtns = allIntervals.filter(tf => {
     // Only show relevant intervals
@@ -693,7 +732,7 @@ function IndicatorChart({
       </div>
 
       {/* Main chart */}
-      <div ref={mainContainerRef} style={{ width: "100%", height: 250 }} />
+      <div ref={mainContainerRef} style={{ width: "100%", height: 400 }} />
 
       {/* PCR panel */}
       {needsPCR && (
