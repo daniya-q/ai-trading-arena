@@ -1027,32 +1027,11 @@ export default function DashboardPage() {
   const active = strategies.filter(s => s.status !== "placeholder").sort((a, b) => a.slot_number - b.slot_number);
   const locked = strategies.filter(s => s.status === "placeholder").sort((a, b) => a.slot_number - b.slot_number);
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const scrollToSection = (idx: number) =>
-    containerRef.current?.scrollTo({ top: idx * window.innerHeight, behavior: "smooth" });
-
   return (
-    <div
-      ref={containerRef}
-      className="page-content"
-      style={{
-        background: "#0A0D14",
-        height: "100vh",
-        overflowY: "scroll",
-        scrollSnapType: "y mandatory",
-      }}
-    >
-      {/* ── SECTION 1: Market overview + Charts ── */}
-      <div style={{
-        height: "100vh",
-        scrollSnapAlign: "start",
-        display: "flex",
-        flexDirection: "column",
-        padding: "18px 16px 0",
-        overflow: "hidden",
-      }}>
+    <div className="page-content" style={{ background: "#0A0D14", minHeight: "100vh" }}>
+      <div style={{ padding: "18px 16px 12px" }}>
         {/* Page header */}
-        <div style={{ flexShrink: 0, marginBottom: 12, textAlign: "center" }}>
+        <div style={{ marginBottom: 12, textAlign: "center" }}>
           <div className="breadcrumb" style={{ textAlign: "center" }}>
             AI TRADING ARENA · SEASON 1 · PAPER TRADING
           </div>
@@ -1066,81 +1045,22 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* TopBar */}
-        <div style={{ flexShrink: 0 }}>
-          <TopBar />
-        </div>
+        <TopBar />
+        <CapitalSummaryBar capitals={capitals} openPositions={openPositions} />
 
-        {/* CapitalSummaryBar */}
-        <div style={{ flexShrink: 0 }}>
-          <CapitalSummaryBar capitals={capitals} openPositions={openPositions} />
-        </div>
-
-        {/* Live Open Trades panel — fills remaining height */}
-        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        {/* Live Open Trades panel */}
+        <div style={{ height: 360 }}>
           <OpenTradesPanel openPositions={openPositions} strategies={strategies} />
-        </div>
-
-        {/* NEXT pill */}
-        <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0 16px" }}>
-          <button
-            onClick={() => scrollToSection(1)}
-            onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
-            onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-            style={{
-              background: "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,0.15)",
-              borderRadius: 999,
-              padding: "10px 28px",
-              color: "#ffffff",
-              fontSize: 12,
-              fontWeight: 600,
-              letterSpacing: "0.08em",
-              cursor: "pointer",
-            }}
-          >
-            NEXT ↓
-          </button>
         </div>
       </div>
 
-      {/* ── SECTION 2: Strategy Cards ── */}
-      <div style={{
-        minHeight: "100vh",
-        scrollSnapAlign: "start",
-        padding: "14px 16px 32px",
-      }}>
-        {/* PREV pill */}
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
-          <button
-            onClick={() => scrollToSection(0)}
-            onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
-            onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-            style={{
-              background: "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,0.15)",
-              borderRadius: 999,
-              padding: "10px 28px",
-              color: "#ffffff",
-              fontSize: 12,
-              fontWeight: 600,
-              letterSpacing: "0.08em",
-              cursor: "pointer",
-            }}
-          >
-            ↑ PREV
-          </button>
-        </div>
-
-        {/* Error banner */}
+      {/* Strategy Cards */}
+      <div style={{ padding: "12px 16px 32px" }}>
         {error && (
           <div style={{
-            marginBottom: 12,
-            padding: "9px 12px",
-            background: "rgba(239,68,68,0.05)",
-            border: "1px solid rgba(239,68,68,0.15)",
-            color: "#ef4444",
-            fontSize: 11,
+            marginBottom: 12, padding: "9px 12px",
+            background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.15)",
+            color: "#ef4444", fontSize: 11,
           }}>
             Supabase error: {error} —{" "}
             <span style={{ color: "#4b5563" }}>
@@ -1149,7 +1069,6 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Active strategy cards */}
         {active.length > 0 && (
           <div className="grid-eq">
             {active.map(s => (
@@ -1164,19 +1083,16 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Locked placeholder cards */}
         {locked.length > 0 && (
           <div style={{
             display: "grid",
             gridTemplateColumns: `repeat(${Math.min(locked.length, 4)}, 1fr)`,
-            gap: 16,
-            marginTop: 16,
+            gap: 16, marginTop: 16,
           }}>
             {locked.map(s => <LockedCard key={s.id} strategy={s} />)}
           </div>
         )}
 
-        {/* Empty state */}
         {strategies.length === 0 && !error && (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 300, gap: 8 }}>
             <div style={{ fontSize: 12, color: "#374151" }}>Waiting for data...</div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 
@@ -493,34 +493,13 @@ export default function BtcArenaPage() {
     return alloc + closedPnl + liveOpenPnl;
   }, [capitals, positions, btcPrice]);
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const scrollToSection = (idx: number) =>
-    containerRef.current?.scrollTo({ top: idx * window.innerHeight, behavior: "smooth" });
-
   const openPositions = positions.filter(p => p.status === "OPEN");
 
   return (
-    <div
-      ref={containerRef}
-      className="page-content"
-      style={{
-        background: "#0A0D14",
-        height: "100vh",
-        overflowY: "scroll",
-        scrollSnapType: "y mandatory",
-      }}
-    >
-      {/* ── SECTION 1: BTC overview + Chart ── */}
-      <div style={{
-        height: "100vh",
-        scrollSnapAlign: "start",
-        display: "flex",
-        flexDirection: "column",
-        padding: "18px 16px 0",
-        overflow: "hidden",
-      }}>
+    <div className="page-content" style={{ background: "#0A0D14", minHeight: "100vh" }}>
+      <div style={{ padding: "18px 16px 12px" }}>
         {/* Page header */}
-        <div style={{ flexShrink: 0, marginBottom: 12, textAlign: "center" }}>
+        <div style={{ marginBottom: 12, textAlign: "center" }}>
           <div className="breadcrumb" style={{ textAlign: "center" }}>
             AI TRADING ARENA · SEASON 1 · PAPER TRADING
           </div>
@@ -534,82 +513,22 @@ export default function BtcArenaPage() {
           </div>
         </div>
 
-        {/* BTC TopBar */}
-        <div style={{ flexShrink: 0 }}>
-          <BtcTopBar />
-        </div>
+        <BtcTopBar />
+        <BtcCapitalSummaryBar capitals={capitals} openPositions={openPositions} btcPrice={btcPrice} />
 
-        {/* Capital Summary */}
-        <div style={{ flexShrink: 0 }}>
-          <BtcCapitalSummaryBar capitals={capitals} openPositions={openPositions} btcPrice={btcPrice} />
-        </div>
-
-        {/* Live Open Trades — fills remaining height */}
-        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        {/* Live Open Trades panel */}
+        <div style={{ height: 320 }}>
           <BtcOpenTradesPanel openPositions={liveOpenPos} strategies={strategies} btcPrice={btcPrice} />
-        </div>
-
-        {/* NEXT pill */}
-        <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0 16px" }}>
-          <button
-            onClick={() => scrollToSection(1)}
-            onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
-            onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-            style={{
-              background: "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,0.15)",
-              borderRadius: 999,
-              padding: "10px 28px",
-              color: "#ffffff",
-              fontSize: 12,
-              fontWeight: 600,
-              letterSpacing: "0.08em",
-              cursor: "pointer",
-            }}
-          >
-            NEXT ↓
-          </button>
         </div>
       </div>
 
-      {/* ── SECTION 2: Strategy Cards ── */}
-      <div style={{
-        minHeight: "100vh",
-        scrollSnapAlign: "start",
-        padding: "14px 16px 32px",
-      }}>
-        {/* PREV pill */}
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
-          <button
-            onClick={() => scrollToSection(0)}
-            onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
-            onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-            style={{
-              background: "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,0.15)",
-              borderRadius: 999,
-              padding: "10px 28px",
-              color: "#ffffff",
-              fontSize: 12,
-              fontWeight: 600,
-              letterSpacing: "0.08em",
-              cursor: "pointer",
-            }}
-          >
-            ↑ PREV
-          </button>
-        </div>
-
-        {/* Error banner */}
+      {/* Strategy Cards */}
+      <div style={{ padding: "12px 16px 32px" }}>
         {error && (
           <div style={{
-            marginBottom: 12,
-            padding: "9px 12px",
-            background: "rgba(239,68,68,0.05)",
-            border: "1px solid rgba(239,68,68,0.15)",
-            color: "#ef4444",
-            fontSize: 11,
-            borderRadius: 4,
+            marginBottom: 12, padding: "9px 12px",
+            background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.15)",
+            color: "#ef4444", fontSize: 11, borderRadius: 4,
           }}>
             Supabase error: {error} —{" "}
             <span style={{ color: "#4b5563" }}>
@@ -618,7 +537,6 @@ export default function BtcArenaPage() {
           </div>
         )}
 
-        {/* Strategy cards */}
         {strategies.length > 0 && (
           <div className="grid-btc">
             {strategies.map(s => (
@@ -634,7 +552,6 @@ export default function BtcArenaPage() {
           </div>
         )}
 
-        {/* Empty state */}
         {strategies.length === 0 && !error && (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 300, gap: 8 }}>
             <div style={{ fontSize: 12, color: "#374151" }}>Waiting for data...</div>
