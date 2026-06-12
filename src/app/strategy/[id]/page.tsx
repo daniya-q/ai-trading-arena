@@ -765,10 +765,7 @@ export default function StrategyDetailPage() {
             position: "relative", overflow: "hidden",
           }}
         >
-          {/* 2-column × 2-row grid body
-               Row 1 (auto): left = name+desc  |  right = "Strategy Logic" heading pinned to bottom
-               Row 2 (1fr):  left = KPI grid   |  right = rules text
-          */}
+          {/* Grid: name spans full width (row 1); KPIs + Logic side by side (row 2) */}
           <div style={{
             flex: 1,
             display: "grid",
@@ -777,8 +774,8 @@ export default function StrategyDetailPage() {
             overflow: "hidden",
           }}>
 
-            {/* ── [R1, C1] Name + description ── */}
-            <div style={{ padding: "72px 40px 0", textAlign: "center" }}>
+            {/* ── Name + description — spans both columns ── */}
+            <div style={{ gridColumn: "1 / -1", padding: "72px 80px 24px", textAlign: "center" }}>
               <h1 style={{
                 fontSize: 48, fontWeight: 700, color: "#ffffff",
                 margin: "0 0 12px", lineHeight: 1.1, letterSpacing: "-0.02em",
@@ -792,19 +789,8 @@ export default function StrategyDetailPage() {
               )}
             </div>
 
-            {/* ── [R1, C2] "Strategy Logic" heading — pinned to bottom of row ── */}
-            <div style={{
-              borderLeft: "1px solid rgba(255,255,255,0.08)",
-              display: "flex", flexDirection: "column", justifyContent: "flex-end",
-              padding: "0 56px 24px 48px",
-            }}>
-              <div style={{ fontSize: 26, fontWeight: 700, color: accent, letterSpacing: "0.01em" }}>
-                Strategy Logic
-              </div>
-            </div>
-
-            {/* ── [R2, C1] KPI grid — fills full row 2 height ── */}
-            <div style={{ padding: "16px 40px 16px", overflow: "hidden" }}>
+            {/* ── KPI grid — auto-placed row 2 col 1 ── */}
+            <div style={{ padding: "0 40px 16px", overflow: "hidden" }}>
               <div style={{
                 display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "repeat(4, 1fr)",
                 gap: 12, height: "100%",
@@ -815,30 +801,40 @@ export default function StrategyDetailPage() {
                     borderRadius: 12, padding: "20px",
                     display: "flex", flexDirection: "column", justifyContent: "space-between",
                   }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", letterSpacing: "0.1em", textTransform: "uppercase" }}>{s.label}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase" }}>{s.label}</div>
                     <div style={{ fontSize: 24, fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* ── [R2, C2] Rules — fills full row 2 height ── */}
+            {/* ── Strategy Logic + rules — auto-placed row 2 col 2 ── */}
             <div style={{
               borderLeft: "1px solid rgba(255,255,255,0.08)",
-              padding: "16px 56px 16px 48px",
+              padding: "0 56px 16px 48px",
               overflowY: "auto",
             }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: accent, letterSpacing: "0.01em", marginBottom: 20 }}>
+                Strategy Logic
+              </div>
               <div style={{ display: "flex", flexDirection: "column" }}>
                 {rules.map((line, i) => {
-                  if (line === "") return <div key={i} style={{ height: 20 }} />;
+                  if (line === "") return <div key={i} style={{ height: 16 }} />;
                   const isIndented = line.startsWith("  ");
+                  if (isIndented) {
+                    return (
+                      <div key={i} style={{ fontSize: 22, lineHeight: 2.4, letterSpacing: "0.01em", color: "#9ca3af", paddingLeft: 28 }}>
+                        · {line.trim()}
+                      </div>
+                    );
+                  }
+                  const colonIdx = line.indexOf(":");
                   return (
-                    <div key={i} style={{
-                      fontSize: 20, lineHeight: 2.6, letterSpacing: "0.01em",
-                      color: isIndented ? "#9ca3af" : "#e2e8f0",
-                      paddingLeft: isIndented ? 28 : 0,
-                    }}>
-                      {isIndented ? `· ${line.trim()}` : line}
+                    <div key={i} style={{ fontSize: 22, lineHeight: 2.4, letterSpacing: "0.01em", color: "#e2e8f0" }}>
+                      {colonIdx > 0
+                        ? <>• <strong style={{ color: "#ffffff" }}>{line.slice(0, colonIdx)}</strong>{line.slice(colonIdx)}</>
+                        : <>• {line}</>
+                      }
                     </div>
                   );
                 })}
