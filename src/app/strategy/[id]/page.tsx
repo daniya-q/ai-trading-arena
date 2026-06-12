@@ -715,12 +715,12 @@ export default function StrategyDetailPage() {
       {/* Back link — fixed top left, always visible */}
       <Link href="/" style={{
         position: "fixed", top: 16, left: 180, zIndex: 300,
-        fontSize: 14, color: "#ffffff", opacity: 0.7,
-        textDecoration: "none", letterSpacing: "0.02em",
+        fontSize: 18, fontWeight: 700, color: "#ffffff", opacity: 0.8,
+        textDecoration: "none", letterSpacing: "0.01em",
         transition: "opacity 0.15s",
       }}
         onMouseEnter={e => (e.currentTarget.style.opacity = "1")}
-        onMouseLeave={e => (e.currentTarget.style.opacity = "0.7")}
+        onMouseLeave={e => (e.currentTarget.style.opacity = "0.8")}
       >
         ← Indian Strategies Dashboard
       </Link>
@@ -763,72 +763,73 @@ export default function StrategyDetailPage() {
             position: "relative", overflow: "hidden",
           }}
         >
-          {/* Center content */}
-          <div style={{
-            flex: 1, display: "flex", flexDirection: "column",
-            justifyContent: "center", padding: "0 40px 12px",
-            width: "100%", overflow: "hidden",
-          }}>
-            {/* Strategy name */}
-            <h1 style={{
-              fontSize: "clamp(26px, 3.5vw, 46px)", fontWeight: 700,
-              color: "#ffffff", margin: "0 0 12px", lineHeight: 1.1,
-              letterSpacing: "-0.02em",
-            }}>
-              {strategy?.name ?? id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
-            </h1>
+          {/* 2-column body */}
+          <div style={{ flex: 1, display: "flex", alignItems: "stretch", overflow: "hidden" }}>
 
-            {/* Description */}
-            {strategy?.description && (
-              <p style={{ fontSize: 18, color: "#6b7280", margin: "0 0 20px", lineHeight: 1.6, maxWidth: 700 }}>
-                {strategy.description}
-              </p>
-            )}
-
-            {/* Divider */}
-            <div style={{ height: 1, background: `linear-gradient(to right, ${accent}40, transparent)`, marginBottom: 20 }} />
-
-            {/* Stats bar */}
+            {/* ── Left column (40%) — name · description · KPI grid ── */}
             <div style={{
-              display: "grid", gridTemplateColumns: "repeat(8, 1fr)",
-              background: "#0B0E17", border: `1px solid ${accent}20`,
-              borderTop: `3px solid ${accent}`, borderRadius: 12,
-              overflow: "hidden", marginBottom: 24,
-            }} className="detail-stats-bar">
-              {stats.map((s, i) => (
-                <div key={s.label} style={{
-                  padding: "12px 10px",
-                  borderLeft: i > 0 ? "1px solid #1a1f2e" : undefined,
-                }}>
-                  <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 6, fontWeight: 700 }}>{s.label}</div>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
-                </div>
-              ))}
+              width: "40%", flexShrink: 0,
+              display: "flex", flexDirection: "column",
+              padding: "64px 40px 24px",
+              overflow: "hidden",
+            }}>
+              {/* Strategy name */}
+              <h1 style={{
+                fontSize: 48, fontWeight: 700, color: "#ffffff",
+                margin: "0 0 16px", lineHeight: 1.1, letterSpacing: "-0.02em",
+              }}>
+                {strategy?.name ?? id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+              </h1>
+
+              {/* Description */}
+              {strategy?.description && (
+                <p style={{ fontSize: 18, color: "#6b7280", margin: "0 0 24px", lineHeight: 1.6 }}>
+                  {strategy.description}
+                </p>
+              )}
+
+              {/* 2×4 KPI grid */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, flex: 1, alignContent: "start" }}>
+                {stats.map(s => (
+                  <div key={s.label} style={{
+                    background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: 12, padding: "20px",
+                    display: "flex", flexDirection: "column", gap: 8,
+                  }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", letterSpacing: "0.1em", textTransform: "uppercase" }}>{s.label}</div>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
+                  </div>
+                ))}
+              </div>
             </div>
 
-            {/* Strategy rules */}
-            {rules.length > 0 && (
-              <div style={{ maxWidth: 800 }}>
-                <div style={{ fontSize: 18, fontWeight: 700, color: accent, letterSpacing: "0.02em", marginBottom: 16 }}>
-                  Strategy Rules
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                  {rules.map((line, i) => {
-                    if (line === "") return <div key={i} style={{ height: 8 }} />;
-                    const isIndented = line.startsWith("  ");
-                    return (
-                      <div key={i} style={{
-                        fontSize: 13, lineHeight: 1.7,
-                        color: isIndented ? "#9ca3af" : "#e2e8f0",
-                        paddingLeft: isIndented ? 24 : 0,
-                      }}>
-                        {isIndented ? `· ${line.trim()}` : line}
-                      </div>
-                    );
-                  })}
-                </div>
+            {/* ── Right column (60%) — Strategy Logic + rules ── */}
+            <div style={{
+              flex: 1,
+              display: "flex", flexDirection: "column",
+              padding: "64px 48px 24px 40px",
+              borderLeft: "1px solid rgba(255,255,255,0.08)",
+              overflowY: "auto",
+            }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: accent, letterSpacing: "0.01em", marginBottom: 24 }}>
+                Strategy Logic
               </div>
-            )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                {rules.map((line, i) => {
+                  if (line === "") return <div key={i} style={{ height: 14 }} />;
+                  const isIndented = line.startsWith("  ");
+                  return (
+                    <div key={i} style={{
+                      fontSize: 16, lineHeight: 2.0,
+                      color: isIndented ? "#9ca3af" : "#e2e8f0",
+                      paddingLeft: isIndented ? 24 : 0,
+                    }}>
+                      {isIndented ? `· ${line.trim()}` : line}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
 
           {/* NEXT ↓ pill */}
