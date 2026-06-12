@@ -371,6 +371,7 @@ function IndicatorChart({
           if (newest !== lastCandleTimeRef.current) {
             lastCandleTimeRef.current = newest;
             candleSeriesRef.current.setData(candles);
+            chartRef.current?.priceScale("right").applyOptions({ autoScale: true });
             chartRef.current?.timeScale().scrollToRealTime();
             // surface price to parent
             if (onPriceUpdate) {
@@ -766,21 +767,14 @@ export default function StrategyDetailPage() {
           {/* Center content */}
           <div style={{
             flex: 1, display: "flex", flexDirection: "column",
-            justifyContent: "center", padding: "0 60px 60px",
+            justifyContent: "center", padding: "0 40px 12px",
             maxWidth: 1100, margin: "0 auto", width: "100%",
+            overflow: "hidden",
           }}>
-            {/* Strategy label */}
-            <div style={{
-              fontSize: 11, fontWeight: 700, color: accent, letterSpacing: "0.25em",
-              textTransform: "uppercase", marginBottom: 14,
-            }}>
-              STRATEGY {strategy?.slot_number ?? ""}
-            </div>
-
             {/* Strategy name */}
             <h1 style={{
-              fontSize: "clamp(36px, 5vw, 64px)", fontWeight: 700,
-              color: "#ffffff", margin: "0 0 16px", lineHeight: 1.1,
+              fontSize: "clamp(26px, 3.5vw, 46px)", fontWeight: 700,
+              color: "#ffffff", margin: "0 0 12px", lineHeight: 1.1,
               letterSpacing: "-0.02em",
             }}>
               {strategy?.name ?? id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
@@ -788,28 +782,28 @@ export default function StrategyDetailPage() {
 
             {/* Description */}
             {strategy?.description && (
-              <p style={{ fontSize: 18, color: "#6b7280", margin: "0 0 36px", lineHeight: 1.6, maxWidth: 700 }}>
+              <p style={{ fontSize: 15, color: "#6b7280", margin: "0 0 20px", lineHeight: 1.6, maxWidth: 700 }}>
                 {strategy.description}
               </p>
             )}
 
             {/* Divider */}
-            <div style={{ height: 1, background: `linear-gradient(to right, ${accent}40, transparent)`, marginBottom: 36 }} />
+            <div style={{ height: 1, background: `linear-gradient(to right, ${accent}40, transparent)`, marginBottom: 20 }} />
 
             {/* Stats bar */}
             <div style={{
               display: "grid", gridTemplateColumns: "repeat(8, 1fr)",
               background: "#0B0E17", border: `1px solid ${accent}20`,
               borderTop: `3px solid ${accent}`, borderRadius: 12,
-              overflow: "hidden", marginBottom: 48,
+              overflow: "hidden", marginBottom: 24,
             }} className="detail-stats-bar">
               {stats.map((s, i) => (
                 <div key={s.label} style={{
-                  padding: "18px 14px",
+                  padding: "12px 10px",
                   borderLeft: i > 0 ? "1px solid #1a1f2e" : undefined,
                 }}>
-                  <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 8, fontWeight: 700 }}>{s.label}</div>
-                  <div style={{ fontSize: 20, fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
+                  <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 6, fontWeight: 700 }}>{s.label}</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
                 </div>
               ))}
             </div>
@@ -817,16 +811,16 @@ export default function StrategyDetailPage() {
             {/* Strategy rules */}
             {rules.length > 0 && (
               <div style={{ maxWidth: 800 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#4b5563", letterSpacing: "0.15em", marginBottom: 20 }}>
-                  STRATEGY RULES
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.02em", marginBottom: 16 }}>
+                  Strategy Rules
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
                   {rules.map((line, i) => {
-                    if (line === "") return <div key={i} style={{ height: 10 }} />;
+                    if (line === "") return <div key={i} style={{ height: 8 }} />;
                     const isIndented = line.startsWith("  ");
                     return (
                       <div key={i} style={{
-                        fontSize: 16, lineHeight: 1.8,
+                        fontSize: 13, lineHeight: 1.7,
                         color: isIndented ? "#6b7280" : "#c9d1d9",
                         paddingLeft: isIndented ? 24 : 0,
                       }}>
@@ -839,7 +833,19 @@ export default function StrategyDetailPage() {
             )}
           </div>
 
-          <ScrollHint />
+          {/* NEXT ↓ pill */}
+          <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0 18px" }}>
+            <button
+              onClick={() => scrollToSection(1)}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
+              style={{
+                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+                borderRadius: 999, padding: "10px 28px", color: "#ffffff",
+                fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer",
+              }}
+            >NEXT ↓</button>
+          </div>
         </section>
 
         {/* ═══════════════════════════════════════
@@ -860,6 +866,18 @@ export default function StrategyDetailPage() {
             height: 60, background: "#0B0E17", borderBottom: "1px solid #1a1f2e",
             gap: 16,
           }}>
+            {/* ↑ PREV pill */}
+            <button
+              onClick={() => scrollToSection(0)}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
+              style={{
+                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+                borderRadius: 999, padding: "6px 18px", color: "#9ca3af",
+                fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer", flexShrink: 0,
+              }}
+            >↑ PREV</button>
+
             {/* Index tabs */}
             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
               {charts.map((cfg, i) => (
@@ -902,7 +920,19 @@ export default function StrategyDetailPage() {
             />
           </div>
 
-          <ScrollHint />
+          {/* NEXT ↓ pill */}
+          <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0", borderTop: "1px solid #1a1f2e" }}>
+            <button
+              onClick={() => scrollToSection(2)}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
+              style={{
+                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+                borderRadius: 999, padding: "10px 28px", color: "#ffffff",
+                fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer",
+              }}
+            >NEXT ↓</button>
+          </div>
         </section>
 
         {/* ═══════════════════════════════════════
@@ -913,17 +943,21 @@ export default function StrategyDetailPage() {
           style={{
             minHeight: "100vh", scrollSnapAlign: "start",
             display: "flex", flexDirection: "column",
-            padding: "60px 40px 80px",
+            padding: "0 40px 80px",
           }}
         >
-          {/* Section title */}
-          <div style={{ textAlign: "center", marginBottom: 56 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: accent, letterSpacing: "0.25em", marginBottom: 12 }}>
-              SECTION 3
-            </div>
-            <h2 style={{ fontSize: 48, fontWeight: 700, color: "#ffffff", margin: 0, letterSpacing: "-0.02em" }}>
-              Trades
-            </h2>
+          {/* ↑ PREV pill */}
+          <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "12px 0", marginBottom: 32 }}>
+            <button
+              onClick={() => scrollToSection(1)}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
+              style={{
+                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+                borderRadius: 999, padding: "10px 28px", color: "#ffffff",
+                fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer",
+              }}
+            >↑ PREV</button>
           </div>
 
           {openTrades.length === 0 && closedTrades.length === 0 ? (
