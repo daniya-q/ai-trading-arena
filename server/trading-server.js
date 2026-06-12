@@ -2683,6 +2683,96 @@ app.get("/api/candles", (req, res) => {
     const candles = getCandles(index, interval);
     res.json(candles.slice(-100));
 });
+// ── /api/indicators — computed indicator series per strategy ──────
+// GET /api/indicators?strategy=ema_crossover&index=NIFTY
+app.get("/api/indicators", (req, res) => {
+    const strategy = String(req.query.strategy ?? "").toLowerCase();
+    const index = String(req.query.index ?? "NIFTY").toUpperCase();
+    // Determine candle interval based on strategy
+    let interval;
+    if (["ema_crossover", "ema_confluence", "pcr_reversal"].includes(strategy)) {
+        interval = "30s";
+    }
+    else if (strategy === "supertrend") {
+        interval = "5m";
+    }
+    else if (["orion", "gap_orb"].includes(strategy)) {
+        interval = "15m";
+    }
+    else if (strategy === "vwap_scalper") {
+        interval = "1m";
+    }
+    else {
+        interval = "30s";
+    }
+    const candles = getCandles(index, interval);
+    const closes = candles.map(c => c.close);
+    const result = {};
+    // EMA16 + EMA64 (ema_crossover, ema_confluence)
+    if (["ema_crossover", "ema_confluence"].includes(strategy)) {
+        const ema16arr = emaValues(closes, 16);
+        const ema64arr = emaValues(closes, 64);
+        result.ema16 = ema16arr.map((v, i) => ({ time: candles[i].time, value: v })).slice(-100);
+        result.ema64 = ema64arr.map((v, i) => ({ time: candles[i].time, value: v })).slice(-100);
+        // Crossover detection
+        const crossovers = [];
+        for (let i = 1; i < ema16arr.length; i++) {
+            const prevDiff = ema16arr[i - 1] - ema64arr[i - 1];
+            const currDiff = ema16arr[i] - ema64arr[i];
+            if (prevDiff <= 0 && currDiff > 0)
+                crossovers.push({ time: candles[i].time, type: "bullish" });
+            else if (prevDiff >= 0 && currDiff < 0)
+                crossovers.push({ time: candles[i].time, type: "bearish" });
+        }
+        result.crossovers = crossovers.slice(-20);
+    }
+    // VWAP series (ema_confluence, orion, vwap_scalper)
+    if (["ema_confluence", "orion", "vwap_scalper"].includes(strategy)) {
+        const istD = getIST();
+        const istMidnight = Date.UTC(istD.getUTCFullYear(), istD.getUTCMonth(), istD.getUTCDate()) - (5 * 60 + 30) * 60000;
+        const sessionStart = istMidnight + (9 * 60 + 15) * 60000; // 9:15 AM IST
+        let cumTP = 0, count = 0;
+        const vwapSeries = [];
+        for (const c of candles) {
+            if (c.time >= sessionStart) {
+                cumTP += (c.high + c.low + c.close) / 3;
+                count++;
+                vwapSeries.push({ time: c.time, value: cumTP / count });
+            }
+        }
+        result.vwap = vwapSeries.slice(-100);
+    }
+    // Supertrend series (supertrend)
+    if (strategy === "supertrend") {
+        const stSeries = calcSupertrendSeries(candles, 7, 3);
+        const offset = candles.length - stSeries.length;
+        const stUpArr = [];
+        const stDownArr = [];
+        for (let i = 0; i < stSeries.length; i++) {
+            const t = candles[offset + i].time;
+            const s = stSeries[i];
+            stUpArr.push({ time: t, value: s.dir === "up" ? s.value : null });
+            stDownArr.push({ time: t, value: s.dir === "down" ? s.value : null });
+        }
+        result.supertrendUp = stUpArr.slice(-100);
+        result.supertrendDown = stDownArr.slice(-100);
+    }
+    // ORB High/Low (orion, gap_orb, vwap_scalper)
+    if (["orion", "gap_orb", "vwap_scalper"].includes(strategy)) {
+        result.orbHigh = orbHigh[index] ?? 0;
+        result.orbLow = orbLow[index] ?? 0;
+    }
+    // prevDayClose (gap_orb, orion)
+    if (["gap_orb", "orion"].includes(strategy)) {
+        result.prevDayClose = prevDayClose[index] ?? 0;
+    }
+    // PCR series (pcr_reversal)
+    if (strategy === "pcr_reversal") {
+        const hist = optionChainHistory[index];
+        result.pcr = (hist ?? []).map(h => ({ time: h.timestamp, value: h.pcr }));
+    }
+    res.json(result);
+});
 app.get("/health", (_req, res) => {
     res.json({
         status: "running",

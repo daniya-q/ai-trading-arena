@@ -98,6 +98,21 @@ button {
   grid-template-columns: repeat(6, 1fr);
 }
 
+/* ─── Detail page stats bar (8 columns) ─────────────────────── */
+.detail-stats-bar {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+}
+
+@media (max-width: 1024px) {
+  .detail-stats-bar {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .detail-stats-bar > div:nth-child(n+5) {
+    border-top: 1px solid #1a1f2e;
+  }
+}
+
 /* ─── Mobile (< 768px) ───────────────────────────────────────── */
 @media (max-width: 767px) {
   /* Hamburger visible on mobile */
@@ -181,6 +196,14 @@ button {
   }
   .stat-value {
     font-size: 14px !important;
+  }
+
+  /* Detail stats bar → 2 columns on mobile */
+  .detail-stats-bar {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  .detail-stats-bar > div:nth-child(n+3) {
+    border-top: 1px solid #1a1f2e;
   }
 
   /* BTC banner wraps on mobile */

@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { createChart, CandlestickSeries, ColorType } from "lightweight-charts";
 import type { IChartApi, ISeriesApi, UTCTimestamp } from "lightweight-charts";
 import { supabase } from "@/lib/supabase/client";
@@ -651,7 +652,7 @@ function StrategyCard({
             <div className="strategy-name" style={{ fontSize: 18, fontWeight: 700, color: "#ffffff" }}>{strategy.name}</div>
             <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4, lineHeight: 1.5 }}>{strategy.description}</div>
           </div>
-          <div style={{ fontSize: 10, color: "#9ca3af", letterSpacing: "0.06em", marginTop: 3, whiteSpace: "nowrap" }}>
+          <div style={{ fontSize: 10, color: "#4b5563", letterSpacing: "0.06em", marginTop: 3, whiteSpace: "nowrap" }}>
             VIEW →
           </div>
         </div>
@@ -1023,14 +1024,13 @@ function TradePopup({
 // ── Dashboard Page ─────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const [strategies,     setStrategies]     = useState<Strategy[]>([]);
-  const [capitals,       setCapitals]       = useState<Capital[]>([]);
-  const [positions,      setPositions]      = useState<Position[]>([]);
-  const [openPositions,  setOpenPositions]  = useState<Position[]>([]);
-  const [lastUpdate,     setLastUpdate]     = useState<Date | null>(null);
-  const [error,          setError]          = useState<string | null>(null);
-  const [popup,          setPopup]          = useState<Strategy | null>(null);
-  const [popupPositions, setPopupPositions] = useState<Position[]>([]);
+  const router = useRouter();
+  const [strategies,    setStrategies]    = useState<Strategy[]>([]);
+  const [capitals,      setCapitals]      = useState<Capital[]>([]);
+  const [positions,     setPositions]     = useState<Position[]>([]);
+  const [openPositions, setOpenPositions] = useState<Position[]>([]);
+  const [lastUpdate,    setLastUpdate]    = useState<Date | null>(null);
+  const [error,         setError]         = useState<string | null>(null);
 
   // Main 15s refresh
   const refresh = useCallback(async () => {
@@ -1070,23 +1070,6 @@ export default function DashboardPage() {
     return () => clearInterval(iv);
   }, []);
 
-  // Popup 5s position refresh
-  useEffect(() => {
-    if (!popup) return;
-    const fetchPopup = async () => {
-      const { data } = await supabase
-        .from("strategy_positions")
-        .select("*")
-        .eq("strategy_id", popup.id)
-        .order("opened_at", { ascending: false })
-        .limit(200);
-      if (data) setPopupPositions(data as Position[]);
-    };
-    fetchPopup();
-    const iv = setInterval(fetchPopup, 5_000);
-    return () => clearInterval(iv);
-  }, [popup]);
-
   const computeLiveCapital = useCallback((strategyId: string): number => {
     const cap = capitals.find(c => c.strategy_id === strategyId);
     const allocated = cap?.allocated_capital ?? 100000;
@@ -1099,11 +1082,6 @@ export default function DashboardPage() {
 
   const active = strategies.filter(s => s.status !== "placeholder").sort((a, b) => a.slot_number - b.slot_number);
   const locked = strategies.filter(s => s.status === "placeholder").sort((a, b) => a.slot_number - b.slot_number);
-
-  const openPopup = (s: Strategy) => {
-    setPopupPositions(positions.filter(p => p.strategy_id === s.id));
-    setPopup(s);
-  };
 
   return (
     <div className="page-content" style={{ background: "#0A0D14", minHeight: "100vh", padding: "18px 16px 32px" }}>
@@ -1161,7 +1139,7 @@ export default function DashboardPage() {
               strategy={s}
               capital={capitals.find(c => c.strategy_id === s.id)}
               liveCapital={computeLiveCapital(s.id)}
-              onClick={() => openPopup(s)}
+              onClick={() => router.push('/strategy/' + s.id)}
             />
           ))}
         </div>
@@ -1189,16 +1167,6 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Trade detail popup */}
-      {popup && (
-        <TradePopup
-          strategy={popup}
-          capital={capitals.find(c => c.strategy_id === popup.id)}
-          liveCapital={computeLiveCapital(popup.id)}
-          positions={popupPositions}
-          onClose={() => setPopup(null)}
-        />
-      )}
     </div>
   );
 }
