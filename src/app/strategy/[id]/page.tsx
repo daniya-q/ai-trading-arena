@@ -816,8 +816,8 @@ export default function StrategyDetailPage() {
                     borderRadius: 10, padding: "clamp(10px,1.2vh,16px) 14px",
                     display: "flex", flexDirection: "column", justifyContent: "space-between",
                   }}>
-                    <div style={{ fontSize: "clamp(18px, 2vh, 22px)", fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase" }}>{s.label}</div>
-                    <div style={{ fontSize: "clamp(21px, 2.7vh, 27px)", fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
+                    <div style={{ fontSize: "clamp(22px, 2.4vh, 26px)", fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase", paddingTop: 12 }}>{s.label}</div>
+                    <div style={{ fontSize: "clamp(22px, 2.4vh, 26px)", fontWeight: 700, color: s.color, fontFamily: "monospace", paddingBottom: 12 }}>{s.value}</div>
                   </div>
                 ))}
               </div>
