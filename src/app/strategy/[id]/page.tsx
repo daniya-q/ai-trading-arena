@@ -765,35 +765,49 @@ export default function StrategyDetailPage() {
             position: "relative", overflow: "hidden",
           }}
         >
-          {/* 2-column body */}
-          <div style={{ flex: 1, display: "flex", alignItems: "stretch", overflow: "hidden" }}>
+          {/* 2-column × 2-row grid body
+               Row 1 (auto): left = name+desc  |  right = "Strategy Logic" heading pinned to bottom
+               Row 2 (1fr):  left = KPI grid   |  right = rules text
+          */}
+          <div style={{
+            flex: 1,
+            display: "grid",
+            gridTemplateColumns: "40% 60%",
+            gridTemplateRows: "auto 1fr",
+            overflow: "hidden",
+          }}>
 
-            {/* ── Left column (40%) — name · description · KPI grid ── */}
-            <div style={{
-              width: "40%", flexShrink: 0,
-              display: "flex", flexDirection: "column",
-              padding: "72px 40px 16px",
-            }}>
-              {/* Strategy name — centered */}
+            {/* ── [R1, C1] Name + description ── */}
+            <div style={{ padding: "72px 40px 0", textAlign: "center" }}>
               <h1 style={{
                 fontSize: 48, fontWeight: 700, color: "#ffffff",
                 margin: "0 0 12px", lineHeight: 1.1, letterSpacing: "-0.02em",
-                textAlign: "center",
               }}>
                 {strategy?.name ?? id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
               </h1>
-
-              {/* Description — centered */}
               {strategy?.description && (
-                <p style={{ fontSize: 18, color: "#6b7280", margin: "0 0 20px", lineHeight: 1.6, textAlign: "center" }}>
+                <p style={{ fontSize: 20, color: "#6b7280", margin: 0, lineHeight: 1.6 }}>
                   {strategy.description}
                 </p>
               )}
+            </div>
 
-              {/* 2×4 KPI grid — stretches to fill remaining height */}
+            {/* ── [R1, C2] "Strategy Logic" heading — pinned to bottom of row ── */}
+            <div style={{
+              borderLeft: "1px solid rgba(255,255,255,0.08)",
+              display: "flex", flexDirection: "column", justifyContent: "flex-end",
+              padding: "0 56px 24px 48px",
+            }}>
+              <div style={{ fontSize: 26, fontWeight: 700, color: accent, letterSpacing: "0.01em" }}>
+                Strategy Logic
+              </div>
+            </div>
+
+            {/* ── [R2, C1] KPI grid — fills full row 2 height ── */}
+            <div style={{ padding: "16px 40px 16px", overflow: "hidden" }}>
               <div style={{
                 display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "repeat(4, 1fr)",
-                gap: 12, flex: 1,
+                gap: 12, height: "100%",
               }}>
                 {stats.map(s => (
                   <div key={s.label} style={{
@@ -808,24 +822,19 @@ export default function StrategyDetailPage() {
               </div>
             </div>
 
-            {/* ── Right column (60%) — Strategy Logic + rules ── */}
+            {/* ── [R2, C2] Rules — fills full row 2 height ── */}
             <div style={{
-              flex: 1,
-              display: "flex", flexDirection: "column",
-              padding: "72px 56px 16px 48px",
               borderLeft: "1px solid rgba(255,255,255,0.08)",
+              padding: "16px 56px 16px 48px",
               overflowY: "auto",
             }}>
-              <div style={{ fontSize: 22, fontWeight: 700, color: accent, letterSpacing: "0.01em", marginBottom: 28 }}>
-                Strategy Logic
-              </div>
               <div style={{ display: "flex", flexDirection: "column" }}>
                 {rules.map((line, i) => {
-                  if (line === "") return <div key={i} style={{ height: 18 }} />;
+                  if (line === "") return <div key={i} style={{ height: 20 }} />;
                   const isIndented = line.startsWith("  ");
                   return (
                     <div key={i} style={{
-                      fontSize: 18, lineHeight: 2.2, letterSpacing: "0.01em",
+                      fontSize: 20, lineHeight: 2.6, letterSpacing: "0.01em",
                       color: isIndented ? "#9ca3af" : "#e2e8f0",
                       paddingLeft: isIndented ? 28 : 0,
                     }}>
