@@ -54,6 +54,7 @@ type CorrelationData = {
   matrix: (number | null)[][] | null;
   insufficient?: boolean;
 };
+type CardMetrics = { profit_factor: string; max_drawdown_inr: number };
 
 // ── BTC Strategy Config ────────────────────────────────────────
 
@@ -83,6 +84,13 @@ function fmtTime(iso: string | null): string {
 }
 function fmtPct(n: number): string {
   return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+}
+function pfColor(pf: string): string {
+  if (pf === "N/A") return "#6b7280";
+  const v = parseFloat(pf);
+  if (v > 1.5) return "#4ade80";
+  if (v >= 1)  return "#facc15";
+  return "#f87171";
 }
 function winRate(cap: BtcCapital | undefined): string {
   if (!cap || cap.total_trades === 0) return "—";
@@ -361,6 +369,23 @@ function BtcStrategyCard({
   const retPct  = (livePnl / alloc) * 100;
   const trades  = capital?.total_trades ?? 0;
 
+  const [metrics, setMetrics] = useState<CardMetrics | null>(null);
+  useEffect(() => {
+    const fetchMetrics = () => {
+      fetch(`${BACKEND}/api/btc-strategy-metrics?strategy=${strategy.id}`)
+        .then(r => r.json())
+        .then(d => setMetrics({ profit_factor: d.profit_factor ?? "N/A", max_drawdown_inr: d.max_drawdown_inr ?? 0 }))
+        .catch(() => {});
+    };
+    fetchMetrics();
+    const iv = setInterval(fetchMetrics, 60_000);
+    return () => clearInterval(iv);
+  }, [strategy.id]);
+
+  const pfVal  = metrics?.profit_factor ?? "N/A";
+  const ddVal  = metrics?.max_drawdown_inr ?? 0;
+  const hasData = pfVal !== "N/A";
+
   return (
     <div
       onClick={onClick}
@@ -403,7 +428,7 @@ function BtcStrategyCard({
         )}
       </div>
 
-      {/* Stats grid */}
+      {/* Stats grid — row 1: Capital/PnL/Return, row 2: WinRate/Trades/Open */}
       <div className="grid-stats" style={{ borderTop: `1px solid ${accent}30` }}>
         {[
           { label: "CAPITAL",   value: `₹${fmtINR(liveCapital)}`,  color: "#ffffff",        weight: 600 },
@@ -422,6 +447,22 @@ function BtcStrategyCard({
             <div className="stat-value" style={{ fontSize: 16, fontWeight: s.weight, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
           </div>
         ))}
+      </div>
+
+      {/* Row 3: Profit Factor | Max Drawdown */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", borderTop: `1px solid ${accent}25` }}>
+        <div style={{ padding: "10px 14px", borderRight: `1px solid ${accent}25` }}>
+          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>PROFIT FACTOR</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: hasData ? pfColor(pfVal) : "#4b5563", fontFamily: "monospace" }}>
+            {hasData ? pfVal : "—"}
+          </div>
+        </div>
+        <div style={{ padding: "10px 14px" }}>
+          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>MAX DRAWDOWN</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: hasData && ddVal > 0 ? "#f87171" : "#4b5563", fontFamily: "monospace" }}>
+            {hasData && ddVal > 0 ? `-₹${fmtINR(ddVal)}` : "—"}
+          </div>
+        </div>
       </div>
     </div>
   );
