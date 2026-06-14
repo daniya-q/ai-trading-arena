@@ -3063,18 +3063,30 @@ app.get("/api/btc-strategy-metrics", async (req, res) => {
         .map(t => ({ pnl: t.pnl_inr, exit_reason: t.exit_reason, closed_at: t.closed_at }));
     res.json(calcMetrics(trades, allocated));
 });
-// ── /api/correlation — Indian strategies 6×6 Pearson correlation ──────────
+// ── /api/correlation — Indian strategies N×N Pearson correlation ──────────
+// Strategy list is loaded from DB (all non-placeholder), so new strategies
+// are included automatically. Strategies with < 2 closed trades still appear
+// in the matrix with null cells rather than being excluded.
 app.get("/api/correlation", async (req, res) => {
-    const STRATS = ["ema_crossover", "orion", "ema_confluence", "supertrend", "pcr_reversal", "gap_orb"];
+    // 1. Load all active/non-placeholder strategy IDs ordered by slot
+    const { data: stratRows } = await supabase
+        .from("strategies")
+        .select("id")
+        .neq("status", "placeholder")
+        .order("slot_number", { ascending: true });
+    const STRATS = (stratRows ?? []).map((r) => r.id);
+    if (STRATS.length === 0) {
+        res.json({ strategies: [], matrix: [] });
+        return;
+    }
+    // 2. Fetch all closed trades for those strategies (no early-exit — a strategy
+    //    with 0 trades still gets included with null correlation values)
     const { data: trades } = await supabase
         .from("strategy_positions").select("strategy_id,pnl,closed_at")
         .in("strategy_id", STRATS).eq("status", "CLOSED");
-    if (!trades || trades.length === 0) {
-        res.json({ strategies: STRATS, matrix: null, insufficient: true });
-        return;
-    }
+    // 3. Build daily PnL map per strategy
     const dp = {};
-    for (const t of trades) {
+    for (const t of (trades ?? [])) {
         if (!t.closed_at)
             continue;
         const d = t.closed_at.slice(0, 10);
@@ -3083,6 +3095,7 @@ app.get("/api/correlation", async (req, res) => {
         dp[t.strategy_id][d] = (dp[t.strategy_id][d] ?? 0) + (t.pnl ?? 0);
     }
     const allDays = [...new Set(Object.values(dp).flatMap(d => Object.keys(d)))].sort();
+    // 4. Build full N×N matrix; diagonal = 1, insufficient pairs = null
     const matrix = STRATS.map((si, i) => STRATS.map((sj, j) => {
         if (i === j)
             return 1;
@@ -3092,18 +3105,24 @@ app.get("/api/correlation", async (req, res) => {
     }));
     res.json({ strategies: STRATS, matrix });
 });
-// ── /api/btc-correlation — BTC strategies 4×4 Pearson correlation ─────────
+// ── /api/btc-correlation — BTC strategies N×N Pearson correlation ─────────
 app.get("/api/btc-correlation", async (req, res) => {
-    const STRATS = ["btc_ema_crossover", "btc_orion", "btc_ema_confluence", "btc_supertrend"];
+    // Load all active BTC strategies ordered by sort_order
+    const { data: stratRows } = await supabase
+        .from("btc_strategies")
+        .select("id")
+        .eq("is_active", true)
+        .order("sort_order", { ascending: true });
+    const STRATS = (stratRows ?? []).map((r) => r.id);
+    if (STRATS.length === 0) {
+        res.json({ strategies: [], matrix: [] });
+        return;
+    }
     const { data: trades } = await supabase
         .from("btc_strategy_positions").select("strategy_id,pnl_inr,closed_at")
         .in("strategy_id", STRATS).eq("status", "CLOSED");
-    if (!trades || trades.length === 0) {
-        res.json({ strategies: STRATS, matrix: null, insufficient: true });
-        return;
-    }
     const dp = {};
-    for (const t of trades) {
+    for (const t of (trades ?? [])) {
         if (!t.closed_at)
             continue;
         const d = t.closed_at.slice(0, 10);
@@ -3124,7 +3143,6 @@ app.get("/api/btc-correlation", async (req, res) => {
 // ── /api/capital-history?strategy=ema_crossover ───────────────────────────
 app.get("/api/capital-history", async (req, res) => {
     const strategy = req.query.strategy;
-    const ALL = ["ema_crossover", "orion", "ema_confluence", "supertrend", "pcr_reversal", "gap_orb"];
     if (strategy) {
         const [tRes, cRes] = await Promise.all([
             supabase.from("strategy_positions").select("pnl,closed_at")
@@ -3135,6 +3153,10 @@ app.get("/api/capital-history", async (req, res) => {
         res.json(buildCapitalHistory((tRes.data ?? []), allocated));
     }
     else {
+        // Load all non-placeholder strategies dynamically
+        const { data: stratRows } = await supabase
+            .from("strategies").select("id").neq("status", "placeholder");
+        const ALL = (stratRows ?? []).map((r) => r.id);
         const [tRes, cRes] = await Promise.all([
             supabase.from("strategy_positions").select("pnl,closed_at")
                 .in("strategy_id", ALL).eq("status", "CLOSED").order("closed_at", { ascending: true }),
@@ -3150,7 +3172,6 @@ app.get("/api/capital-history", async (req, res) => {
 // ── /api/btc-capital-history?strategy=btc_ema_crossover ──────────────────
 app.get("/api/btc-capital-history", async (req, res) => {
     const strategy = req.query.strategy;
-    const ALL = ["btc_ema_crossover", "btc_orion", "btc_ema_confluence", "btc_supertrend"];
     if (strategy) {
         const [tRes, cRes] = await Promise.all([
             supabase.from("btc_strategy_positions").select("pnl_inr,closed_at")
@@ -3163,6 +3184,10 @@ app.get("/api/btc-capital-history", async (req, res) => {
         res.json(buildCapitalHistory(trades, allocated));
     }
     else {
+        // Load all active BTC strategies dynamically
+        const { data: stratRows } = await supabase
+            .from("btc_strategies").select("id").eq("is_active", true);
+        const ALL = (stratRows ?? []).map((r) => r.id);
         const [tRes, cRes] = await Promise.all([
             supabase.from("btc_strategy_positions").select("pnl_inr,closed_at")
                 .in("strategy_id", ALL).eq("status", "CLOSED").order("closed_at", { ascending: true }),
