@@ -3,6 +3,8 @@
 import { Fragment, useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
+import { createChart, AreaSeries, ColorType } from "lightweight-charts";
+import type { IChartApi, ISeriesApi } from "lightweight-charts";
 
 const BACKEND = "https://ai-trading-arena-backend-production.up.railway.app";
 
@@ -49,6 +51,13 @@ type Position = {
 type IndexQuote = { ltp: number; change: number; changePct: number };
 
 type OhlcCandle = { time: number; open: number; high: number; low: number; close: number };
+
+type CapitalPoint = { date: string; capital: number };
+type CorrelationData = {
+  strategies: string[];
+  matrix: (number | null)[][] | null;
+  insufficient?: boolean;
+};
 
 // ── Strategy Config ─────────────────────────────────────────────
 
@@ -965,6 +974,187 @@ function TradePopup({
   );
 }
 
+// ── CorrelationHeatmap ──────────────────────────────────────────────────────
+
+const STRATEGY_LABELS: Record<string, string> = {
+  ema_crossover: "EMA ×",
+  orion: "ORION",
+  ema_confluence: "EMA Conf",
+  supertrend: "Supertrend",
+  pcr_reversal: "PCR Rev",
+  gap_orb: "GAP ORB",
+};
+
+function corrColor(v: number | null): string {
+  if (v === null) return "#1a1f2e";
+  if (v === 1) return "#1a3a2a";
+  if (v >= 0.5) return `rgba(34,197,94,${0.3 + v * 0.5})`;
+  if (v >= 0) return `rgba(34,197,94,${v * 0.4})`;
+  if (v >= -0.5) return `rgba(239,68,68,${Math.abs(v) * 0.4})`;
+  return `rgba(239,68,68,${0.3 + Math.abs(v) * 0.5})`;
+}
+
+function corrTextColor(v: number | null): string {
+  if (v === null) return "#374151";
+  if (v === 1) return "#22c55e";
+  const abs = Math.abs(v);
+  if (abs > 0.3) return v > 0 ? "#4ade80" : "#f87171";
+  return "#6b7280";
+}
+
+function CorrelationHeatmap() {
+  const [data, setData] = useState<CorrelationData | null>(null);
+  useEffect(() => {
+    fetch(`${BACKEND}/api/correlation`)
+      .then(r => r.json())
+      .then(d => setData(d))
+      .catch(() => {});
+    const iv = setInterval(() => {
+      fetch(`${BACKEND}/api/correlation`)
+        .then(r => r.json())
+        .then(d => setData(d))
+        .catch(() => {});
+    }, 300_000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const strats = data?.strategies ?? [];
+  const matrix = data?.matrix ?? null;
+
+  return (
+    <div style={{ background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, padding: "20px 24px", marginTop: 24 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 16 }}>
+        STRATEGY CORRELATION
+      </div>
+      {(!matrix || data?.insufficient) ? (
+        <div style={{ fontSize: 12, color: "#374151", textAlign: "center", padding: "24px 0" }}>
+          Insufficient data — needs at least 5 days of overlapping trade history
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", fontSize: 11 }}>
+            <thead>
+              <tr>
+                <td style={{ padding: "4px 8px", minWidth: 80 }} />
+                {strats.map(s => (
+                  <th key={s} style={{ padding: "4px 6px", color: "#6b7280", fontWeight: 600, fontSize: 10, textAlign: "center", whiteSpace: "nowrap" }}>
+                    {STRATEGY_LABELS[s] ?? s}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {strats.map((si, i) => (
+                <tr key={si}>
+                  <td style={{ padding: "4px 8px", color: "#6b7280", fontWeight: 600, fontSize: 10, whiteSpace: "nowrap" }}>
+                    {STRATEGY_LABELS[si] ?? si}
+                  </td>
+                  {strats.map((_sj, j) => {
+                    const v = matrix[i]?.[j] ?? null;
+                    return (
+                      <td key={j} style={{
+                        padding: "2px 3px", textAlign: "center", minWidth: 52, height: 32,
+                        background: corrColor(v),
+                        border: "1px solid rgba(255,255,255,0.04)",
+                        borderRadius: 4,
+                        color: corrTextColor(v),
+                        fontFamily: "monospace",
+                        fontSize: 11,
+                        fontWeight: 600,
+                      }}>
+                        {v === null ? "—" : v === 1 ? "1.00" : v.toFixed(2)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ marginTop: 10, display: "flex", gap: 16, fontSize: 10, color: "#374151" }}>
+            <span style={{ color: "#4ade80" }}>▉ Positive correlation</span>
+            <span style={{ color: "#f87171" }}>▉ Negative correlation</span>
+            <span style={{ color: "#374151" }}>▉ No correlation</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── CombinedCapitalHistory ──────────────────────────────────────────────────
+
+function CombinedCapitalHistory() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef     = useRef<IChartApi | null>(null);
+  const seriesRef    = useRef<ISeriesApi<"Area"> | null>(null);
+  const [initialCapital, setInitialCapital] = useState(0);
+  const [currentCapital, setCurrentCapital] = useState(0);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const chart = createChart(containerRef.current, {
+      autoSize: true,
+      layout: { background: { type: ColorType.Solid, color: "#0A0D14" }, textColor: "#6b7280", fontSize: 11 },
+      grid: { vertLines: { color: "#1a1f2e" }, horzLines: { color: "#1a1f2e" } },
+      rightPriceScale: { borderColor: "#1a1f2e" },
+      timeScale: { borderColor: "#1a1f2e", timeVisible: false },
+      crosshair: { mode: 1 },
+    });
+    chartRef.current = chart;
+    const series = chart.addSeries(AreaSeries, {
+      lineColor: "#6366F1",
+      topColor: "#6366F144",
+      bottomColor: "#6366F108",
+      lineWidth: 2,
+      lastValueVisible: true,
+      priceLineVisible: false,
+    });
+    seriesRef.current = series;
+    return () => { chart.remove(); chartRef.current = seriesRef.current = null; };
+  }, []);
+
+  useEffect(() => {
+    fetch(`${BACKEND}/api/capital-history`)
+      .then(r => r.json())
+      .then((data: CapitalPoint[]) => {
+        if (!seriesRef.current || !data?.length) return;
+        setInitialCapital(data[0].capital);
+        setCurrentCapital(data[data.length - 1].capital);
+        const pts = data
+          .filter(p => p.date)
+          .map(p => ({ time: p.date as unknown as import("lightweight-charts").Time, value: p.capital }));
+        seriesRef.current.setData(pts);
+        const isUp = data[data.length - 1].capital >= data[0].capital;
+        const color = isUp ? "#22c55e" : "#ef4444";
+        seriesRef.current.applyOptions({ lineColor: color, topColor: `${color}44`, bottomColor: `${color}08` });
+        chartRef.current?.timeScale().fitContent();
+      })
+      .catch(() => {});
+  }, []);
+
+  const isUp = currentCapital >= initialCapital;
+  const diffPct = initialCapital > 0 ? ((currentCapital - initialCapital) / initialCapital) * 100 : 0;
+
+  return (
+    <div style={{ background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, overflow: "hidden", marginTop: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "12px 20px", borderBottom: "1px solid #1a1f2e" }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: "#4b5563", letterSpacing: "0.1em" }}>COMBINED CAPITAL HISTORY</span>
+        {currentCapital > 0 && (
+          <>
+            <span style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: "#ffffff" }}>
+              ₹{currentCapital.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+            </span>
+            <span style={{ fontSize: 12, fontFamily: "monospace", color: isUp ? "#4ade80" : "#f87171" }}>
+              {isUp ? "+" : ""}{diffPct.toFixed(2)}%
+            </span>
+          </>
+        )}
+      </div>
+      <div ref={containerRef} style={{ height: 200 }} />
+    </div>
+  );
+}
+
 // ── Dashboard Page ─────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -1101,6 +1291,12 @@ export default function DashboardPage() {
             </div>
           </div>
         )}
+
+        {/* Combined Capital History */}
+        <CombinedCapitalHistory />
+
+        {/* Correlation Heatmap */}
+        <CorrelationHeatmap />
       </div>
     </div>
   );

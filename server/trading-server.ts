@@ -2892,6 +2892,87 @@ function scheduleTokenRequest(): void {
 }
 
 // ══════════════════════════════════════════════════════════════
+// Analytics helpers
+// ══════════════════════════════════════════════════════════════
+
+interface TradeRecord { pnl: number | null; exit_reason: string | null; closed_at: string | null; }
+
+interface MetricsResult {
+  profit_factor: string;
+  avg_win_avg_loss: string;
+  max_drawdown_inr: number;
+  max_drawdown_pct: number;
+  expectancy: number;
+  max_consecutive_losses: number;
+  exit_reason_breakdown: Record<string, number>;
+}
+
+function calcMetrics(trades: TradeRecord[], allocated: number): MetricsResult {
+  if (trades.length === 0) {
+    return { profit_factor: "0", avg_win_avg_loss: "0", max_drawdown_inr: 0, max_drawdown_pct: 0, expectancy: 0, max_consecutive_losses: 0, exit_reason_breakdown: {} };
+  }
+  const pnls   = trades.map(t => t.pnl ?? 0);
+  const wins   = pnls.filter(p => p > 0);
+  const losses = pnls.filter(p => p < 0);
+  const grossWin  = wins.reduce((s, p) => s + p, 0);
+  const grossLoss = Math.abs(losses.reduce((s, p) => s + p, 0));
+  const profit_factor = grossLoss === 0 ? (grossWin > 0 ? "∞" : "0") : (grossWin / grossLoss).toFixed(2);
+  const avgWin  = wins.length   > 0 ? grossWin  / wins.length   : 0;
+  const avgLoss = losses.length > 0 ? grossLoss / losses.length : 0;
+  const avg_win_avg_loss = avgLoss === 0 ? (avgWin > 0 ? "∞" : "0") : (avgWin / avgLoss).toFixed(2);
+  let peak = allocated, maxDD = 0, maxDDPct = 0, cumPnl = 0;
+  for (const p of pnls) {
+    cumPnl += p;
+    const cap = allocated + cumPnl;
+    if (cap > peak) peak = cap;
+    const dd = peak - cap;
+    if (dd > maxDD) { maxDD = dd; maxDDPct = peak > 0 ? (dd / peak) * 100 : 0; }
+  }
+  const expectancy = pnls.reduce((s, p) => s + p, 0) / pnls.length;
+  let maxCL = 0, curCL = 0;
+  for (const p of pnls) { if (p < 0) { curCL++; maxCL = Math.max(maxCL, curCL); } else curCL = 0; }
+  const exitCounts: Record<string, number> = {};
+  for (const t of trades) {
+    const k = t.exit_reason ?? "OTHER";
+    exitCounts[k] = (exitCounts[k] ?? 0) + 1;
+  }
+  const exit_reason_breakdown: Record<string, number> = {};
+  for (const [k, v] of Object.entries(exitCounts)) {
+    exit_reason_breakdown[k] = Math.round((v / trades.length) * 100);
+  }
+  return { profit_factor, avg_win_avg_loss, max_drawdown_inr: +maxDD.toFixed(2), max_drawdown_pct: +maxDDPct.toFixed(2), expectancy: +expectancy.toFixed(2), max_consecutive_losses: maxCL, exit_reason_breakdown };
+}
+
+function pearsonCorr(xs: number[], ys: number[]): number | null {
+  const n = xs.length;
+  if (n < 5) return null;
+  const mx = xs.reduce((a, b) => a + b, 0) / n;
+  const my = ys.reduce((a, b) => a + b, 0) / n;
+  let cov = 0, vx = 0, vy = 0;
+  for (let i = 0; i < n; i++) { cov += (xs[i] - mx) * (ys[i] - my); vx += (xs[i] - mx) ** 2; vy += (ys[i] - my) ** 2; }
+  const d = Math.sqrt(vx * vy);
+  return d === 0 ? null : +(cov / d).toFixed(3);
+}
+
+function buildCapitalHistory(
+  trades: Array<{ pnl: number | null; closed_at: string | null }>,
+  allocated: number
+): Array<{ date: string; capital: number }> {
+  const byDate: Record<string, number> = {};
+  for (const t of trades) {
+    if (!t.closed_at) continue;
+    const d = t.closed_at.slice(0, 10);
+    byDate[d] = (byDate[d] ?? 0) + (t.pnl ?? 0);
+  }
+  const dates = Object.keys(byDate).sort();
+  if (dates.length === 0) return [{ date: new Date().toISOString().slice(0, 10), capital: allocated }];
+  let cap = allocated;
+  const result: Array<{ date: string; capital: number }> = [{ date: dates[0], capital: allocated }];
+  for (const d of dates) { cap += byDate[d]; result.push({ date: d, capital: +cap.toFixed(2) }); }
+  return result;
+}
+
+// ══════════════════════════════════════════════════════════════
 // Express server
 // ══════════════════════════════════════════════════════════════
 
@@ -3209,6 +3290,140 @@ app.post("/api/request-upstox-token", async (_req, res) => {
   console.log("[Token] /api/request-upstox-token called — sending request");
   await sendTokenRequest();
   res.json({ status: "requested", message: "Approval notification sent to Upstox app" });
+});
+
+// ── /api/strategy-metrics?strategy=ema_crossover ─────────────────────────
+app.get("/api/strategy-metrics", async (req, res) => {
+  const strategy = String(req.query.strategy ?? "").toLowerCase();
+  if (!strategy) { res.status(400).json({ error: "strategy param required" }); return; }
+  const [tRes, cRes] = await Promise.all([
+    supabase.from("strategy_positions").select("pnl,exit_reason,closed_at")
+      .eq("strategy_id", strategy).eq("status", "CLOSED").order("closed_at", { ascending: true }),
+    supabase.from("strategy_capital").select("allocated_capital").eq("strategy_id", strategy).single(),
+  ]);
+  const allocated = (cRes.data as { allocated_capital: number } | null)?.allocated_capital ?? 100_000;
+  res.json(calcMetrics((tRes.data ?? []) as TradeRecord[], allocated));
+});
+
+// ── /api/btc-strategy-metrics?strategy=btc_ema_crossover ─────────────────
+app.get("/api/btc-strategy-metrics", async (req, res) => {
+  const strategy = String(req.query.strategy ?? "").toLowerCase();
+  if (!strategy) { res.status(400).json({ error: "strategy param required" }); return; }
+  const [tRes, cRes] = await Promise.all([
+    supabase.from("btc_strategy_positions").select("pnl_inr,exit_reason,closed_at")
+      .eq("strategy_id", strategy).eq("status", "CLOSED").order("closed_at", { ascending: true }),
+    supabase.from("btc_strategy_capital").select("allocated_inr").eq("strategy_id", strategy).single(),
+  ]);
+  const allocated = (cRes.data as { allocated_inr: number } | null)?.allocated_inr ?? 10_000;
+  const trades: TradeRecord[] = ((tRes.data ?? []) as Array<{ pnl_inr: number | null; exit_reason: string | null; closed_at: string | null }>)
+    .map(t => ({ pnl: t.pnl_inr, exit_reason: t.exit_reason, closed_at: t.closed_at }));
+  res.json(calcMetrics(trades, allocated));
+});
+
+// ── /api/correlation — Indian strategies 6×6 Pearson correlation ──────────
+app.get("/api/correlation", async (req, res) => {
+  const STRATS = ["ema_crossover", "orion", "ema_confluence", "supertrend", "pcr_reversal", "gap_orb"];
+  const { data: trades } = await supabase
+    .from("strategy_positions").select("strategy_id,pnl,closed_at")
+    .in("strategy_id", STRATS).eq("status", "CLOSED");
+  if (!trades || trades.length === 0) { res.json({ strategies: STRATS, matrix: null, insufficient: true }); return; }
+  const dp: Record<string, Record<string, number>> = {};
+  for (const t of trades as Array<{ strategy_id: string; pnl: number; closed_at: string }>) {
+    if (!t.closed_at) continue;
+    const d = t.closed_at.slice(0, 10);
+    if (!dp[t.strategy_id]) dp[t.strategy_id] = {};
+    dp[t.strategy_id][d] = (dp[t.strategy_id][d] ?? 0) + (t.pnl ?? 0);
+  }
+  const allDays = [...new Set(Object.values(dp).flatMap(d => Object.keys(d)))].sort();
+  const matrix: (number | null)[][] = STRATS.map((si, i) =>
+    STRATS.map((sj, j) => {
+      if (i === j) return 1;
+      const dpi = dp[si] ?? {}, dpj = dp[sj] ?? {};
+      const cd = allDays.filter(d => dpi[d] !== undefined && dpj[d] !== undefined);
+      return pearsonCorr(cd.map(d => dpi[d]), cd.map(d => dpj[d]));
+    })
+  );
+  res.json({ strategies: STRATS, matrix });
+});
+
+// ── /api/btc-correlation — BTC strategies 4×4 Pearson correlation ─────────
+app.get("/api/btc-correlation", async (req, res) => {
+  const STRATS = ["btc_ema_crossover", "btc_orion", "btc_ema_confluence", "btc_supertrend"];
+  const { data: trades } = await supabase
+    .from("btc_strategy_positions").select("strategy_id,pnl_inr,closed_at")
+    .in("strategy_id", STRATS).eq("status", "CLOSED");
+  if (!trades || trades.length === 0) { res.json({ strategies: STRATS, matrix: null, insufficient: true }); return; }
+  const dp: Record<string, Record<string, number>> = {};
+  for (const t of trades as Array<{ strategy_id: string; pnl_inr: number; closed_at: string }>) {
+    if (!t.closed_at) continue;
+    const d = t.closed_at.slice(0, 10);
+    if (!dp[t.strategy_id]) dp[t.strategy_id] = {};
+    dp[t.strategy_id][d] = (dp[t.strategy_id][d] ?? 0) + (t.pnl_inr ?? 0);
+  }
+  const allDays = [...new Set(Object.values(dp).flatMap(d => Object.keys(d)))].sort();
+  const matrix: (number | null)[][] = STRATS.map((si, i) =>
+    STRATS.map((sj, j) => {
+      if (i === j) return 1;
+      const dpi = dp[si] ?? {}, dpj = dp[sj] ?? {};
+      const cd = allDays.filter(d => dpi[d] !== undefined && dpj[d] !== undefined);
+      return pearsonCorr(cd.map(d => dpi[d]), cd.map(d => dpj[d]));
+    })
+  );
+  res.json({ strategies: STRATS, matrix });
+});
+
+// ── /api/capital-history?strategy=ema_crossover ───────────────────────────
+app.get("/api/capital-history", async (req, res) => {
+  const strategy = req.query.strategy as string | undefined;
+  const ALL = ["ema_crossover", "orion", "ema_confluence", "supertrend", "pcr_reversal", "gap_orb"];
+  if (strategy) {
+    const [tRes, cRes] = await Promise.all([
+      supabase.from("strategy_positions").select("pnl,closed_at")
+        .eq("strategy_id", strategy).eq("status", "CLOSED").order("closed_at", { ascending: true }),
+      supabase.from("strategy_capital").select("allocated_capital").eq("strategy_id", strategy).single(),
+    ]);
+    const allocated = (cRes.data as { allocated_capital: number } | null)?.allocated_capital ?? 100_000;
+    res.json(buildCapitalHistory((tRes.data ?? []) as Array<{ pnl: number | null; closed_at: string | null }>, allocated));
+  } else {
+    const [tRes, cRes] = await Promise.all([
+      supabase.from("strategy_positions").select("pnl,closed_at")
+        .in("strategy_id", ALL).eq("status", "CLOSED").order("closed_at", { ascending: true }),
+      supabase.from("strategy_capital").select("strategy_id,allocated_capital").in("strategy_id", ALL),
+    ]);
+    const allocMap: Record<string, number> = {};
+    for (const c of (cRes.data ?? []) as Array<{ strategy_id: string; allocated_capital: number }>) allocMap[c.strategy_id] = c.allocated_capital;
+    const totalAlloc = ALL.reduce((s, id) => s + (allocMap[id] ?? 100_000), 0);
+    res.json(buildCapitalHistory((tRes.data ?? []) as Array<{ pnl: number | null; closed_at: string | null }>, totalAlloc));
+  }
+});
+
+// ── /api/btc-capital-history?strategy=btc_ema_crossover ──────────────────
+app.get("/api/btc-capital-history", async (req, res) => {
+  const strategy = req.query.strategy as string | undefined;
+  const ALL = ["btc_ema_crossover", "btc_orion", "btc_ema_confluence", "btc_supertrend"];
+  if (strategy) {
+    const [tRes, cRes] = await Promise.all([
+      supabase.from("btc_strategy_positions").select("pnl_inr,closed_at")
+        .eq("strategy_id", strategy).eq("status", "CLOSED").order("closed_at", { ascending: true }),
+      supabase.from("btc_strategy_capital").select("allocated_inr").eq("strategy_id", strategy).single(),
+    ]);
+    const allocated = (cRes.data as { allocated_inr: number } | null)?.allocated_inr ?? 10_000;
+    const trades = ((tRes.data ?? []) as Array<{ pnl_inr: number | null; closed_at: string | null }>)
+      .map(t => ({ pnl: t.pnl_inr, closed_at: t.closed_at }));
+    res.json(buildCapitalHistory(trades, allocated));
+  } else {
+    const [tRes, cRes] = await Promise.all([
+      supabase.from("btc_strategy_positions").select("pnl_inr,closed_at")
+        .in("strategy_id", ALL).eq("status", "CLOSED").order("closed_at", { ascending: true }),
+      supabase.from("btc_strategy_capital").select("strategy_id,allocated_inr").in("strategy_id", ALL),
+    ]);
+    const allocMap: Record<string, number> = {};
+    for (const c of (cRes.data ?? []) as Array<{ strategy_id: string; allocated_inr: number }>) allocMap[c.strategy_id] = c.allocated_inr;
+    const totalAlloc = ALL.reduce((s, id) => s + (allocMap[id] ?? 10_000), 0);
+    const trades = ((tRes.data ?? []) as Array<{ pnl_inr: number | null; closed_at: string | null }>)
+      .map(t => ({ pnl: t.pnl_inr, closed_at: t.closed_at }));
+    res.json(buildCapitalHistory(trades, totalAlloc));
+  }
 });
 
 app.listen(PORT, () => {

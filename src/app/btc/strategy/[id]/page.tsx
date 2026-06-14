@@ -4,7 +4,7 @@ import { Fragment, useEffect, useRef, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
-  createChart, CandlestickSeries, LineSeries, ColorType, createSeriesMarkers,
+  createChart, CandlestickSeries, LineSeries, AreaSeries, ColorType, createSeriesMarkers,
 } from "lightweight-charts";
 import type {
   IChartApi, ISeriesApi, IPriceLine, UTCTimestamp,
@@ -44,6 +44,17 @@ type BtcIndicatorData = {
   orbHigh?: number; orbLow?: number;
   crossovers?: Array<{ time: number; type: "bullish" | "bearish" }>;
 };
+
+type StrategyMetrics = {
+  profit_factor: string;
+  avg_win_avg_loss: string;
+  max_drawdown_inr: number;
+  max_drawdown_pct: number;
+  expectancy: number;
+  max_consecutive_losses: number;
+  exit_reason_breakdown: Record<string, number>;
+};
+type CapitalPoint = { date: string; capital: number };
 
 // ── Strategy Config ────────────────────────────────────────────────
 
@@ -155,6 +166,81 @@ function formatDuration(openedAt: string, closedAt: string | null) {
   const ms = Math.max(0, (closedAt ? new Date(closedAt) : new Date()).getTime() - new Date(openedAt).getTime());
   const h = Math.floor(ms / 3_600_000), m = Math.floor((ms % 3_600_000) / 60_000);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+// ── CapitalHistoryChart ──────────────────────────────────────────────────────
+
+function CapitalHistoryChart({ strategyId, accent }: { strategyId: string; accent: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef     = useRef<IChartApi | null>(null);
+  const seriesRef    = useRef<ISeriesApi<"Area"> | null>(null);
+  const [initialCapital, setInitialCapital] = useState(0);
+  const [currentCapital, setCurrentCapital] = useState(0);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const chart = createChart(containerRef.current, {
+      autoSize: true,
+      layout: { background: { type: ColorType.Solid, color: "#0A0D14" }, textColor: "#6b7280", fontSize: 11 },
+      grid: { vertLines: { color: "#1a1f2e" }, horzLines: { color: "#1a1f2e" } },
+      rightPriceScale: { borderColor: "#1a1f2e" },
+      timeScale: { borderColor: "#1a1f2e", timeVisible: false },
+      crosshair: { mode: 1 },
+    });
+    chartRef.current = chart;
+    const series = chart.addSeries(AreaSeries, {
+      lineColor: accent,
+      topColor: `${accent}44`,
+      bottomColor: `${accent}08`,
+      lineWidth: 2,
+      lastValueVisible: true,
+      priceLineVisible: false,
+    });
+    seriesRef.current = series;
+    return () => { chart.remove(); chartRef.current = seriesRef.current = null; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    fetch(`${BACKEND}/api/btc-capital-history?strategy=${strategyId}`)
+      .then(r => r.json())
+      .then((data: CapitalPoint[]) => {
+        if (!seriesRef.current || !data?.length) return;
+        setInitialCapital(data[0].capital);
+        setCurrentCapital(data[data.length - 1].capital);
+        const pts = data
+          .filter(p => p.date)
+          .map(p => ({ time: p.date as unknown as import("lightweight-charts").Time, value: p.capital }));
+        seriesRef.current.setData(pts);
+        const isUp = data[data.length - 1].capital >= data[0].capital;
+        const color = isUp ? "#22c55e" : "#ef4444";
+        seriesRef.current.applyOptions({ lineColor: color, topColor: `${color}44`, bottomColor: `${color}08` });
+        chartRef.current?.timeScale().fitContent();
+      })
+      .catch(() => {});
+  }, [strategyId]);
+
+  const isUp = currentCapital >= initialCapital;
+  const diffPct = initialCapital > 0 ? ((currentCapital - initialCapital) / initialCapital) * 100 : 0;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "0 24px", height: 48, borderBottom: "1px solid #1a1f2e", background: "#0B0E17", flexShrink: 0 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: "#4b5563", letterSpacing: "0.1em" }}>CAPITAL HISTORY</span>
+        {currentCapital > 0 && (
+          <>
+            <span style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: "#ffffff" }}>
+              ₹{currentCapital.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+            </span>
+            <span style={{ fontSize: 12, fontFamily: "monospace", color: isUp ? "#4ade80" : "#f87171" }}>
+              {isUp ? "+" : ""}{diffPct.toFixed(2)}%
+            </span>
+          </>
+        )}
+      </div>
+      <div ref={containerRef} style={{ flex: 1, minHeight: 0 }} />
+    </div>
+  );
 }
 
 // ── BtcIndicatorChart ──────────────────────────────────────────────
@@ -460,13 +546,15 @@ export default function BtcStrategyDetailPage() {
   const [currentPrice,  setCurrentPrice]  = useState(0);
   const [prevClose,     setPrevClose]     = useState(0);
   const [expandedTrade, setExpandedTrade] = useState<string | null>(null);
+  const [metrics, setMetrics] = useState<StrategyMetrics | null>(null);
 
   // Refs
   const scrollRef   = useRef<HTMLDivElement>(null);
   const sec0Ref     = useRef<HTMLElement>(null);
   const sec1Ref     = useRef<HTMLElement>(null);
   const sec2Ref     = useRef<HTMLElement>(null);
-  const sectionRefs = [sec0Ref, sec1Ref, sec2Ref];
+  const sec3Ref     = useRef<HTMLElement>(null);
+  const sectionRefs = [sec0Ref, sec1Ref, sec2Ref, sec3Ref];
 
   // ── Data fetching ──
 
@@ -508,6 +596,20 @@ export default function BtcStrategyDetailPage() {
     return () => clearInterval(iv);
   }, [id]);
 
+  useEffect(() => {
+    fetch(`${BACKEND}/api/btc-strategy-metrics?strategy=${id}`)
+      .then(r => r.json())
+      .then(d => setMetrics(d))
+      .catch(() => {});
+    const iv = setInterval(() => {
+      fetch(`${BACKEND}/api/btc-strategy-metrics?strategy=${id}`)
+        .then(r => r.json())
+        .then(d => setMetrics(d))
+        .catch(() => {});
+    }, 60_000);
+    return () => clearInterval(iv);
+  }, [id]);
+
   // ── Navigation ──
 
   const scrollToSection = useCallback((idx: number) => {
@@ -535,7 +637,7 @@ export default function BtcStrategyDetailPage() {
 
   useEffect(() => {
     const handle = (e: KeyboardEvent) => {
-      if (e.key === "ArrowDown" || e.key === "PageDown") { e.preventDefault(); scrollToSection(Math.min(activeSection + 1, 2)); }
+      if (e.key === "ArrowDown" || e.key === "PageDown") { e.preventDefault(); scrollToSection(Math.min(activeSection + 1, 3)); }
       if (e.key === "ArrowUp"   || e.key === "PageUp")   { e.preventDefault(); scrollToSection(Math.max(activeSection - 1, 0)); }
     };
     window.addEventListener("keydown", handle);
@@ -565,15 +667,32 @@ export default function BtcStrategyDetailPage() {
   const changePct     = prevClose > 0 ? (priceChange / prevClose) * 100 : 0;
   const priceColor    = priceChange > 0 ? "#4ade80" : priceChange < 0 ? "#f87171" : "#9ca3af";
 
+  // Exit breakdown: top 2 reasons
+  const exitBreakdown = metrics?.exit_reason_breakdown ?? {};
+  const exitEntries = Object.entries(exitBreakdown).sort((a, b) => b[1] - a[1]).slice(0, 2);
+  const exitText = exitEntries.length > 0
+    ? exitEntries.map(([k, v]) => `${k.replace(/_/g, " ")} ${v}%`).join(" · ")
+    : "—";
+
+  // Profit factor color
+  const pfNum = parseFloat(metrics?.profit_factor ?? "0");
+  const pfColor = metrics?.profit_factor === "∞" ? "#4ade80" : pfNum >= 1.5 ? "#4ade80" : pfNum >= 1 ? "#f5d547" : "#f87171";
+
   const stats = [
-    { label: "INITIAL CAPITAL", value: `₹${(alloc).toLocaleString("en-IN")}`,   color: "#9ca3af" },
-    { label: "TOTAL PnL",       value: pnlStr(livePnl),                           color: pnlColor(livePnl) },
-    { label: "CURRENT CAPITAL", value: `₹${(liveCapital).toLocaleString("en-IN")}`, color: "#ffffff" },
-    { label: "RETURN",          value: fmtPct(retPct),                            color: pnlColor(retPct) },
-    { label: "SHARPE",          value: sharpe.toFixed(2),                         color: "#ffffff" },
-    { label: "TOTAL TRADES",    value: String(lifetime),                          color: "#ffffff" },
-    { label: "OPEN NOW",        value: String(openPos.length),                    color: openPos.length > 0 ? "#f5d547" : "#ffffff" },
-    { label: "WIN RATE",        value: `${winRate.toFixed(1)}%`,                  color: winRate >= 50 ? "#4ade80" : "#f87171" },
+    { label: "INITIAL CAPITAL",    value: `₹${(alloc).toLocaleString("en-IN")}`,                 color: "#9ca3af" },
+    { label: "TOTAL PnL",          value: pnlStr(livePnl),                                         color: pnlColor(livePnl) },
+    { label: "CURRENT CAPITAL",    value: `₹${(liveCapital).toLocaleString("en-IN")}`,            color: "#ffffff" },
+    { label: "RETURN %",           value: fmtPct(retPct),                                          color: pnlColor(retPct) },
+    { label: "SHARPE",             value: sharpe.toFixed(2),                                       color: "#ffffff" },
+    { label: "TOTAL TRADES",       value: String(lifetime),                                        color: "#ffffff" },
+    { label: "OPEN NOW",           value: String(openPos.length),                                  color: openPos.length > 0 ? "#f5d547" : "#ffffff" },
+    { label: "WIN RATE",           value: `${winRate.toFixed(1)}%`,                                color: winRate >= 50 ? "#4ade80" : "#f87171" },
+    { label: "PROFIT FACTOR",      value: metrics?.profit_factor ?? "—",                           color: pfColor },
+    { label: "AVG WIN/LOSS",       value: metrics ? `${metrics.avg_win_avg_loss}×` : "—",         color: "#ffffff" },
+    { label: "MAX DRAWDOWN",       value: metrics ? `-₹${Math.abs(metrics.max_drawdown_inr).toLocaleString("en-IN", { maximumFractionDigits: 0 })} (-${metrics.max_drawdown_pct.toFixed(1)}%)` : "—", color: metrics && metrics.max_drawdown_inr > 0 ? "#f87171" : "#9ca3af" },
+    { label: "EXPECTANCY",         value: metrics ? pnlStr(metrics.expectancy) : "—",             color: metrics ? pnlColor(metrics.expectancy) : "#9ca3af" },
+    { label: "MAX CONSEC LOSSES",  value: metrics ? String(metrics.max_consecutive_losses) : "—", color: metrics && metrics.max_consecutive_losses > 3 ? "#f87171" : "#ffffff" },
+    { label: "EXIT BREAKDOWN",     value: exitText,                                                color: "#9ca3af" },
   ];
 
   if (loading) {
@@ -628,8 +747,8 @@ export default function BtcStrategyDetailPage() {
         position: "fixed", right: 24, top: "50%", transform: "translateY(-50%)",
         zIndex: 200, display: "flex", flexDirection: "column", gap: 14,
       }}>
-        {[0, 1, 2].map(i => (
-          <button key={i} onClick={() => scrollToSection(i)} title={["Overview", "Chart", "Trades"][i]} style={{
+        {[0, 1, 2, 3].map(i => (
+          <button key={i} onClick={() => scrollToSection(i)} title={["Overview", "Chart", "Capital History", "Trades"][i]} style={{
             width: activeSection === i ? 10 : 6,
             height: activeSection === i ? 10 : 6,
             borderRadius: "50%",
@@ -684,17 +803,17 @@ export default function BtcStrategyDetailPage() {
             {/* KPI grid */}
             <div style={{ padding: "0 40px clamp(8px,1vh,14px)", overflow: "hidden" }}>
               <div style={{
-                display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "repeat(4, 1fr)",
-                gap: 8, height: "100%",
+                display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "repeat(7, 1fr)",
+                gap: 6, height: "100%",
               }}>
                 {stats.map(s => (
                   <div key={s.label} style={{
                     background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
-                    borderRadius: 10, padding: "clamp(10px,1.2vh,16px) 14px",
+                    borderRadius: 8, padding: "4px 10px",
                     display: "flex", flexDirection: "column", justifyContent: "space-between",
                   }}>
-                    <div style={{ fontSize: "clamp(22px, 2.4vh, 26px)", fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase", paddingTop: 12 }}>{s.label}</div>
-                    <div style={{ fontSize: "clamp(22px, 2.4vh, 26px)", fontWeight: 700, color: s.color, fontFamily: "monospace", paddingBottom: 12 }}>{s.value}</div>
+                    <div style={{ fontSize: "clamp(8px, 0.9vh, 10px)", fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase", paddingTop: 4 }}>{s.label}</div>
+                    <div style={{ fontSize: "clamp(11px, 1.3vh, 15px)", fontWeight: 700, color: s.color, fontFamily: "monospace", paddingBottom: 4 }}>{s.value}</div>
                   </div>
                 ))}
               </div>
@@ -804,9 +923,42 @@ export default function BtcStrategyDetailPage() {
           </div>
         </section>
 
-        {/* ═══════ SECTION 3 — TRADES ═══════ */}
+        {/* ═══════ SECTION 2.5 — CAPITAL HISTORY ═══════ */}
         <section
           ref={sec2Ref}
+          style={{
+            height: "100vh", scrollSnapAlign: "start",
+            display: "flex", flexDirection: "column",
+            position: "relative",
+          }}
+        >
+          {/* PREV pill */}
+          <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0" }}>
+            <button onClick={() => scrollToSection(1)}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
+              style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 999, padding: "10px 28px", color: "#ffffff", fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer" }}
+            >↑ PREV</button>
+          </div>
+
+          {/* Capital history chart */}
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <CapitalHistoryChart strategyId={id} accent={accent} />
+          </div>
+
+          {/* NEXT pill */}
+          <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0", borderTop: "1px solid #1a1f2e" }}>
+            <button onClick={() => scrollToSection(3)}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
+              style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 999, padding: "10px 28px", color: "#ffffff", fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer" }}
+            >NEXT ↓</button>
+          </div>
+        </section>
+
+        {/* ═══════ SECTION 3 — TRADES ═══════ */}
+        <section
+          ref={sec3Ref}
           style={{
             minHeight: "100vh", scrollSnapAlign: "start",
             display: "flex", flexDirection: "column",
@@ -815,7 +967,7 @@ export default function BtcStrategyDetailPage() {
         >
           {/* PREV pill */}
           <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "12px 0", marginBottom: 32 }}>
-            <button onClick={() => scrollToSection(1)}
+            <button onClick={() => scrollToSection(2)}
               onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
               onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
               style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 999, padding: "10px 28px", color: "#ffffff", fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer" }}
