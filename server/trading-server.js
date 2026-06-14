@@ -2350,10 +2350,10 @@ async function strategyBtcEmaConfluence() {
     const f1 = ema20 > ema50 ? "EMA20>50✓" : ema20 < ema50 ? "EMA20<50✓(bear)" : "EMA20=50✗";
     const f2 = rsi > 40 && rsi < 60 ? `RSI=${rsi.toFixed(0)}✓` : `RSI=${rsi.toFixed(0)}✗(need 40-60)`;
     const f3 = btcPrice > vwap ? `P>VWAP✓` : `P<VWAP✓(bear)`;
-    const f4 = atrPct > 0.5 ? `ATR=${atrPct.toFixed(2)}%✓` : `ATR=${atrPct.toFixed(2)}%✗(need >0.5%)`;
+    const f4 = atrPct > 0.1 ? `ATR=${atrPct.toFixed(2)}%✓` : `ATR=${atrPct.toFixed(2)}%✗(need >0.1%)`;
     const f5 = slope > 0 ? `slope=+${slope.toFixed(0)}✓` : slope < 0 ? `slope=${slope.toFixed(0)}✓(bear)` : `slope=0✗`;
-    const bullish = ema20 > ema50 && rsi > 40 && rsi < 60 && btcPrice > vwap && atrPct > 0.5 && slope > 0;
-    const bearish = ema20 < ema50 && rsi > 40 && rsi < 60 && btcPrice < vwap && atrPct > 0.5 && slope < 0;
+    const bullish = ema20 > ema50 && rsi > 40 && rsi < 60 && btcPrice > vwap && atrPct > 0.1 && slope > 0;
+    const bearish = ema20 < ema50 && rsi > 40 && rsi < 60 && btcPrice < vwap && atrPct > 0.1 && slope < 0;
     const { data: openPos } = await supabase
         .from("btc_strategy_positions")
         .select("id")
