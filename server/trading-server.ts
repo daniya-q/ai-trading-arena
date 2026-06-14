@@ -2157,9 +2157,10 @@ interface BtcStrategyPosition {
 }
 
 // BTC strategy state
-let btcOrbHigh    = 0;
-let btcOrbLow     = 0;
-let btcOrbSet     = false;
+let btcOrbHigh      = 0;
+let btcOrbLow       = 0;
+let btcOrbSet       = false;
+let btcOrbBlockHour = -1; // which 4-hour UTC block (0,4,8,12,16,20) the current ORB belongs to
 const btcPeakPrices: Record<string, number>       = {}; // posId → peak price
 const btcDailyTradeCounts: Record<string, number> = {};
 let btcTradeDateStr = "";
@@ -2169,9 +2170,10 @@ function checkBtcDailyReset(): void {
   if (btcTradeDateStr !== today) {
     btcTradeDateStr = today;
     for (const k of Object.keys(btcDailyTradeCounts)) btcDailyTradeCounts[k] = 0;
-    btcOrbHigh = 0;
-    btcOrbLow  = 0;
-    btcOrbSet  = false;
+    btcOrbHigh      = 0;
+    btcOrbLow       = 0;
+    btcOrbSet       = false;
+    btcOrbBlockHour = -1;
     console.log(`[BTC Daily] Reset for ${today}`);
   }
 }
@@ -2512,42 +2514,65 @@ async function strategyBtcEmaCrossover(): Promise<void> {
   }
 }
 
-// ── BTC Strategy 2: Orion (ORB) ──────────────────────────────
+// ── BTC Strategy 2: Orion (4-hour ORB) ───────────────────────
+// BTC runs 24/7 — ORB resets every 4 hours (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC).
+// First 15 min of each block builds the ORB; breakouts are traded for the rest of the block.
+// Daily limit: 10 trades total across all 6 blocks.
 
 async function strategyBtcOrion(): Promise<void> {
-  const now         = new Date();
-  const utcMins     = now.getUTCHours() * 60 + now.getUTCMinutes();
-  const utcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const now          = new Date();
+  const utcHours     = now.getUTCHours();
+  const utcMinutes   = now.getUTCMinutes();
+  const blockHour    = Math.floor(utcHours / 4) * 4;   // 0, 4, 8, 12, 16, 20
+  const minsIntoBlock = (utcHours - blockHour) * 60 + utcMinutes; // 0–239
 
-  if (utcMins < 30) {
-    // Within the 00:00–00:30 UTC window — build ORB from those candles
+  const blockStartMs = Date.UTC(
+    now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(),
+    blockHour, 0, 0, 0
+  );
+
+  // ── New 4-hour block started: reset ORB ─────────────────────────────────
+  if (btcOrbBlockHour !== blockHour) {
+    btcOrbBlockHour = blockHour;
+    btcOrbHigh      = 0;
+    btcOrbLow       = 0;
+    btcOrbSet       = false;
+    console.log(`[BTC:orion] New 4h block — UTC ${String(blockHour).padStart(2, "0")}:00, ORB reset`);
+  }
+
+  // ── During first 15 min: accumulate ORB candles, no trading ─────────────
+  if (minsIntoBlock < 15) {
     const candles30s = getCandles("BTC", "30s");
-    const orbCandles = candles30s.filter(c => c.time >= utcMidnight && c.time < utcMidnight + 30 * 60_000);
+    const orbCandles = candles30s.filter(c => c.time >= blockStartMs && c.time < blockStartMs + 15 * 60_000);
     if (orbCandles.length > 0) {
       btcOrbHigh = Math.max(...orbCandles.map(c => c.high));
       btcOrbLow  = Math.min(...orbCandles.map(c => c.low));
     }
     btcOrbSet = false;
-    return;
+    return; // no trades during ORB window
   }
 
-  // Past the ORB window — seed from all today's 15m candles if not yet set
+  // ── After 15 min: lock in the ORB if not yet done ───────────────────────
   if (!btcOrbSet) {
-    const candles15m   = getCandles("BTC", "15m");
-    const todayCandles = candles15m.filter(c => c.time >= utcMidnight);
-    if (todayCandles.length === 0) {
-      console.log(`[BTC:orion] Past ORB window, no today 15m candles yet — waiting`);
+    // Try exact first 15m candle of this block
+    const candles15m      = getCandles("BTC", "15m");
+    const firstBlockCandle = candles15m.find(c => c.time === blockStartMs);
+    if (firstBlockCandle) {
+      btcOrbHigh = firstBlockCandle.high;
+      btcOrbLow  = firstBlockCandle.low;
+      btcOrbSet  = true;
+    } else if (btcOrbHigh > 0 && btcOrbLow > 0) {
+      // Fallback: already accumulated from 30s candles during the ORB window
+      btcOrbSet = true;
+    } else {
+      console.log(`[BTC:orion] ORB window passed but no candles for ${String(blockHour).padStart(2,"0")}:00 UTC block — skipping`);
       return;
     }
-    btcOrbHigh = Math.max(...todayCandles.map(c => c.high));
-    btcOrbLow  = Math.min(...todayCandles.map(c => c.low));
-    btcOrbSet  = true;
-    console.log(`[BTC:orion] ORB seeded from ${todayCandles.length} today 15m candles — H=$${btcOrbHigh.toFixed(0)} L=$${btcOrbLow.toFixed(0)}`);
+    console.log(`[BTC:orion] ORB locked for ${String(blockHour).padStart(2,"0")}:00 UTC block — H=$${btcOrbHigh.toFixed(0)} L=$${btcOrbLow.toFixed(0)}`);
   }
 
-  const longs  = btcDailyTradeCounts["btc_orion_LONG"]  ?? 0;
-  const shorts = btcDailyTradeCounts["btc_orion_SHORT"] ?? 0;
-  const total  = longs + shorts;
+  // ── Trade ────────────────────────────────────────────────────────────────
+  const total = btcDailyTradeCounts["btc_orion"] ?? 0;
 
   const { data: openPos } = await supabase
     .from("btc_strategy_positions")
@@ -2556,24 +2581,26 @@ async function strategyBtcOrion(): Promise<void> {
     .eq("status", "OPEN");
 
   const posStr = btcPrice > btcOrbHigh ? "above-H" : btcPrice < btcOrbLow ? "below-L" : "inside";
-  console.log(`[BTC:orion] price=$${btcPrice.toFixed(0)} H=$${btcOrbHigh.toFixed(0)} L=$${btcOrbLow.toFixed(0)} pos=${posStr} | open=${openPos?.length ?? 0} daily=${total}/2`);
+  console.log(`[BTC:orion] price=$${btcPrice.toFixed(0)} H=$${btcOrbHigh.toFixed(0)} L=$${btcOrbLow.toFixed(0)} pos=${posStr} | open=${openPos?.length ?? 0} daily=${total}/10 block=${String(blockHour).padStart(2,"0")}:00`);
 
-  if (total >= 2) { console.log(`[BTC:orion] Daily limit reached (${total}/2)`); return; }
-  if (openPos && openPos.length > 0) return;
+  if (total >= 10) { console.log(`[BTC:orion] Daily limit reached (${total}/10)`); return; }
+  if (openPos && openPos.length > 0) return; // one open at a time
 
   const leverage_orion = BTC_LEVERAGE["btc_orion"];
-  if (btcPrice > btcOrbHigh && longs < 1) {
-    const cv = await getBtcCurrentValue("btc_orion");
+  if (btcPrice > btcOrbHigh) {
+    const cv     = await getBtcCurrentValue("btc_orion");
     const qtyInr = Math.round(cv * 0.50 * leverage_orion);
     await openBtcPosition("btc_orion", "LONG", btcPrice, btcOrbLow,
-      `Price ($${btcPrice.toFixed(0)}) broke above ORB High ($${btcOrbHigh.toFixed(0)})`, qtyInr, leverage_orion);
-    btcDailyTradeCounts["btc_orion_LONG"] = longs + 1;
-  } else if (btcPrice < btcOrbLow && shorts < 1) {
-    const cv = await getBtcCurrentValue("btc_orion");
+      `Price ($${btcPrice.toFixed(0)}) broke above ORB High ($${btcOrbHigh.toFixed(0)}) — ${String(blockHour).padStart(2,"0")}:00 UTC block`,
+      qtyInr, leverage_orion);
+    btcDailyTradeCounts["btc_orion"] = total + 1;
+  } else if (btcPrice < btcOrbLow) {
+    const cv     = await getBtcCurrentValue("btc_orion");
     const qtyInr = Math.round(cv * 0.50 * leverage_orion);
     await openBtcPosition("btc_orion", "SHORT", btcPrice, btcOrbHigh,
-      `Price ($${btcPrice.toFixed(0)}) broke below ORB Low ($${btcOrbLow.toFixed(0)})`, qtyInr, leverage_orion);
-    btcDailyTradeCounts["btc_orion_SHORT"] = shorts + 1;
+      `Price ($${btcPrice.toFixed(0)}) broke below ORB Low ($${btcOrbLow.toFixed(0)}) — ${String(blockHour).padStart(2,"0")}:00 UTC block`,
+      qtyInr, leverage_orion);
+    btcDailyTradeCounts["btc_orion"] = total + 1;
   }
 }
 
