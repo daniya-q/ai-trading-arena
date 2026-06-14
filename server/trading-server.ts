@@ -1230,20 +1230,56 @@ async function runStrategy3(): Promise<void> {
 
   // Filter 1: RSI
   const rsiOk = optType === "CE" ? rsi < 45 : rsi > 55;
-  if (!rsiOk) { console.log(`[S3] BLOCKED: RSI=${rsi.toFixed(1)} (CE needs <45, PE needs >55)`); return; }
+  const rsiTag = rsiOk
+    ? `RSI=${rsi.toFixed(1)}✓`
+    : `RSI=${rsi.toFixed(1)}✗(CE need <45, PE need >55)`;
 
   // Filter 2: VWAP
-  const vwapOk = optType === "CE" ? lastNiftyPrice > vwap : lastNiftyPrice < vwap;
-  if (!vwapOk) { console.log(`[S3] BLOCKED: VWAP price=${lastNiftyPrice.toFixed(0)} vwap=${vwap.toFixed(0)}`); return; }
+  const price   = lastNiftyPrice;
+  const vwapOk  = optType === "CE" ? price > vwap : price < vwap;
+  const vwapTag = vwapOk
+    ? `VWAP=price ${optType === "CE" ? "above" : "below"}✓`
+    : `VWAP=price ${optType === "CE" ? "below" : "above"} vwap=${vwap.toFixed(0)}✗`;
 
-  // Filter 3: Fibonacci zone
-  const recentHighs = candles.slice(-100).map(c => c.high);
-  const recentLows  = candles.slice(-100).map(c => c.low);
-  const fib       = calcFibLevels(Math.max(...recentHighs), Math.min(...recentLows));
-  const price     = lastNiftyPrice;
-  const inFibZone = price >= fib["50"] * 0.998 && price <= fib["61.8"] * 1.002;
-  if (!inFibZone) {
-    console.log(`[S3] BLOCKED: Fib zone price=${price.toFixed(0)} fib50=${fib["50"].toFixed(0)} fib61.8=${fib["61.8"].toFixed(0)}`);
+  // Filter 3: Fibonacci zone (38.2–50% support for CE, 50–78.6% resistance for PE)
+  // Using last 200 candles (100 min) for stable levels; ±0.5% tolerance
+  const recentHighs = candles.slice(-200).map(c => c.high);
+  const recentLows  = candles.slice(-200).map(c => c.low);
+  const fib         = calcFibLevels(Math.max(...recentHighs), Math.min(...recentLows));
+  let inFibZone: boolean;
+  let fibTag: string;
+  if (optType === "CE") {
+    // Bullish: price should be at support (38.2–50% from low = pullback support zone)
+    const lo = fib["38.2"] * 0.995;
+    const hi = fib["50"]   * 1.005;
+    inFibZone = price >= lo && price <= hi;
+    fibTag = inFibZone
+      ? `Fib=in 38.2-50% zone (${fib["38.2"].toFixed(0)}-${fib["50"].toFixed(0)})✓`
+      : `Fib=NOT in 38.2-50% zone (${fib["38.2"].toFixed(0)}-${fib["50"].toFixed(0)}) price=${price.toFixed(0)}✗`;
+  } else {
+    // Bearish: price should be at resistance (50–78.6% from low = bounce resistance zone)
+    const lo = fib["50"]   * 0.995;
+    const hi = fib["78.6"] * 1.005;
+    inFibZone = price >= lo && price <= hi;
+    fibTag = inFibZone
+      ? `Fib=in 50-78.6% zone (${fib["50"].toFixed(0)}-${fib["78.6"].toFixed(0)})✓`
+      : `Fib=NOT in 50-78.6% zone (${fib["50"].toFixed(0)}-${fib["78.6"].toFixed(0)}) price=${price.toFixed(0)}✗`;
+  }
+
+  // Filter 4: Volume — crossover candle ticks vs 20-candle avg; fallback to OI rising
+  const lastCandle  = candles[candles.length - 1];
+  const prev20      = candles.slice(-21, -1);
+  const avgTicks    = prev20.reduce((s, c) => s + (c.ticks ?? 1), 0) / (prev20.length || 1);
+  const ticksOk     = (lastCandle.ticks ?? 1) > avgTicks;
+  const oiRisingOk  = isOIRising("NIFTY");
+  const volOk       = ticksOk || oiRisingOk;
+  const volTag      = volOk
+    ? `OI/Vol=confirmed (ticks=${lastCandle.ticks ?? 0} avg=${avgTicks.toFixed(0)} oiRising=${oiRisingOk})✓`
+    : `OI/Vol=insufficient (ticks=${lastCandle.ticks ?? 0} avg=${avgTicks.toFixed(0)} oiRising=${oiRisingOk})✗`;
+
+  const allOk = rsiOk && vwapOk && inFibZone && volOk;
+  if (!allOk) {
+    console.log(`[S3] ${optType === "CE" ? "BULL-CROSS↑" : "BEAR-CROSS↓"} BLOCKED: ${rsiTag} | ${vwapTag} | ${fibTag} | ${volTag}`);
     return;
   }
 
@@ -1389,16 +1425,18 @@ async function runStrategy5(): Promise<void> {
   const ceOI30 = getOIChangeForATM("NIFTY", "CE", 30);
   const peOIStr = peOI30 ? `${peOI30.pctChange >= 0 ? "+" : ""}${peOI30.pctChange.toFixed(1)}%` : "no-hist";
   const ceOIStr = ceOI30 ? `${ceOI30.pctChange >= 0 ? "+" : ""}${ceOI30.pctChange.toFixed(1)}%` : "no-hist";
-  console.log(`[S5] PCR=${pcr.toFixed(2)} (need >1.3 or <0.7) | PE-OI-30m=${peOIStr} CE-OI-30m=${ceOIStr} (need <-10%) | trades=${dayCount}/3`);
+  const distCE  = (1.15 - pcr).toFixed(2);
+  const distPE  = (pcr - 0.85).toFixed(2);
+  console.log(`[S5] PCR=${pcr.toFixed(2)} (need >1.15 or <0.85) | dist-to-trigger: CE=${distCE} PE=${distPE} | PE-OI-30m=${peOIStr} CE-OI-30m=${ceOIStr} (need <-7%) | trades=${dayCount}/3`);
 
   let optType: "CE" | "PE" | null = null;
 
-  if (pcr > 1.3) {
-    if (peOI30 && peOI30.pctChange <= -10) optType = "CE";
-    else console.log(`[S5] PCR oversold but PE-OI unwind insufficient (${peOIStr})`);
-  } else if (pcr < 0.7) {
-    if (ceOI30 && ceOI30.pctChange <= -10) optType = "PE";
-    else console.log(`[S5] PCR overbought but CE-OI unwind insufficient (${ceOIStr})`);
+  if (pcr > 1.15) {
+    if (peOI30 && peOI30.pctChange <= -7) optType = "CE";
+    else console.log(`[S5] PCR oversold (${pcr.toFixed(2)}>1.15) but PE-OI unwind insufficient (${peOIStr}, need <-7%)`);
+  } else if (pcr < 0.85) {
+    if (ceOI30 && ceOI30.pctChange <= -7) optType = "PE";
+    else console.log(`[S5] PCR overbought (${pcr.toFixed(2)}<0.85) but CE-OI unwind insufficient (${ceOIStr}, need <-7%)`);
   }
 
   if (!optType) return;
