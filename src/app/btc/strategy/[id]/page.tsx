@@ -4,7 +4,7 @@ import { Fragment, useEffect, useRef, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
-  createChart, CandlestickSeries, LineSeries, AreaSeries, ColorType, createSeriesMarkers,
+  createChart, CandlestickSeries, LineSeries, AreaSeries, HistogramSeries, ColorType, createSeriesMarkers,
 } from "lightweight-charts";
 import type {
   IChartApi, ISeriesApi, IPriceLine, UTCTimestamp,
@@ -179,7 +179,7 @@ function formatDuration(openedAt: string, closedAt: string | null) {
 function CapitalHistoryChart({ strategyId, accent }: { strategyId: string; accent: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
-  const seriesRef    = useRef<ISeriesApi<"Area"> | null>(null);
+  const seriesRef    = useRef<ISeriesApi<"Histogram"> | null>(null);
   const [initialCapital, setInitialCapital] = useState(0);
   const [currentCapital, setCurrentCapital] = useState(0);
 
@@ -194,11 +194,8 @@ function CapitalHistoryChart({ strategyId, accent }: { strategyId: string; accen
       crosshair: { mode: 1 },
     });
     chartRef.current = chart;
-    const series = chart.addSeries(AreaSeries, {
-      lineColor: accent,
-      topColor: `${accent}44`,
-      bottomColor: `${accent}08`,
-      lineWidth: 2,
+    const series = chart.addSeries(HistogramSeries, {
+      color: "#4ade80",
       lastValueVisible: true,
       priceLineVisible: false,
     });
@@ -214,13 +211,13 @@ function CapitalHistoryChart({ strategyId, accent }: { strategyId: string; accen
         if (!seriesRef.current || !data?.length) return;
         setInitialCapital(data[0].capital);
         setCurrentCapital(data[data.length - 1].capital);
-        const pts = data
-          .filter(p => p.date)
-          .map(p => ({ time: p.date as unknown as import("lightweight-charts").Time, value: p.capital }));
+        const filtered = data.filter(p => p.date);
+        const pts = filtered.map((p, i) => ({
+          time:  p.date as unknown as import("lightweight-charts").Time,
+          value: p.capital,
+          color: i === 0 || p.capital >= filtered[i - 1].capital ? "#4ade80" : "#f87171",
+        }));
         seriesRef.current.setData(pts);
-        const isUp = data[data.length - 1].capital >= data[0].capital;
-        const color = isUp ? "#22c55e" : "#ef4444";
-        seriesRef.current.applyOptions({ lineColor: color, topColor: `${color}44`, bottomColor: `${color}08` });
         chartRef.current?.timeScale().fitContent();
       })
       .catch(() => {});

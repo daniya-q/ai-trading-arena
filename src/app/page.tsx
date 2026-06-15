@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { createChart, AreaSeries, ColorType } from "lightweight-charts";
+import { createChart, HistogramSeries, ColorType } from "lightweight-charts";
 import type { IChartApi, ISeriesApi } from "lightweight-charts";
 
 const BACKEND = "https://ai-trading-arena-backend-production.up.railway.app";
@@ -1127,7 +1127,7 @@ function CorrelationHeatmap() {
 function CombinedCapitalHistory() {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
-  const seriesRef    = useRef<ISeriesApi<"Area"> | null>(null);
+  const seriesRef    = useRef<ISeriesApi<"Histogram"> | null>(null);
   const [initialCapital, setInitialCapital] = useState(0);
   const [currentCapital, setCurrentCapital] = useState(0);
 
@@ -1142,11 +1142,8 @@ function CombinedCapitalHistory() {
       crosshair: { mode: 1 },
     });
     chartRef.current = chart;
-    const series = chart.addSeries(AreaSeries, {
-      lineColor: "#6366F1",
-      topColor: "#6366F144",
-      bottomColor: "#6366F108",
-      lineWidth: 2,
+    const series = chart.addSeries(HistogramSeries, {
+      color: "#4ade80",
       lastValueVisible: true,
       priceLineVisible: false,
     });
@@ -1161,13 +1158,13 @@ function CombinedCapitalHistory() {
         if (!seriesRef.current || !data?.length) return;
         setInitialCapital(data[0].capital);
         setCurrentCapital(data[data.length - 1].capital);
-        const pts = data
-          .filter(p => p.date)
-          .map(p => ({ time: p.date as unknown as import("lightweight-charts").Time, value: p.capital }));
+        const filtered = data.filter(p => p.date);
+        const pts = filtered.map((p, i) => ({
+          time:  p.date as unknown as import("lightweight-charts").Time,
+          value: p.capital,
+          color: i === 0 || p.capital >= filtered[i - 1].capital ? "#4ade80" : "#f87171",
+        }));
         seriesRef.current.setData(pts);
-        const isUp = data[data.length - 1].capital >= data[0].capital;
-        const color = isUp ? "#22c55e" : "#ef4444";
-        seriesRef.current.applyOptions({ lineColor: color, topColor: `${color}44`, bottomColor: `${color}08` });
         chartRef.current?.timeScale().fitContent();
       })
       .catch(() => {});
