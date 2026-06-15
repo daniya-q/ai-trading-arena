@@ -45,6 +45,12 @@ type BtcPosition = {
   entry_reason: string | null;
   exit_reason: string | null;
   exit_reason_detail: string | null;
+  // Tiered trail / partial booking (migration 006)
+  partial_booked: boolean | null;
+  partial_qty_inr: number | null;
+  remaining_qty_inr: number | null;
+  current_tier: number | null;
+  realized_pnl: number | null;
 };
 
 type OhlcCandle = { time: number; open: number; high: number; low: number; close: number };
@@ -273,12 +279,15 @@ function BtcOpenTradesPanel({
   };
 
   const rows = openPositions.map(pos => {
-    const stratName = strategies.find(s => s.id === pos.strategy_id)?.name ?? pos.strategy_id;
-    const pnl = btcPrice > 0 && pos.qty_inr > 0
+    const stratName    = strategies.find(s => s.id === pos.strategy_id)?.name ?? pos.strategy_id;
+    const remainingQty = pos.remaining_qty_inr ?? pos.qty_inr;
+    const realizedPnl  = pos.realized_pnl ?? 0;
+    const livePnlOnRem = btcPrice > 0 && remainingQty > 0
       ? (pos.side === "LONG"
           ? (btcPrice - pos.entry_price_usd) / pos.entry_price_usd
-          : (pos.entry_price_usd - btcPrice) / pos.entry_price_usd) * pos.qty_inr
-      : (pos.pnl_inr ?? 0);
+          : (pos.entry_price_usd - btcPrice) / pos.entry_price_usd) * remainingQty
+      : 0;
+    const pnl = realizedPnl + livePnlOnRem;
     return { pos, stratName, pnl };
   });
 
@@ -310,36 +319,56 @@ function BtcOpenTradesPanel({
         </div>
       ) : (
         <div style={{ flex: 1, overflowY: "auto", overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 960 }}>
             <thead>
               <tr>
-                {["Strategy", "Side", "Entry USD", "Entry Time", "BTC Price", "Live PnL", "Leverage", "SL", "Trail SL"].map(h => (
+                {["Strategy", "Side", "Entry USD", "Entry Time", "BTC Price", "Live PnL", "Tier", "Partial", "Leverage", "SL", "Trail SL"].map(h => (
                   <th key={h} style={thStyle}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {rows.map(({ pos, stratName, pnl }) => (
-                <tr key={pos.id} style={{ borderTop: "1px solid #0f1520" }}>
-                  <td style={{ padding: "8px 12px", fontSize: 12, color: ACCENT[pos.strategy_id] ?? "#9ca3af", fontWeight: 600, whiteSpace: "nowrap" }}>{stratName}</td>
-                  <td style={{ padding: "8px 10px", fontSize: 12, fontWeight: 700, color: pos.side === "LONG" ? "#22c55e" : "#ef4444" }}>{pos.side}</td>
-                  <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", color: "#9ca3af" }}>${pos.entry_price_usd.toLocaleString("en-US", { maximumFractionDigits: 2 })}</td>
-                  <td style={{ padding: "8px 10px", fontSize: 11, color: "#4b5563" }}>{fmtTime(pos.opened_at)}</td>
-                  <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", color: "#f5d547", fontWeight: 600 }}>
-                    {btcPrice > 0 ? `$${btcPrice.toLocaleString("en-US", { maximumFractionDigits: 2 })}` : "—"}
-                  </td>
-                  <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", fontWeight: 700, color: pnlColor(pnl) }}>{pnlStr(pnl)}</td>
-                  <td style={{ padding: "8px 10px", fontSize: 11, color: "#6b7280" }}>
-                    {pos.leverage ? `${pos.leverage}×` : "—"}
-                  </td>
-                  <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: "#ef4444" }}>
-                    {pos.stop_loss ? `$${pos.stop_loss.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "—"}
-                  </td>
-                  <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: pos.trail_sl ? "#f5d547" : "#374151" }}>
-                    {pos.trail_sl ? `$${pos.trail_sl.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "inactive"}
-                  </td>
-                </tr>
-              ))}
+              {rows.map(({ pos, stratName, pnl }) => {
+                const tier        = pos.current_tier ?? 0;
+                const partialQty  = pos.partial_qty_inr ?? 0;
+                const partialPnl  = pos.realized_pnl ?? 0;
+                const bookedPct   = pos.qty_inr > 0 ? Math.round(partialQty / pos.qty_inr * 100) : 0;
+                return (
+                  <tr key={pos.id} style={{ borderTop: "1px solid #0f1520" }}>
+                    <td style={{ padding: "8px 12px", fontSize: 12, color: ACCENT[pos.strategy_id] ?? "#9ca3af", fontWeight: 600, whiteSpace: "nowrap" }}>{stratName}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 12, fontWeight: 700, color: pos.side === "LONG" ? "#22c55e" : "#ef4444" }}>{pos.side}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", color: "#9ca3af" }}>${pos.entry_price_usd.toLocaleString("en-US", { maximumFractionDigits: 2 })}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 11, color: "#4b5563" }}>{fmtTime(pos.opened_at)}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", color: "#f5d547", fontWeight: 600 }}>
+                      {btcPrice > 0 ? `$${btcPrice.toLocaleString("en-US", { maximumFractionDigits: 2 })}` : "—"}
+                    </td>
+                    <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", fontWeight: 700, color: pnlColor(pnl) }}>{pnlStr(pnl)}</td>
+                    <td style={{ padding: "8px 10px" }}>
+                      {tier > 0 ? (
+                        <span style={{ fontSize: 10, fontWeight: 700, color: "#f5d547", background: "rgba(245,213,71,0.12)", padding: "2px 6px", borderRadius: 4 }}>
+                          T{tier}
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 10, color: "#374151" }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ padding: "8px 10px", fontSize: 10, color: pos.partial_booked ? "#4ade80" : "#374151", whiteSpace: "nowrap" }}>
+                      {pos.partial_booked
+                        ? `${bookedPct}% @ $${pos.current_price_usd > 0 ? pos.current_price_usd.toFixed(0) : "—"} (+₹${fmtINR(partialPnl)})`
+                        : "—"}
+                    </td>
+                    <td style={{ padding: "8px 10px", fontSize: 11, color: "#6b7280" }}>
+                      {pos.leverage ? `${pos.leverage}×` : "—"}
+                    </td>
+                    <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: "#ef4444" }}>
+                      {pos.stop_loss ? `$${pos.stop_loss.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "—"}
+                    </td>
+                    <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: pos.trail_sl ? "#f5d547" : "#374151" }}>
+                      {pos.trail_sl ? `$${pos.trail_sl.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "inactive"}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

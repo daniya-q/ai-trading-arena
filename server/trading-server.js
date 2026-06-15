@@ -1970,7 +1970,8 @@ let btcOrbHigh = 0;
 let btcOrbLow = 0;
 let btcOrbSet = false;
 let btcOrbBlockHour = -1; // which 4-hour UTC block (0,4,8,12,16,20) the current ORB belongs to
-const btcPeakPrices = {}; // posId → peak price
+const btcPeakPrices = {}; // posId → peak price (LONG: highest, SHORT: lowest)
+const btcSlDists = {}; // posId → original SL distance in USD
 const btcDailyTradeCounts = {};
 let btcTradeDateStr = "";
 function checkBtcDailyReset() {
@@ -2040,6 +2041,48 @@ const BTC_LEVERAGE = {
     btc_supertrend: 50, // 50% × 50x  = 2500%
     btc_vwap_scalper: 200, // 50% × 200x = 10000% (halved during danger windows)
 };
+const BTC_TIER_CONFIG = {
+    btc_ema_crossover: {
+        partialMultiplier: 1.0, partialPct: 0.30,
+        tiers: [
+            { multiplier: 1, trailPct: 0.70 },
+            { multiplier: 2, trailPct: 0.80 },
+            { multiplier: 4, trailPct: 0.90 },
+        ],
+    },
+    btc_orion: {
+        partialMultiplier: 1.0, partialPct: 0.30,
+        tiers: [
+            { multiplier: 1, trailPct: 0.75 },
+            { multiplier: 2, trailPct: 0.85 },
+            { multiplier: 4, trailPct: 0.92 },
+        ],
+    },
+    btc_ema_confluence: {
+        partialMultiplier: 1.0, partialPct: 0.35,
+        tiers: [
+            { multiplier: 1, trailPct: 0.70 },
+            { multiplier: 2, trailPct: 0.82 },
+            { multiplier: 3, trailPct: 0.92 },
+        ],
+    },
+    btc_supertrend: {
+        partialMultiplier: 1.0, partialPct: 0.30,
+        tiers: [
+            { multiplier: 1, trailPct: 0.72 },
+            { multiplier: 2, trailPct: 0.84 },
+            { multiplier: 4, trailPct: 0.92 },
+        ],
+    },
+    btc_vwap_scalper: {
+        partialMultiplier: 0.5, partialPct: 0.40,
+        tiers: [
+            { multiplier: 0.5, trailPct: 0.80 },
+            { multiplier: 1, trailPct: 0.88 },
+            { multiplier: 2, trailPct: 0.95 },
+        ],
+    },
+};
 async function getBtcCurrentValue(strategyId) {
     try {
         const { data } = await supabase
@@ -2058,6 +2101,7 @@ async function getBtcCurrentValue(strategyId) {
 }
 async function openBtcPosition(strategyId, side, entryPriceUsd, stopLoss, entryReason, qtyInr, leverage) {
     try {
+        const slDist = Math.abs(entryPriceUsd - stopLoss);
         const { data, error } = await supabase
             .from("btc_strategy_positions")
             .insert({
@@ -2071,6 +2115,12 @@ async function openBtcPosition(strategyId, side, entryPriceUsd, stopLoss, entryR
             status: "OPEN",
             entry_reason: entryReason,
             leverage,
+            remaining_qty_inr: qtyInr,
+            partial_booked: false,
+            partial_qty_inr: 0,
+            current_tier: 0,
+            realized_pnl: 0,
+            original_sl_usd: slDist,
         })
             .select("id")
             .single();
@@ -2080,7 +2130,8 @@ async function openBtcPosition(strategyId, side, entryPriceUsd, stopLoss, entryR
         }
         const posId = data.id;
         btcPeakPrices[posId] = entryPriceUsd;
-        console.log(`[BTC ${strategyId}] Opened ${side} @ $${entryPriceUsd.toFixed(2)} qty_inr=₹${Math.round(qtyInr).toLocaleString("en-IN")} (50% × ${leverage}x) SL=$${stopLoss.toFixed(2)}`);
+        btcSlDists[posId] = slDist;
+        console.log(`[BTC ${strategyId}] Opened ${side} @ $${entryPriceUsd.toFixed(2)} qty_inr=₹${Math.round(qtyInr).toLocaleString("en-IN")} (50% × ${leverage}x) SL=$${stopLoss.toFixed(2)} slDist=$${slDist.toFixed(2)}`);
         return posId;
     }
     catch (err) {
@@ -2092,28 +2143,40 @@ async function closeBtcPosition(posId, exitPriceUsd, reason) {
     try {
         const { data: pos, error: fetchErr } = await supabase
             .from("btc_strategy_positions")
-            .select("strategy_id, side, entry_price_usd, qty_inr, stop_loss, trail_sl")
+            .select("strategy_id, side, entry_price_usd, qty_inr, stop_loss, trail_sl, remaining_qty_inr, realized_pnl, partial_booked, partial_qty_inr")
             .eq("id", posId)
             .single();
         if (fetchErr || !pos)
             return;
         const p = pos;
-        const pnlInr = p.side === "LONG"
-            ? ((exitPriceUsd - p.entry_price_usd) / p.entry_price_usd) * p.qty_inr
-            : ((p.entry_price_usd - exitPriceUsd) / p.entry_price_usd) * p.qty_inr;
-        const detail = generateBtcExitDetail(reason, p.side, p.entry_price_usd, exitPriceUsd, pnlInr, p.stop_loss, p.trail_sl);
+        const remainingQty = p.remaining_qty_inr ?? p.qty_inr;
+        const realizedPnl = p.realized_pnl ?? 0;
+        const remainingPnl = p.side === "LONG"
+            ? ((exitPriceUsd - p.entry_price_usd) / p.entry_price_usd) * remainingQty
+            : ((p.entry_price_usd - exitPriceUsd) / p.entry_price_usd) * remainingQty;
+        const totalPnlInr = realizedPnl + remainingPnl;
+        const detail = generateBtcExitDetail(reason, p.side, p.entry_price_usd, exitPriceUsd, totalPnlInr, p.stop_loss, p.trail_sl);
         await supabase.from("btc_strategy_positions").update({
             exit_price_usd: exitPriceUsd,
             current_price_usd: exitPriceUsd,
-            pnl_inr: pnlInr,
+            pnl_inr: totalPnlInr,
             status: "CLOSED",
             exit_reason: reason,
             exit_reason_detail: detail,
             closed_at: new Date().toISOString(),
         }).eq("id", posId);
         delete btcPeakPrices[posId];
-        await updateBtcCapital(p.strategy_id, pnlInr);
-        console.log(`[BTC ${p.strategy_id}] Closed ${p.side} @ $${exitPriceUsd.toFixed(2)} (${reason}) PnL ₹${pnlInr.toFixed(2)}`);
+        delete btcSlDists[posId];
+        await updateBtcCapital(p.strategy_id, totalPnlInr);
+        if (p.partial_booked) {
+            const bookedPct = ((p.partial_qty_inr ?? 0) / p.qty_inr * 100).toFixed(0);
+            const remPct = (remainingQty / p.qty_inr * 100).toFixed(0);
+            console.log(`[BTC ${p.strategy_id}] Closed remaining ${remPct}% @ $${exitPriceUsd.toFixed(2)} (${reason}) — remaining PnL ₹${remainingPnl.toFixed(0)}. Total PnL (realized + remaining) = ₹${totalPnlInr.toFixed(0)}`);
+            void bookedPct;
+        }
+        else {
+            console.log(`[BTC ${p.strategy_id}] Closed ${p.side} @ $${exitPriceUsd.toFixed(2)} (${reason}) PnL ₹${totalPnlInr.toFixed(2)}`);
+        }
     }
     catch (err) {
         console.error(`[BTC] closeBtcPosition failed:`, err);
@@ -2138,7 +2201,11 @@ async function updateBtcCapital(strategyId, pnlInr) {
         console.error(`[BTC] updateBtcCapital failed:`, err);
     }
 }
-// ── Monitor BTC positions (SL / Trail SL) — every 5s ─────────
+// ── Monitor BTC positions — every 5s ──────────────────────────
+// Implements: partial profit booking + tiered trailing stop loss.
+//
+// Before partial booking: hard SL guards the position.
+// After partial booking:  hard SL moves to breakeven; tiered trail locks in % of peak gain.
 async function monitorBtcPositions() {
     if (!btcPrice)
         return;
@@ -2147,18 +2214,22 @@ async function monitorBtcPositions() {
         await supabase.from("config").upsert({ key: "BTC_PRICE_USD", value: btcPrice.toFixed(2) }, { onConflict: "key" });
         const { data, error } = await supabase
             .from("btc_strategy_positions")
-            .select("id, strategy_id, side, entry_price_usd, qty_inr, stop_loss, trail_sl")
+            .select("id, strategy_id, side, entry_price_usd, qty_inr, stop_loss, trail_sl, partial_booked, partial_qty_inr, remaining_qty_inr, current_tier, realized_pnl, original_sl_usd")
             .eq("status", "OPEN");
         if (error || !data)
             return;
         for (const row of data) {
-            const pnlInr = row.side === "LONG"
-                ? ((btcPrice - row.entry_price_usd) / row.entry_price_usd) * row.qty_inr
-                : ((row.entry_price_usd - btcPrice) / row.entry_price_usd) * row.qty_inr;
+            const remainingQty = row.remaining_qty_inr ?? row.qty_inr;
+            const realizedPnl = row.realized_pnl ?? 0;
+            // ── Live PnL on remaining position ────────────────────────
+            const remainingPnl = row.side === "LONG"
+                ? ((btcPrice - row.entry_price_usd) / row.entry_price_usd) * remainingQty
+                : ((row.entry_price_usd - btcPrice) / row.entry_price_usd) * remainingQty;
+            const totalLivePnl = realizedPnl + remainingPnl;
             await supabase.from("btc_strategy_positions")
-                .update({ current_price_usd: btcPrice, pnl_inr: pnlInr })
+                .update({ current_price_usd: btcPrice, pnl_inr: totalLivePnl })
                 .eq("id", row.id);
-            // Update peak price for trail SL
+            // ── Update peak price ──────────────────────────────────────
             if (row.side === "LONG") {
                 if (!btcPeakPrices[row.id] || btcPrice > btcPeakPrices[row.id])
                     btcPeakPrices[row.id] = btcPrice;
@@ -2167,23 +2238,80 @@ async function monitorBtcPositions() {
                 if (!btcPeakPrices[row.id] || btcPrice < btcPeakPrices[row.id])
                     btcPeakPrices[row.id] = btcPrice;
             }
-            // Trail SL ratchet
-            const trailPct = btcTrailPct(row.strategy_id);
-            if (row.side === "LONG") {
-                const newTrail = btcPeakPrices[row.id] * (1 - trailPct);
-                if (!row.trail_sl || newTrail > row.trail_sl) {
-                    await supabase.from("btc_strategy_positions").update({ trail_sl: newTrail }).eq("id", row.id);
-                    row.trail_sl = newTrail;
+            const peakPrice = btcPeakPrices[row.id];
+            const peakGain = row.side === "LONG"
+                ? peakPrice - row.entry_price_usd
+                : row.entry_price_usd - peakPrice;
+            // ── Resolve SL distance ────────────────────────────────────
+            // Prefer stored original_sl_usd; fall back to in-memory; last resort: current stop_loss
+            let slDist = row.original_sl_usd ?? btcSlDists[row.id];
+            if (!slDist && row.stop_loss !== null) {
+                const computed = Math.abs(row.entry_price_usd - row.stop_loss);
+                if (computed > 0) {
+                    slDist = computed;
+                    btcSlDists[row.id] = computed;
                 }
             }
-            else {
-                const newTrail = btcPeakPrices[row.id] * (1 + trailPct);
-                if (!row.trail_sl || newTrail < row.trail_sl) {
-                    await supabase.from("btc_strategy_positions").update({ trail_sl: newTrail }).eq("id", row.id);
-                    row.trail_sl = newTrail;
+            const config = BTC_TIER_CONFIG[row.strategy_id];
+            // ── Partial booking ────────────────────────────────────────
+            if (!row.partial_booked && config && slDist && slDist > 0) {
+                const gainMultiple = peakGain / slDist;
+                if (gainMultiple >= config.partialMultiplier) {
+                    const partialQty = row.qty_inr * config.partialPct;
+                    const remainAfter = row.qty_inr - partialQty;
+                    const partialPnl = row.side === "LONG"
+                        ? ((btcPrice - row.entry_price_usd) / row.entry_price_usd) * partialQty
+                        : ((row.entry_price_usd - btcPrice) / row.entry_price_usd) * partialQty;
+                    const newRealizedPnl = realizedPnl + partialPnl;
+                    await supabase.from("btc_strategy_positions").update({
+                        partial_booked: true,
+                        partial_qty_inr: partialQty,
+                        remaining_qty_inr: remainAfter,
+                        realized_pnl: newRealizedPnl,
+                        stop_loss: row.entry_price_usd, // breakeven
+                    }).eq("id", row.id);
+                    console.log(`[BTC ${row.strategy_id}] Partial booked ${(config.partialPct * 100).toFixed(0)}% @ $${btcPrice.toFixed(2)} — realized ₹${partialPnl.toFixed(0)}. Remaining ${((1 - config.partialPct) * 100).toFixed(0)}% SL moved to breakeven.`);
+                    // Update local snapshot
+                    row.partial_booked = true;
+                    row.partial_qty_inr = partialQty;
+                    row.remaining_qty_inr = remainAfter;
+                    row.realized_pnl = newRealizedPnl;
+                    row.stop_loss = row.entry_price_usd;
                 }
             }
-            // Hard SL
+            // ── Tiered trailing (only after partial booking) ───────────
+            if (row.partial_booked && config && slDist && slDist > 0) {
+                const gainMultiple = peakGain / slDist;
+                // Determine highest applicable tier
+                let activeTierIdx = -1;
+                for (let t = 0; t < config.tiers.length; t++) {
+                    if (gainMultiple >= config.tiers[t].multiplier)
+                        activeTierIdx = t;
+                }
+                if (activeTierIdx >= 0) {
+                    const tierNum = activeTierIdx + 1; // 1-indexed
+                    const trailPct = config.tiers[activeTierIdx].trailPct;
+                    const lockedGain = peakGain * trailPct;
+                    const newTrailSL = row.side === "LONG"
+                        ? row.entry_price_usd + lockedGain
+                        : row.entry_price_usd - lockedGain;
+                    // Ratchet: trail_sl only tightens (LONG: increases, SHORT: decreases)
+                    const shouldUpdate = row.side === "LONG"
+                        ? (!row.trail_sl || newTrailSL > row.trail_sl)
+                        : (!row.trail_sl || newTrailSL < row.trail_sl);
+                    if (shouldUpdate) {
+                        const updates = { trail_sl: newTrailSL };
+                        if (tierNum !== row.current_tier) {
+                            updates.current_tier = tierNum;
+                            console.log(`[BTC ${row.strategy_id}] Tier ${tierNum} trail activated — peak gain $${peakGain.toFixed(0)}, locking ${(trailPct * 100).toFixed(0)}% = $${lockedGain.toFixed(0)}. Trail SL = $${newTrailSL.toFixed(0)}`);
+                        }
+                        await supabase.from("btc_strategy_positions").update(updates).eq("id", row.id);
+                        row.trail_sl = newTrailSL;
+                        row.current_tier = tierNum;
+                    }
+                }
+            }
+            // ── Hard SL ───────────────────────────────────────────────
             if (row.stop_loss !== null) {
                 if (row.side === "LONG" && btcPrice <= row.stop_loss) {
                     await closeBtcPosition(row.id, btcPrice, "SL_HIT");
@@ -2194,7 +2322,7 @@ async function monitorBtcPositions() {
                     continue;
                 }
             }
-            // Trail SL
+            // ── Trail SL ──────────────────────────────────────────────
             if (row.trail_sl !== null) {
                 if (row.side === "LONG" && btcPrice <= row.trail_sl) {
                     await closeBtcPosition(row.id, btcPrice, "TRAIL_SL");
@@ -2205,7 +2333,7 @@ async function monitorBtcPositions() {
                     continue;
                 }
             }
-            // VWAP cross exit for btc_vwap_scalper
+            // ── VWAP cross exit (btc_vwap_scalper) ───────────────────
             if (row.strategy_id === "btc_vwap_scalper") {
                 const btcCandles1m = getCandles("BTC", "1m");
                 if (btcCandles1m.length >= 2) {
@@ -2221,15 +2349,11 @@ async function monitorBtcPositions() {
                     }
                     // Danger window: tighten trail SL to 1% from current price
                     if (isDangerWindow()) {
-                        const tightSL = row.side === "LONG"
-                            ? btcPrice * 0.99
-                            : btcPrice * 1.01;
-                        if (row.side === "LONG" && (!row.trail_sl || tightSL > row.trail_sl)) {
+                        const tightSL = row.side === "LONG" ? btcPrice * 0.99 : btcPrice * 1.01;
+                        if (row.side === "LONG" && (!row.trail_sl || tightSL > row.trail_sl))
                             await supabase.from("btc_strategy_positions").update({ trail_sl: tightSL }).eq("id", row.id);
-                        }
-                        if (row.side === "SHORT" && (!row.trail_sl || tightSL < row.trail_sl)) {
+                        if (row.side === "SHORT" && (!row.trail_sl || tightSL < row.trail_sl))
                             await supabase.from("btc_strategy_positions").update({ trail_sl: tightSL }).eq("id", row.id);
-                        }
                     }
                 }
             }
@@ -2238,16 +2362,6 @@ async function monitorBtcPositions() {
     catch (err) {
         console.error("[BTC Monitor] Error:", err);
     }
-}
-function btcTrailPct(strategyId) {
-    const map = {
-        btc_ema_crossover: 0.010,
-        btc_orion: 0.005,
-        btc_ema_confluence: 0.015,
-        btc_supertrend: 0.008,
-        btc_vwap_scalper: 0.010,
-    };
-    return map[strategyId] ?? 0.01;
 }
 // ── BTC Strategy 1: EMA Crossover ────────────────────────────
 async function strategyBtcEmaCrossover() {
