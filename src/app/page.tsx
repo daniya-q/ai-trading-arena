@@ -3,8 +3,8 @@
 import { Fragment, useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { createChart, HistogramSeries, ColorType } from "lightweight-charts";
-import type { IChartApi, ISeriesApi } from "lightweight-charts";
+import { createChart, HistogramSeries, ColorType, createSeriesMarkers } from "lightweight-charts";
+import type { IChartApi, ISeriesApi, Time } from "lightweight-charts";
 
 const BACKEND = "https://ai-trading-arena-backend-production.up.railway.app";
 
@@ -1158,13 +1158,29 @@ function CombinedCapitalHistory() {
         if (!seriesRef.current || !data?.length) return;
         setInitialCapital(data[0].capital);
         setCurrentCapital(data[data.length - 1].capital);
+        const BASELINE = 700_000;
         const filtered = data.filter(p => p.date);
         const pts = filtered.map((p, i) => ({
-          time:  p.date as unknown as import("lightweight-charts").Time,
+          time:  p.date as unknown as Time,
           value: p.capital,
           color: i === 0 || p.capital >= filtered[i - 1].capital ? "#4ade80" : "#f87171",
         }));
         seriesRef.current.setData(pts);
+        seriesRef.current.applyOptions({
+          autoscaleInfoProvider: (original: () => import("lightweight-charts").AutoscaleInfo | null) => {
+            const res = original();
+            if (res?.priceRange) { res.priceRange.minValue = BASELINE; }
+            return res;
+          },
+        });
+        createSeriesMarkers(seriesRef.current, filtered.map((p, i) => ({
+          time:     p.date as unknown as Time,
+          position: "aboveBar" as const,
+          shape:    "circle"   as const,
+          color:    i === 0 || p.capital >= filtered[i - 1].capital ? "#4ade80" : "#f87171",
+          size:     1,
+          text:     `₹${Math.round(p.capital).toLocaleString("en-IN")}`,
+        })));
         chartRef.current?.timeScale().fitContent();
       })
       .catch(() => {});

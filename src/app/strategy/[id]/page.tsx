@@ -591,13 +591,29 @@ function CapitalHistoryChart({ strategyId, accent, isBtc = false }: { strategyId
         if (!seriesRef.current || !data?.length) return;
         setInitialCapital(data[0].capital);
         setCurrentCapital(data[data.length - 1].capital);
+        const BASELINE = 100_000;
         const filtered = data.filter(p => p.date);
         const pts = filtered.map((p, i) => ({
-          time:  p.date as unknown as import("lightweight-charts").Time,
+          time:  p.date as unknown as Time,
           value: p.capital,
           color: i === 0 || p.capital >= filtered[i - 1].capital ? "#4ade80" : "#f87171",
         }));
         seriesRef.current.setData(pts);
+        seriesRef.current.applyOptions({
+          autoscaleInfoProvider: (original: () => import("lightweight-charts").AutoscaleInfo | null) => {
+            const res = original();
+            if (res?.priceRange) { res.priceRange.minValue = BASELINE; }
+            return res;
+          },
+        });
+        createSeriesMarkers(seriesRef.current, filtered.map((p, i) => ({
+          time:     p.date as unknown as Time,
+          position: "aboveBar" as const,
+          shape:    "circle"   as const,
+          color:    i === 0 || p.capital >= filtered[i - 1].capital ? "#4ade80" : "#f87171",
+          size:     1,
+          text:     `₹${Math.round(p.capital).toLocaleString("en-IN")}`,
+        })));
         chartRef.current?.timeScale().fitContent();
       })
       .catch(() => {});
