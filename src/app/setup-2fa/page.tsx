@@ -72,62 +72,67 @@ export default async function Setup2FAPage() {
           </p>
         </div>
 
-        {/* Step 1 */}
+        {/* Step 1 — QR code */}
         <div style={{ width: '100%' }}>
           <StepLabel n={1} text="Scan with Microsoft Authenticator / Google Authenticator / Authy" />
+          <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'center' }}>
+            <div
+              style={{
+                background: '#ffffff',
+                borderRadius: '12px',
+                padding: '16px',
+                display: 'inline-block',
+              }}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={qrDataUrl} alt="TOTP QR Code" width={240} height={240} />
+            </div>
+          </div>
+        </div>
+
+        {/* Secret key — prominent, standalone */}
+        <div style={{ width: '100%' }}>
+          <div style={{ fontSize: '11px', color: '#6b7280', letterSpacing: '0.12em', fontWeight: 600, marginBottom: '8px' }}>
+            SECRET KEY — copy this as <code style={{ color: '#60a5fa' }}>TOTP_SECRET</code> in Vercel
+          </div>
           <div
             style={{
-              background: '#ffffff',
-              borderRadius: '12px',
-              padding: '16px',
-              display: 'inline-block',
-              marginTop: '12px',
+              background: '#0d1117',
+              border: '2px solid #3b82f6',
+              borderRadius: '10px',
+              padding: '16px 18px',
             }}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={qrDataUrl} alt="TOTP QR Code" width={240} height={240} />
+            <p
+              style={{
+                margin: 0,
+                color: '#f1f5f9',
+                fontSize: '15px',
+                fontWeight: 700,
+                fontFamily: 'monospace',
+                letterSpacing: '0.08em',
+                wordBreak: 'break-all',
+                lineHeight: 1.7,
+                userSelect: 'all',
+                cursor: 'text',
+              }}
+            >
+              {secret}
+            </p>
           </div>
+          <p style={{ color: '#64748b', fontSize: '11px', margin: '6px 0 0' }}>
+            Click the text above to select all, then copy.
+          </p>
         </div>
 
         {/* Step 2 */}
         <div style={{ width: '100%' }}>
-          <StepLabel n={2} text="Copy the secret into Vercel → Settings → Environment Variables" />
-          <div
-            style={{
-              marginTop: '12px',
-              background: '#131726',
-              border: '1px solid #1e2433',
-              borderRadius: '10px',
-              padding: '14px 16px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '8px',
-            }}
-          >
-            <div style={{ fontSize: '11px', color: '#6b7280', letterSpacing: '0.1em' }}>
-              Variable name
-            </div>
-            <code style={{ color: '#60a5fa', fontSize: '14px', fontWeight: 700 }}>TOTP_SECRET</code>
-            <div style={{ fontSize: '11px', color: '#6b7280', letterSpacing: '0.1em', marginTop: '4px' }}>
-              Value (backup — for manual entry into authenticator app)
-            </div>
-            <code
-              style={{
-                color: '#a78bfa',
-                fontSize: '13px',
-                wordBreak: 'break-all',
-                lineHeight: 1.6,
-                fontWeight: 600,
-              }}
-            >
-              {secret}
-            </code>
-          </div>
+          <StepLabel n={2} text="Add TOTP_SECRET to Vercel → Settings → Environment Variables, then redeploy" />
         </div>
 
         {/* Step 3 */}
         <div style={{ width: '100%' }}>
-          <StepLabel n={3} text="After setting the env var and redeploying, delete this page" />
+          <StepLabel n={3} text="Delete src/app/setup-2fa/ from the repo after setup is complete" />
           <p style={{ color: '#64748b', fontSize: '12px', margin: '8px 0 0', lineHeight: 1.6 }}>
             Remove <code style={{ color: '#94a3b8' }}>src/app/setup-2fa/</code> from the repo so
             no one else can generate a new QR code.
