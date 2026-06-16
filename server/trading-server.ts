@@ -122,8 +122,16 @@ const MAX_CANDLES = 500;
 const optionChainHistory: Record<string, FullOptionChain[]> = {};
 
 // Fast lookup: symbol → current LTP
-// Key format: "NIFTY 2026-06-12 23400 CE"
+// Key format: "NIFTY 12JUN 23400 CE"
 const optionPriceCache: Record<string, number> = {};
+
+// Upstox instrument key cache for real-time LTP polling
+// Key: option symbol → Upstox instrument_key (e.g. "NSE_FO|12345")
+const optionInstrKeyCache: Record<string, string> = {};
+
+// Open equity positions snapshot — updated by monitorOpenPositions every 30s
+// Used by pollOpenEquityOptionLTPs to avoid per-second DB queries
+let openEquityPositions: Array<{ id: string; symbol: string; entry_price: number; quantity: number }> = [];
 
 // Peak premiums for open positions (in-memory, intraday only)
 const peakPremiums: Record<string, number> = {}; // posId → peak premium
@@ -558,10 +566,10 @@ async function fetchFullOptionChain(index: string, expiry: string): Promise<Full
     }
     const json = await res.json() as {
       data?: Array<{
-        strike_price:       number;
+        strike_price:           number;
         underlying_spot_price?: number;
-        call_options?: { market_data?: { ltp?: number; oi?: number } };
-        put_options?:  { market_data?: { ltp?: number; oi?: number } };
+        call_options?: { instrument_key?: string; market_data?: { ltp?: number; oi?: number } };
+        put_options?:  { instrument_key?: string; market_data?: { ltp?: number; oi?: number } };
       }>;
     };
     const chain = json.data ?? [];
@@ -599,6 +607,15 @@ async function fetchFullOptionChain(index: string, expiry: string): Promise<Full
         optionPriceCache[`${index} ${expiryFmt} ${row.strike} CE`] = row.cePremium;
       if (row.pePremium > 0)
         optionPriceCache[`${index} ${expiryFmt} ${row.strike} PE`] = row.pePremium;
+    }
+
+    // Cache Upstox instrument keys for real-time LTP polling (used by pollOpenEquityOptionLTPs)
+    for (const rawRow of chain) {
+      const prefix = `${index} ${expiryFmt} ${rawRow.strike_price}`;
+      const ceKey = rawRow.call_options?.instrument_key;
+      const peKey = rawRow.put_options?.instrument_key;
+      if (ceKey) optionInstrKeyCache[`${prefix} CE`] = ceKey;
+      if (peKey) optionInstrKeyCache[`${prefix} PE`] = peKey;
     }
 
     const pcr = totalCE_OI > 0 ? totalPE_OI / totalCE_OI : 1;
@@ -881,6 +898,15 @@ async function monitorOpenPositions(): Promise<void> {
     .from("strategy_positions")
     .select("*")
     .eq("status", "OPEN");
+
+  // Update in-memory snapshot for pollOpenEquityOptionLTPs
+  openEquityPositions = (data ?? []).map((p: Record<string, unknown>) => ({
+    id:          p.id as string,
+    symbol:      p.symbol as string,
+    entry_price: p.entry_price as number,
+    quantity:    p.quantity as number,
+  }));
+
   if (!data?.length) return;
 
   const HARD_CLOSE_MINS: Record<string, number> = {
@@ -1778,6 +1804,51 @@ async function pollLTP(): Promise<void> {
     }
   } catch (err) {
     console.error("[LTP] Poll error:", err);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Real-time option LTP refresh for open equity positions — every 5s
+// Fetches live premiums from Upstox LTP endpoint and updates DB
+// ══════════════════════════════════════════════════════════════
+
+async function pollOpenEquityOptionLTPs(): Promise<void> {
+  if (!isMarketOpen() || openEquityPositions.length === 0) return;
+  const token = upstoxToken();
+  if (!token) return;
+
+  // Build instrument key list from cached option keys
+  const instrKeys: string[] = [];
+  const keyToPos: Record<string, { id: string; symbol: string; entry_price: number; quantity: number }> = {};
+  for (const pos of openEquityPositions) {
+    const instrKey = optionInstrKeyCache[pos.symbol];
+    if (instrKey) {
+      instrKeys.push(instrKey);
+      // Upstox returns keys with ":" instead of "|" in the response
+      keyToPos[instrKey.replace("|", ":")] = pos;
+    }
+  }
+  if (!instrKeys.length) return; // instrument keys not yet cached — wait for option chain poll
+
+  try {
+    const keyParam = instrKeys.map(encodeURIComponent).join(",");
+    const res = await fetch(
+      `https://api.upstox.com/v2/market-quote/ltp?instrument_key=${keyParam}`,
+      { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } }
+    );
+    if (!res.ok) return;
+    const json = await res.json() as { data?: Record<string, { last_price?: number }> };
+
+    for (const [apiKey, val] of Object.entries(json.data ?? {})) {
+      const pos = keyToPos[apiKey];
+      if (!pos || !val?.last_price) continue;
+      const price = Number(val.last_price.toFixed(2));
+      optionPriceCache[pos.symbol] = price;
+      const pnl = Number(((price - pos.entry_price) * pos.quantity).toFixed(2));
+      void supabase.from("strategy_positions").update({ current_price: price, pnl }).eq("id", pos.id);
+    }
+  } catch (err) {
+    console.error("[OptionLTP] Fetch error:", err);
   }
 }
 
@@ -3705,6 +3776,9 @@ setInterval(pollOptionChain, 60_000);
 // Equity strategy loop every 30 seconds
 runEquityStrategies();
 setInterval(runEquityStrategies, 30_000);
+
+// Live option LTP for open equity positions every 5 seconds
+setInterval(pollOpenEquityOptionLTPs, 5_000);
 
 // BTC
 connectBinanceWS();

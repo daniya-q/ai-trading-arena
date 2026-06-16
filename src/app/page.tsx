@@ -544,6 +544,91 @@ function OpenTradesPanel({
   );
 }
 
+// ── ClosedTodayPanel ───────────────────────────────────────────
+
+function ClosedTodayPanel({
+  positions,
+  strategies,
+}: {
+  positions: Position[];
+  strategies: Strategy[];
+}) {
+  const todayIST = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const rows = positions
+    .filter(p => p.status === "CLOSED" && p.closed_at &&
+      new Date(p.closed_at).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) === todayIST)
+    .sort((a, b) => new Date(b.closed_at!).getTime() - new Date(a.closed_at!).getTime());
+
+  const thStyle: React.CSSProperties = {
+    padding: "7px 10px", fontSize: 10, fontWeight: 700, color: "#4b5563",
+    textAlign: "left" as const, letterSpacing: "0.08em",
+    whiteSpace: "nowrap" as const, borderBottom: "1px solid #1a1f2e",
+    background: "#070A11",
+  };
+
+  return (
+    <div style={{
+      background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12,
+      overflow: "hidden", marginTop: 10,
+    }}>
+      {/* Header */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8,
+        padding: "9px 16px", borderBottom: "1px solid #1a1f2e",
+      }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.1em" }}>
+          CLOSED TODAY
+        </span>
+        <span style={{
+          fontSize: 10, fontWeight: 700, color: rows.length > 0 ? "#f5d547" : "#374151",
+          background: rows.length > 0 ? "rgba(245,213,71,0.10)" : "rgba(255,255,255,0.03)",
+          padding: "1px 7px", borderRadius: 10,
+        }}>
+          {rows.length}
+        </span>
+        <span style={{ fontSize: 10, color: "#1f2937", marginLeft: "auto" }}>15s refresh</span>
+      </div>
+
+      {rows.length === 0 ? (
+        <div style={{ padding: "16px 16px", fontSize: 12, color: "#374151" }}>
+          No trades closed today yet
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
+            <thead>
+              <tr>
+                {["Strategy", "Symbol", "Type", "Entry ₹", "Exit ₹", "Qty", "PnL", "Exit Reason", "Time Closed"].map(h => (
+                  <th key={h} style={thStyle}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(pos => {
+                const stratName = strategies.find(s => s.id === pos.strategy_id)?.name ?? pos.strategy_id;
+                const reason = [pos.exit_reason, pos.exit_reason_detail].filter(Boolean).join(" — ");
+                return (
+                  <tr key={pos.id} style={{ borderTop: "1px solid #0f1520" }}>
+                    <td style={{ padding: "7px 10px", fontSize: 12, color: ACCENT[pos.strategy_id] ?? "#9ca3af", fontWeight: 600, whiteSpace: "nowrap" }}>{stratName}</td>
+                    <td style={{ padding: "7px 10px", fontSize: 11, color: "#c9d1d9", whiteSpace: "nowrap" }}>{pos.symbol}</td>
+                    <td style={{ padding: "7px 8px", fontSize: 12, fontWeight: 700, color: pos.type === "CE" ? "#22c55e" : "#ef4444" }}>{pos.type}</td>
+                    <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", color: "#6b7280" }}>₹{pos.entry_price.toFixed(2)}</td>
+                    <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", color: "#9ca3af" }}>₹{(pos.exit_price ?? 0).toFixed(2)}</td>
+                    <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", color: "#6b7280" }}>{pos.quantity}</td>
+                    <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", fontWeight: 700, color: pnlColor(pos.pnl ?? 0) }}>{pnlStr(pos.pnl ?? 0)}</td>
+                    <td style={{ padding: "7px 10px", fontSize: 11, color: "#4b5563", whiteSpace: "nowrap", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{reason || "—"}</td>
+                    <td style={{ padding: "7px 10px", fontSize: 11, color: "#374151", whiteSpace: "nowrap" }}>{fmtTime(pos.closed_at)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── LockedCard ─────────────────────────────────────────────────
 
 
@@ -1296,6 +1381,9 @@ export default function DashboardPage() {
         <div style={{ height: 360 }}>
           <OpenTradesPanel openPositions={openPositions} strategies={strategies} />
         </div>
+
+        {/* Closed Today panel */}
+        <ClosedTodayPanel positions={positions} strategies={strategies} />
       </div>
 
       {/* Strategy Cards */}
