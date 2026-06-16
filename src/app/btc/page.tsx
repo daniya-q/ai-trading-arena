@@ -454,17 +454,18 @@ function BtcClosedTodayPanel({
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 680 }}>
             <thead>
               <tr>
-                {["Strategy", "Side", "Entry USD", "Exit USD", "PnL", "Exit Reason", "Time Closed"].map(h => (
+                {["#", "Strategy", "Side", "Entry USD", "Exit USD", "PnL", "Exit Reason", "Time Closed"].map(h => (
                   <th key={h} style={thStyle}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {rows.map(pos => {
+              {rows.map((pos, idx) => {
                 const stratName = strategies.find(s => s.id === pos.strategy_id)?.name ?? pos.strategy_id;
                 const reason = [pos.exit_reason, pos.exit_reason_detail].filter(Boolean).join(" — ");
                 return (
                   <tr key={pos.id} style={{ borderTop: "1px solid #0f1520" }}>
+                    <td style={{ padding: "7px 10px", fontSize: 11, color: "#374151", fontFamily: "monospace", textAlign: "right" as const }}>{idx + 1}</td>
                     <td style={{ padding: "7px 10px", fontSize: 12, color: ACCENT[pos.strategy_id] ?? "#9ca3af", fontWeight: 600, whiteSpace: "nowrap" }}>{stratName}</td>
                     <td style={{ padding: "7px 10px", fontSize: 12, fontWeight: 700, color: pos.side === "LONG" ? "#22c55e" : "#ef4444" }}>{pos.side}</td>
                     <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", color: "#6b7280" }}>${pos.entry_price_usd.toLocaleString("en-US", { maximumFractionDigits: 2 })}</td>

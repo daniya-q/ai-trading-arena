@@ -612,17 +612,18 @@ function ClosedTodayPanel({
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
             <thead>
               <tr>
-                {["Strategy", "Symbol", "Type", "Entry ₹", "Exit ₹", "Qty", "PnL", "Exit Reason", "Time Closed"].map(h => (
+                {["#", "Strategy", "Symbol", "Type", "Entry ₹", "Exit ₹", "Qty", "PnL", "Exit Reason", "Time Closed"].map(h => (
                   <th key={h} style={thStyle}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {rows.map(pos => {
+              {rows.map((pos, idx) => {
                 const stratName = strategies.find(s => s.id === pos.strategy_id)?.name ?? pos.strategy_id;
                 const reason = [pos.exit_reason, pos.exit_reason_detail].filter(Boolean).join(" — ");
                 return (
                   <tr key={pos.id} style={{ borderTop: "1px solid #0f1520" }}>
+                    <td style={{ padding: "7px 10px", fontSize: 11, color: "#374151", fontFamily: "monospace", textAlign: "right" as const }}>{idx + 1}</td>
                     <td style={{ padding: "7px 10px", fontSize: 12, color: ACCENT[pos.strategy_id] ?? "#9ca3af", fontWeight: 600, whiteSpace: "nowrap" }}>{stratName}</td>
                     <td style={{ padding: "7px 10px", fontSize: 11, color: "#c9d1d9", whiteSpace: "nowrap" }}>{pos.symbol}</td>
                     <td style={{ padding: "7px 8px", fontSize: 12, fontWeight: 700, color: pos.type === "CE" ? "#22c55e" : "#ef4444" }}>{pos.type}</td>
@@ -674,11 +675,13 @@ function StrategyCard({
   strategy,
   capital,
   liveCapital,
+  positions,
   onClick,
 }: {
   strategy: Strategy;
   capital: Capital | undefined;
   liveCapital: number;
+  positions: Position[];
   onClick: () => void;
 }) {
   const accent    = ACCENT[strategy.id] ?? "#6b7280";
@@ -688,6 +691,18 @@ function StrategyCard({
   const sharpe    = capital?.sharpe_ratio ?? 0;
   const today     = capital?.today_trades ?? 0;
   const life      = capital?.lifetime_trades ?? 0;
+
+  // Today's KPIs (computed from passed positions)
+  const todayIST = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const todayClosed = positions.filter(
+    p => p.strategy_id === strategy.id && p.status === "CLOSED" &&
+         p.closed_at?.startsWith(todayIST)
+  );
+  const todayPnl     = todayClosed.reduce((s, p) => s + (p.pnl ?? 0), 0);
+  const todayCount   = todayClosed.length;
+  const avgPnlToday  = todayCount > 0 ? todayPnl / todayCount : null;
+  const lifetimePnl  = capital?.total_pnl ?? 0;
+  const avgPnlLife   = life > 0 ? lifetimePnl / life : null;
 
   const [metrics, setMetrics] = useState<CardMetrics | null>(null);
   useEffect(() => {
@@ -768,6 +783,28 @@ function StrategyCard({
           <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>MAX DRAWDOWN</div>
           <div style={{ fontSize: 14, fontWeight: 600, color: hasData && ddVal > 0 ? "#f87171" : "#4b5563", fontFamily: "monospace" }}>
             {hasData && ddVal > 0 ? `-₹${fmtINR(ddVal)}` : "—"}
+          </div>
+        </div>
+      </div>
+
+      {/* Row 4: Today's PnL | Avg PnL Today | Avg PnL Overall */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", borderTop: `1px solid ${accent}25` }}>
+        <div style={{ padding: "10px 14px", borderRight: `1px solid ${accent}25` }}>
+          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>TODAY PnL</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: todayCount > 0 ? pnlColor(todayPnl) : "#374151", fontFamily: "monospace" }}>
+            {todayCount > 0 ? pnlStr(todayPnl) : "—"}
+          </div>
+        </div>
+        <div style={{ padding: "10px 14px", borderRight: `1px solid ${accent}25` }}>
+          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>AVG TODAY</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: avgPnlToday != null ? pnlColor(avgPnlToday) : "#374151", fontFamily: "monospace" }}>
+            {avgPnlToday != null ? pnlStr(avgPnlToday) : "—"}
+          </div>
+        </div>
+        <div style={{ padding: "10px 14px" }}>
+          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>AVG OVERALL</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: avgPnlLife != null ? pnlColor(avgPnlLife) : "#374151", fontFamily: "monospace" }}>
+            {avgPnlLife != null ? pnlStr(avgPnlLife) : "—"}
           </div>
         </div>
       </div>
@@ -1424,6 +1461,7 @@ export default function DashboardPage() {
                 strategy={s}
                 capital={capitals.find(c => c.strategy_id === s.id)}
                 liveCapital={computeLiveCapital(s.id)}
+                positions={positions}
                 onClick={() => router.push('/strategy/' + s.id)}
               />
             ))}
