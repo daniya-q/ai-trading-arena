@@ -775,7 +775,7 @@ function generateExitDetail(
 
   const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:25, gap_orb:20, vwap_scalper:20 };
   const TRAIL_PCT: Record<string, number> = { ema_crossover:10, ema_confluence:10, orion:15, supertrend:12, pcr_reversal:12, gap_orb:12, vwap_scalper:12 };
-  const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:00 PM", orion:"2:00 PM", ema_confluence:"3:00 PM", supertrend:"3:00 PM", pcr_reversal:"3:00 PM", gap_orb:"3:00 PM", vwap_scalper:"3:00 PM" };
+  const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:15 PM", orion:"2:00 PM", ema_confluence:"3:15 PM", supertrend:"3:15 PM", pcr_reversal:"3:15 PM", gap_orb:"3:00 PM", vwap_scalper:"3:15 PM" };
 
   switch (reason) {
     case "SL_HIT": {
@@ -910,13 +910,13 @@ async function monitorOpenPositions(): Promise<void> {
   if (!data?.length) return;
 
   const HARD_CLOSE_MINS: Record<string, number> = {
-    ema_crossover:  900,  // 15:00
-    orion:          840,  // 14:00
-    ema_confluence: 900,
-    supertrend:     900,
-    pcr_reversal:   900,
-    gap_orb:        900,
-    vwap_scalper:   900,  // 15:00
+    ema_crossover:  915,  // 15:15
+    orion:          840,  // 14:00 — unchanged
+    ema_confluence: 915,
+    supertrend:     915,
+    pcr_reversal:   915,
+    gap_orb:        900,  // gap_orb stays unchanged
+    vwap_scalper:   915,  // 15:15
   };
 
   const currentMins = istMins();
@@ -1000,6 +1000,17 @@ async function monitorOpenPositions(): Promise<void> {
 }
 
 // ══════════════════════════════════════════════════════════════
+// NSE lot sizes (effective Jan 2026)
+// ══════════════════════════════════════════════════════════════
+
+const LOT_SIZES: Record<string, number> = { NIFTY: 65, BANKNIFTY: 30, SENSEX: 20 };
+
+function calcLots(capital: number, pct: number, premium: number, lotSize: number): number {
+  const rawQty = Math.floor((capital * pct) / premium);
+  return Math.floor(rawQty / lotSize) * lotSize;
+}
+
+// ══════════════════════════════════════════════════════════════
 // Strategy 1 — EMA Crossover (30s candles, starts 10:30 AM)
 // ══════════════════════════════════════════════════════════════
 
@@ -1009,7 +1020,7 @@ let s1PrevSlow = 0;
 async function runStrategy1(): Promise<void> {
   if (!isMarketOpen()) return;
   const mins = istMins();
-  if (mins < 630 || mins >= 900) return; // 10:30–15:00
+  if (mins < 630 || mins >= 915) return; // 10:30–15:15
 
   const candles = getCandles("NIFTY", "30s");
   if (candles.length < 66) {
@@ -1062,7 +1073,8 @@ async function runStrategy1(): Promise<void> {
   }
 
   const s1Capital  = await getEquityCurrentValue("ema_crossover");
-  const s1Quantity = Math.max(1, Math.floor((s1Capital * 0.60) / option.premium));
+  const s1Quantity = calcLots(s1Capital, 0.60, option.premium, 65);
+  if (s1Quantity === 0) { console.log(`[S1] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s1Capital).toLocaleString("en-IN")} premium=₹${option.premium})`); return; }
   console.log(`[S1] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s1Capital).toLocaleString("en-IN")} qty=${s1Quantity} — opening trade`);
   await openStrategyPosition("ema_crossover", {
     symbol:       option.symbol,
@@ -1190,7 +1202,8 @@ async function runOrionForIndex(index: string, mins: number): Promise<void> {
   }
 
   const s2Capital  = await getEquityCurrentValue("orion");
-  const s2Quantity = Math.max(1, Math.floor((s2Capital * 0.30) / option.premium));
+  const s2Quantity = calcLots(s2Capital, 0.30, option.premium, LOT_SIZES[index]);
+  if (s2Quantity === 0) { console.log(`[S2:${index}] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s2Capital).toLocaleString("en-IN")} premium=₹${option.premium})`); return; }
   console.log(`[S2:${index}] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s2Capital).toLocaleString("en-IN")} qty=${s2Quantity} — opening trade`);
   await openStrategyPosition("orion", {
     symbol:       option.symbol,
@@ -1217,7 +1230,7 @@ let s3PrevSlow = 0;
 async function runStrategy3(): Promise<void> {
   if (!isMarketOpen()) return;
   const mins = istMins();
-  if (mins < 630 || mins >= 900) return;
+  if (mins < 630 || mins >= 915) return; // 10:30–15:15
 
   const candles = getCandles("NIFTY", "30s");
   if (candles.length < 66) {
@@ -1321,7 +1334,8 @@ async function runStrategy3(): Promise<void> {
   }
 
   const s3Capital  = await getEquityCurrentValue("ema_confluence");
-  const s3Quantity = Math.max(1, Math.floor((s3Capital * 0.60) / option.premium));
+  const s3Quantity = calcLots(s3Capital, 0.60, option.premium, 65);
+  if (s3Quantity === 0) { console.log(`[S3] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s3Capital).toLocaleString("en-IN")} premium=₹${option.premium})`); return; }
   console.log(`[S3] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s3Capital).toLocaleString("en-IN")} qty=${s3Quantity} — opening trade`);
   await openStrategyPosition("ema_confluence", {
     symbol:       option.symbol,
@@ -1403,7 +1417,8 @@ async function runSupertrendForIndex(index: "NIFTY" | "BANKNIFTY"): Promise<void
   }
 
   const s4Capital  = await getEquityCurrentValue("supertrend");
-  const s4Quantity = Math.max(1, Math.floor((s4Capital * 0.30) / option.premium));
+  const s4Quantity = calcLots(s4Capital, 0.30, option.premium, LOT_SIZES[index]);
+  if (s4Quantity === 0) { console.log(`[S4:${index}] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s4Capital).toLocaleString("en-IN")} premium=₹${option.premium})`); return; }
   console.log(`[S4:${index}] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s4Capital).toLocaleString("en-IN")} qty=${s4Quantity} — opening trade`);
   await openStrategyPosition("supertrend", {
     symbol:       option.symbol,
@@ -1471,7 +1486,8 @@ async function runStrategy5(): Promise<void> {
   if (!option) return;
 
   const s5Capital  = await getEquityCurrentValue("pcr_reversal");
-  const s5Quantity = Math.max(1, Math.floor((s5Capital * 0.60) / option.premium));
+  const s5Quantity = calcLots(s5Capital, 0.60, option.premium, 65);
+  if (s5Quantity === 0) { console.log(`[S5] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s5Capital).toLocaleString("en-IN")} premium=₹${option.premium})`); return; }
   console.log(`[S5] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s5Capital).toLocaleString("en-IN")} qty=${s5Quantity} — opening trade`);
   await openStrategyPosition("pcr_reversal", {
     symbol:       option.symbol,
@@ -1594,7 +1610,8 @@ async function runStrategy6(): Promise<void> {
   if (!option) return;
 
   const s6Capital  = await getEquityCurrentValue("gap_orb");
-  const s6Quantity = Math.max(1, Math.floor((s6Capital * 0.60) / option.premium));
+  const s6Quantity = calcLots(s6Capital, 0.60, option.premium, 65);
+  if (s6Quantity === 0) { console.log(`[S6] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s6Capital).toLocaleString("en-IN")} premium=₹${option.premium})`); return; }
   console.log(`[S6] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s6Capital).toLocaleString("en-IN")} qty=${s6Quantity} — opening trade`);
   await openStrategyPosition("gap_orb", {
     symbol:       option.symbol,
@@ -1648,7 +1665,7 @@ async function runStrategy7(): Promise<void> {
 async function runVwapScalperForIndex(index: "NIFTY" | "BANKNIFTY" | "SENSEX"): Promise<void> {
   if (!isMarketOpen()) return;
   const mins = istMins();
-  if (mins < 630 || mins >= 900) return; // 10:30–15:00
+  if (mins < 630 || mins >= 915) return; // 10:30–15:15
 
   const candles = getCandles(index, "1m");
   const MIN_CANDLES = 22;
@@ -1704,8 +1721,10 @@ async function runVwapScalperForIndex(index: "NIFTY" | "BANKNIFTY" | "SENSEX"): 
 
   const slPct = danger ? 0.10 : 0.20;
   const s7Capital  = await getEquityCurrentValue("vwap_scalper");
-  const s7BaseQty  = Math.max(1, Math.floor((s7Capital * 0.30) / option.premium));
-  const qty        = danger ? Math.max(1, Math.floor(s7BaseQty / 2)) : s7BaseQty;
+  const lotSize    = LOT_SIZES[index];
+  const s7BaseQty  = calcLots(s7Capital, 0.30, option.premium, lotSize);
+  if (s7BaseQty === 0) { console.log(`[S7:${index}] SIGNAL ${type} — lot calc=0, skipping (capital=₹${Math.round(s7Capital).toLocaleString("en-IN")} premium=₹${option.premium})`); return; }
+  const qty        = danger ? Math.max(lotSize, Math.floor(s7BaseQty / 2 / lotSize) * lotSize) : s7BaseQty;
 
   const sl = Number((option.premium * (1 - slPct)).toFixed(2));
 

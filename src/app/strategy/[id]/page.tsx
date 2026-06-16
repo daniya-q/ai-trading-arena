@@ -186,7 +186,7 @@ function pnlStr(n: number) { return `${n >= 0 ? "+" : "-"}₹${fmtINR(n)}`; }
 function pnlColor(n: number) { return n > 0 ? "#4ade80" : n < 0 ? "#f87171" : "#ffffff"; }
 function fmtTime(iso: string | null) {
   if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return new Date(iso).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 function fmtPct(n: number) { return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`; }
 function formatDuration(openedAt: string, closedAt: string | null) {
@@ -222,6 +222,17 @@ function fallbackExitText(pos: Position): string {
     case "VWAP_CROSS":  return `Price crossed VWAP in opposite direction. Exit: ₹${(pos.exit_price ?? 0).toFixed(2)}.`;
     default:            return pos.exit_reason?.replace(/_/g, " ") ?? "—";
   }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────
+
+function snapToCandle(tradeSec: number, sortedCandleTimes: number[]): UTCTimestamp {
+  let best = sortedCandleTimes[0] ?? tradeSec;
+  for (const ct of sortedCandleTimes) {
+    if (ct <= tradeSec) best = ct;
+    else break;
+  }
+  return best as UTCTimestamp;
 }
 
 // ── IndicatorChart ───────────────────────────────────────────────
@@ -405,13 +416,26 @@ function IndicatorChart({
           }
 
           const toTS = (t: number) => (t > 1e10 ? Math.floor(t / 1000) : t) as UTCTimestamp;
-          const markers: SeriesMarker<UTCTimestamp>[] = positions.map(pos => ({
-            time: (new Date(pos.opened_at).getTime() / 1000) as UTCTimestamp,
-            position: pos.type === "CE" ? "belowBar" : "aboveBar" as const,
-            color: pos.type === "CE" ? "#22c55e" : "#ef4444",
-            shape: pos.type === "CE" ? "arrowUp" : "arrowDown" as const,
-            text: `${pos.type} ${pos.entry_price.toFixed(0)}`,
-          }));
+          const sortedCandleTimes = candles.map(c => c.time as number);
+          const chartStart = sortedCandleTimes[0] ?? 0;
+          const chartEnd   = sortedCandleTimes[sortedCandleTimes.length - 1] ?? 0;
+
+          const filteredPos = positions.filter(pos => {
+            if (!pos.symbol.startsWith(index)) return false;
+            const tradeSec = new Date(pos.opened_at).getTime() / 1000;
+            return tradeSec >= chartStart && tradeSec <= chartEnd + 3600;
+          });
+
+          const markers: SeriesMarker<UTCTimestamp>[] = filteredPos.map(pos => {
+            const tradeSec = new Date(pos.opened_at).getTime() / 1000;
+            return {
+              time:     snapToCandle(tradeSec, sortedCandleTimes),
+              position: pos.type === "CE" ? "belowBar" : "aboveBar" as const,
+              color:    pos.type === "CE" ? "#22c55e" : "#ef4444",
+              shape:    pos.type === "CE" ? "arrowUp" : "arrowDown" as const,
+              text:     `${pos.type} ${pos.entry_price.toFixed(0)}`,
+            };
+          });
           markers.sort((a, b) => (a.time as number) - (b.time as number));
           if (!markersPluginRef.current)
             markersPluginRef.current = createSeriesMarkers(candleSeriesRef.current, markers);
@@ -554,9 +578,9 @@ function IndicatorChart({
 function CapitalHistoryChart({ strategyId, accent, isBtc = false }: { strategyId: string; accent: string; isBtc?: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
-  const seriesRef    = useRef<ISeriesApi<"Histogram"> | null>(null);
-  const [initialCapital, setInitialCapital] = useState(0);
-  const [currentCapital, setCurrentCapital] = useState(0);
+  const seriesRef    = useRef<ISeriesApi<"Area"> | null>(null);
+  const [livePnl,    setLivePnl]    = useState(0);
+  const [closeCount, setCloseCount] = useState(0);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -569,12 +593,18 @@ function CapitalHistoryChart({ strategyId, accent, isBtc = false }: { strategyId
       crosshair: { mode: 1 },
     });
     chartRef.current = chart;
-    const series = chart.addSeries(HistogramSeries, {
-      color: "#4ade80",
-      lastValueVisible: true,
-      priceLineVisible: false,
+    const series = chart.addSeries(AreaSeries, {
+      lineColor:              accent,
+      topColor:               `${accent}33`,
+      bottomColor:            `${accent}00`,
+      lineWidth:              2,
+      lineType:               1,
+      crosshairMarkerVisible: true,
+      lastValueVisible:       true,
+      priceLineVisible:       false,
     });
     seriesRef.current = series;
+    series.createPriceLine({ price: 0, color: "#374151", lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
     return () => { chart.remove(); chartRef.current = seriesRef.current = null; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -587,52 +617,46 @@ function CapitalHistoryChart({ strategyId, accent, isBtc = false }: { strategyId
       .then(r => r.json())
       .then((data: CapitalPoint[]) => {
         if (!seriesRef.current || !data?.length) return;
-        setInitialCapital(data[0].capital);
-        setCurrentCapital(data[data.length - 1].capital);
-        const BASELINE = 100_000;
+        const initial  = data[0].capital;
         const filtered = data.filter(p => p.date);
-        const pts = filtered.map((p, i) => ({
+        const pts = filtered.map(p => ({
           time:  p.date as unknown as Time,
-          value: p.capital,
-          color: i === 0 || p.capital >= filtered[i - 1].capital ? "#4ade80" : "#f87171",
+          value: p.capital - initial,
         }));
         seriesRef.current.setData(pts);
-        seriesRef.current.applyOptions({
-          autoscaleInfoProvider: (original: () => import("lightweight-charts").AutoscaleInfo | null) => {
-            const res = original();
-            if (res?.priceRange) { res.priceRange.minValue = BASELINE; }
-            return res;
-          },
-        });
-        createSeriesMarkers(seriesRef.current, filtered.map((p, i) => ({
-          time:     p.date as unknown as Time,
-          position: "aboveBar" as const,
-          shape:    "circle"   as const,
-          color:    i === 0 || p.capital >= filtered[i - 1].capital ? "#4ade80" : "#f87171",
-          size:     1,
-          text:     `₹${Math.round(p.capital).toLocaleString("en-IN")}`,
-        })));
+        const last = pts[pts.length - 1];
+        if (last) {
+          setLivePnl(last.value);
+          setCloseCount(pts.length);
+          createSeriesMarkers(seriesRef.current, [{
+            time:     last.time,
+            position: "inBar" as const,
+            shape:    "circle" as const,
+            color:    last.value >= 0 ? "#4ade80" : "#f87171",
+            size:     1,
+          }]);
+        }
         chartRef.current?.timeScale().fitContent();
       })
       .catch(() => {});
   }, [strategyId, isBtc]);
 
-  const isUp = currentCapital >= initialCapital;
-  const diffPct = initialCapital > 0 ? ((currentCapital - initialCapital) / initialCapital) * 100 : 0;
+  const pnlColor = livePnl >= 0 ? "#4ade80" : "#f87171";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "0 24px", height: 48, borderBottom: "1px solid #1a1f2e", background: "#0B0E17", flexShrink: 0 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: "#4b5563", letterSpacing: "0.1em" }}>CAPITAL HISTORY</span>
-        {currentCapital > 0 && (
-          <>
-            <span style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: "#ffffff" }}>
-              ₹{currentCapital.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-            </span>
-            <span style={{ fontSize: 12, fontFamily: "monospace", color: isUp ? "#4ade80" : "#f87171" }}>
-              {isUp ? "+" : ""}{diffPct.toFixed(2)}%
-            </span>
-          </>
+      <div style={{ display: "flex", alignItems: "center", padding: "0 24px", height: 48, borderBottom: "1px solid #1a1f2e", background: "#0B0E17", flexShrink: 0 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: accent, letterSpacing: "0.1em" }}>CUMULATIVE PNL</div>
+          <div style={{ fontSize: 9, color: "#374151", marginTop: 1 }}>Profit since start · {closeCount} closes</div>
+        </div>
+        {livePnl !== 0 && (
+          <div style={{ marginLeft: "auto", textAlign: "right" }}>
+            <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.08em", marginBottom: 1 }}>LIVE PNL</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: pnlColor, fontFamily: "monospace" }}>
+              {livePnl >= 0 ? "+" : ""}₹{Math.abs(livePnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+            </div>
+          </div>
         )}
       </div>
       <div ref={containerRef} style={{ flex: 1, minHeight: 0 }} />
@@ -1075,17 +1099,81 @@ export default function StrategyDetailPage() {
             <div />
           </div>
 
-          {/* Chart fills remaining height */}
-          <div style={{ flex: 1, minHeight: 0 }}>
-            <IndicatorChart
-              key={chartConfig.index}
-              strategyId={id}
-              index={chartConfig.index}
-              defaultInterval={chartConfig.interval}
-              positions={allPositions}
-              fullscreen
-              onPriceUpdate={(price, prev) => { setCurrentPrice(price); setPrevClose(prev); }}
-            />
+          {/* Chart + Trade Log split */}
+          <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+            {/* Left 60%: Chart */}
+            <div style={{ flex: "0 0 60%", minWidth: 0, borderRight: "1px solid #1a1f2e" }}>
+              <IndicatorChart
+                key={chartConfig.index}
+                strategyId={id}
+                index={chartConfig.index}
+                defaultInterval={chartConfig.interval}
+                positions={allPositions}
+                fullscreen
+                onPriceUpdate={(price, prev) => { setCurrentPrice(price); setPrevClose(prev); }}
+              />
+            </div>
+            {/* Right 40%: Today's Trade Log */}
+            <div style={{ flex: "0 0 40%", minWidth: 0, display: "flex", flexDirection: "column", background: "#0A0D14" }}>
+              <div style={{ padding: "10px 16px", borderBottom: "1px solid #1a1f2e", background: "#0B0E17", flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: accent, letterSpacing: "0.1em" }}>TODAY'S TRADES</span>
+                <span style={{ fontSize: 9, color: "#374151", marginLeft: "auto" }}>
+                  {(() => {
+                    const t = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+                    return allPositions.filter(p => p.opened_at.startsWith(t) || p.closed_at?.startsWith(t)).length;
+                  })()} trades
+                </span>
+              </div>
+              <div style={{ flex: 1, overflowY: "auto", overflowX: "auto" }}>
+                {(() => {
+                  const t = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+                  const todayTrades = allPositions.filter(p => p.opened_at.startsWith(t) || p.closed_at?.startsWith(t));
+                  const thSt: React.CSSProperties = { padding: "6px 10px", fontSize: 9, fontWeight: 700, color: "#4b5563", letterSpacing: "0.08em", textAlign: "left", whiteSpace: "nowrap", borderBottom: "1px solid #1a1f2e", background: "#070A11", position: "sticky", top: 0 };
+                  const tdSt: React.CSSProperties = { padding: "6px 10px", fontSize: 10, fontFamily: "monospace", whiteSpace: "nowrap", borderBottom: "1px solid #111827" };
+                  if (todayTrades.length === 0) {
+                    return (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#374151", fontSize: 12 }}>
+                        No trades today
+                      </div>
+                    );
+                  }
+                  return (
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr>
+                          <th style={thSt}>ENTRY</th>
+                          <th style={thSt}>EXIT</th>
+                          <th style={thSt}>E.PRICE</th>
+                          <th style={thSt}>X.PRICE</th>
+                          <th style={thSt}>QTY</th>
+                          <th style={thSt}>PnL</th>
+                          <th style={thSt}>RET%</th>
+                          <th style={thSt}>REASON</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {todayTrades.map(p => {
+                          const pnlColor = (p.pnl ?? 0) > 0 ? "#4ade80" : (p.pnl ?? 0) < 0 ? "#f87171" : "#9ca3af";
+                          const retPct   = p.entry_price > 0 && p.quantity > 0 ? (p.pnl ?? 0) / (p.entry_price * p.quantity) * 100 : 0;
+                          return (
+                            <tr key={p.id}>
+                              <td style={tdSt}>{fmtTime(p.opened_at)}</td>
+                              <td style={tdSt}>{fmtTime(p.closed_at)}</td>
+                              <td style={tdSt}>{p.entry_price.toFixed(2)}</td>
+                              <td style={tdSt}>{p.exit_price != null ? p.exit_price.toFixed(2) : "—"}</td>
+                              <td style={tdSt}>{p.quantity}</td>
+                              <td style={{ ...tdSt, color: pnlColor }}>{(p.pnl ?? 0) >= 0 ? "+" : ""}₹{Math.abs(p.pnl ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+                              <td style={{ ...tdSt, color: pnlColor }}>{retPct >= 0 ? "+" : ""}{retPct.toFixed(1)}%</td>
+                              <td style={{ ...tdSt, color: "#6b7280" }}>{p.status === "OPEN" ? "OPEN" : (p.exit_reason ?? "—")}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  );
+                })()}
+              </div>
+            </div>
           </div>
 
           {/* NEXT ↓ pill */}

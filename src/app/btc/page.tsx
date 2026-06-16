@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { createChart, HistogramSeries, ColorType, createSeriesMarkers } from "lightweight-charts";
+import { createChart, HistogramSeries, AreaSeries, ColorType, createSeriesMarkers } from "lightweight-charts";
 import type { IChartApi, ISeriesApi, Time } from "lightweight-charts";
 
 const BACKEND = "https://ai-trading-arena-backend-production.up.railway.app";
@@ -202,10 +202,12 @@ function BtcTopBar() {
 function BtcCapitalSummaryBar({
   capitals,
   openPositions,
+  positions,
   btcPrice,
 }: {
   capitals: BtcCapital[];
   openPositions: BtcPosition[];
+  positions: BtcPosition[];
   btcPrice: number;
 }) {
   const STARTING = 500_000; // 5 × ₹1,00,000
@@ -225,16 +227,37 @@ function BtcCapitalSummaryBar({
     }, 0);
   }, [capitals, openPositions, btcPrice]);
 
+  const { daysPnl, daysReturn } = useMemo(() => {
+    const todayIST = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    const todayClosedPnl = positions
+      .filter(p => p.status === "CLOSED" && p.closed_at?.startsWith(todayIST))
+      .reduce((s, p) => s + (p.pnl_inr ?? 0), 0);
+    const liveOpenPnl = openPositions.reduce((s, p) => {
+      if (!btcPrice) return s + (p.pnl_inr ?? 0);
+      const rem = p.remaining_qty_inr ?? p.qty_inr;
+      const pct = p.side === "LONG"
+        ? (btcPrice - p.entry_price_usd) / p.entry_price_usd
+        : (p.entry_price_usd - btcPrice) / p.entry_price_usd;
+      return s + (p.realized_pnl ?? 0) + pct * rem;
+    }, 0);
+    const daysPnl = todayClosedPnl + liveOpenPnl;
+    return { daysPnl, daysReturn: STARTING > 0 ? (daysPnl / STARTING) * 100 : 0 };
+  }, [positions, openPositions, btcPrice]);
+
   const totalPnl  = totalCurrent - STARTING;
   const returnPct = STARTING > 0 ? (totalPnl / STARTING) * 100 : 0;
   const pColor    = totalPnl > 0 ? "#4ade80" : totalPnl < 0 ? "#f87171" : "#9ca3af";
   const rColor    = returnPct > 0 ? "#4ade80" : returnPct < 0 ? "#f87171" : "#9ca3af";
+  const dpColor   = daysPnl > 0 ? "#4ade80" : daysPnl < 0 ? "#f87171" : "#9ca3af";
+  const drColor   = daysReturn > 0 ? "#4ade80" : daysReturn < 0 ? "#f87171" : "#9ca3af";
 
   const stats = [
     { label: "STARTING CAPITAL", value: "₹5,00,000",                                                              color: "#9ca3af" },
     { label: "TOTAL CAPITAL",    value: `₹${totalCurrent.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: "#ffffff" },
     { label: "TOTAL PnL",        value: `${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: pColor },
     { label: "TOTAL RETURN",     value: `${returnPct >= 0 ? "+" : ""}${returnPct.toFixed(2)}%`,                    color: rColor },
+    { label: "DAY'S PnL",        value: `${daysPnl >= 0 ? "+" : ""}₹${Math.abs(daysPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: dpColor },
+    { label: "DAY'S RETURN",     value: `${daysReturn >= 0 ? "+" : ""}${daysReturn.toFixed(2)}%`,                  color: drColor },
   ];
 
   return (
@@ -690,9 +713,9 @@ function BtcCorrelationHeatmap() {
 function BtcCombinedCapitalHistory() {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
-  const seriesRef    = useRef<ISeriesApi<"Histogram"> | null>(null);
-  const [initialCapital, setInitialCapital] = useState(0);
-  const [currentCapital, setCurrentCapital] = useState(0);
+  const seriesRef    = useRef<ISeriesApi<"Area"> | null>(null);
+  const [livePnl,     setLivePnl]     = useState(0);
+  const [closeCount,  setCloseCount]  = useState(0);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -705,12 +728,18 @@ function BtcCombinedCapitalHistory() {
       crosshair: { mode: 1 },
     });
     chartRef.current = chart;
-    const series = chart.addSeries(HistogramSeries, {
-      color: "#4ade80",
-      lastValueVisible: true,
-      priceLineVisible: false,
+    const series = chart.addSeries(AreaSeries, {
+      lineColor:              "#3b82f6",
+      topColor:               "rgba(59,130,246,0.20)",
+      bottomColor:            "rgba(59,130,246,0.00)",
+      lineWidth:              2,
+      lineType:               1,
+      crosshairMarkerVisible: true,
+      lastValueVisible:       true,
+      priceLineVisible:       false,
     });
     seriesRef.current = series;
+    series.createPriceLine({ price: 0, color: "#374151", lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
     return () => { chart.remove(); chartRef.current = seriesRef.current = null; };
   }, []);
 
@@ -719,55 +748,50 @@ function BtcCombinedCapitalHistory() {
       .then(r => r.json())
       .then((data: CapitalPoint[]) => {
         if (!seriesRef.current || !data?.length) return;
-        setInitialCapital(data[0].capital);
-        setCurrentCapital(data[data.length - 1].capital);
         const BASELINE = 500_000;
         const filtered = data.filter(p => p.date);
-        const pts = filtered.map((p, i) => ({
+        const pts = filtered.map(p => ({
           time:  p.date as unknown as Time,
-          value: p.capital,
-          color: i === 0 || p.capital >= filtered[i - 1].capital ? "#4ade80" : "#f87171",
+          value: p.capital - BASELINE,
         }));
         seriesRef.current.setData(pts);
-        seriesRef.current.applyOptions({
-          autoscaleInfoProvider: (original: () => import("lightweight-charts").AutoscaleInfo | null) => {
-            const res = original();
-            if (res?.priceRange) { res.priceRange.minValue = BASELINE; }
-            return res;
-          },
-        });
-        createSeriesMarkers(seriesRef.current, filtered.map((p, i) => ({
-          time:     p.date as unknown as Time,
-          position: "aboveBar" as const,
-          shape:    "circle"   as const,
-          color:    i === 0 || p.capital >= filtered[i - 1].capital ? "#4ade80" : "#f87171",
-          size:     1,
-          text:     `₹${Math.round(p.capital).toLocaleString("en-IN")}`,
-        })));
+        const last = pts[pts.length - 1];
+        if (last) {
+          setLivePnl(last.value);
+          setCloseCount(pts.length);
+          const dotColor = last.value >= 0 ? "#4ade80" : "#f87171";
+          createSeriesMarkers(seriesRef.current, [{
+            time:     last.time,
+            position: "inBar" as const,
+            shape:    "circle" as const,
+            color:    dotColor,
+            size:     1,
+          }]);
+        }
         chartRef.current?.timeScale().fitContent();
       })
       .catch(() => {});
   }, []);
 
-  const isUp = currentCapital >= initialCapital;
-  const diffPct = initialCapital > 0 ? ((currentCapital - initialCapital) / initialCapital) * 100 : 0;
+  const pnlColor = livePnl >= 0 ? "#4ade80" : "#f87171";
 
   return (
     <div style={{ background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, overflow: "hidden", marginTop: 24 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "12px 20px", borderBottom: "1px solid #1a1f2e" }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: "#4b5563", letterSpacing: "0.1em" }}>BTC COMBINED CAPITAL HISTORY</span>
-        {currentCapital > 0 && (
-          <>
-            <span style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: "#ffffff" }}>
-              ₹{currentCapital.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-            </span>
-            <span style={{ fontSize: 12, fontFamily: "monospace", color: isUp ? "#4ade80" : "#f87171" }}>
-              {isUp ? "+" : ""}{diffPct.toFixed(2)}%
-            </span>
-          </>
+      <div style={{ display: "flex", alignItems: "center", padding: "12px 20px", borderBottom: "1px solid #1a1f2e" }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#3b82f6", letterSpacing: "0.1em" }}>CUMULATIVE PNL</div>
+          <div style={{ fontSize: 9, color: "#374151", marginTop: 2 }}>Profit since start · step on each close · {closeCount} closes</div>
+        </div>
+        {livePnl !== 0 && (
+          <div style={{ marginLeft: "auto", textAlign: "right" }}>
+            <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.08em", marginBottom: 2 }}>LIVE PNL</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: pnlColor, fontFamily: "monospace" }}>
+              {livePnl >= 0 ? "+" : ""}₹{Math.abs(livePnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+            </div>
+          </div>
         )}
       </div>
-      <div ref={containerRef} style={{ height: 200 }} />
+      <div ref={containerRef} style={{ height: 220 }} />
     </div>
   );
 }
@@ -867,7 +891,7 @@ export default function BtcArenaPage() {
         </div>
 
         <BtcTopBar />
-        <BtcCapitalSummaryBar capitals={capitals} openPositions={openPositions} btcPrice={btcPrice} />
+        <BtcCapitalSummaryBar capitals={capitals} openPositions={openPositions} positions={positions} btcPrice={btcPrice} />
 
         {/* Live Open Trades panel */}
         <div style={{ height: 320 }}>
