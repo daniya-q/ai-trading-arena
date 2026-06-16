@@ -79,20 +79,22 @@ const RULES: Record<string, string[]> = {
     "Entry LONG: EMA9 crosses above EMA21 (golden cross)",
     "Entry SHORT: EMA9 crosses below EMA21 (death cross)",
     "On opposite cross — existing position closed, new one opens in next cycle",
-    "Stop loss: 1.5× ATR(14) from entry price",
-    "Trail SL: 1% ratchet trail, activates immediately on open",
-    "Max 1 trade per direction per day",
-    "₹5,000 INR allocation per trade (paper trading)",
+    "Stop Loss: ~20% of entry price (based on 1.5× ATR from entry)",
+    "Partial Booking: when price moves 1× SL distance → book 30% of position, SL moves to breakeven",
+    "Tiered Trailing: T1 (1× SL dist) → lock 70% of peak gain · T2 (2×) → lock 80% · T3 (4×) → lock 90%",
+    "Exit Priority: 1) Hard SL hit  2) Tiered trail SL  3) Opposite EMA cross (reversal)",
+    "Max 1 trade per direction per day · ₹5,000 INR allocation per trade (paper trading)",
   ],
   btc_orion: [
     "Instrument: BTC/USD · 24/7 perpetual",
     "Opening Range: built from 00:00–00:30 UTC candles each day",
     "Entry LONG: price breaks above ORB High (after 00:30 UTC)",
     "Entry SHORT: price breaks below ORB Low (after 00:30 UTC)",
-    "Stop loss LONG: ORB Low · Stop loss SHORT: ORB High",
-    "Trail SL: 0.5% ratchet trail",
-    "Max 2 trades per day (1 long + 1 short)",
-    "₹5,000 INR allocation per trade (paper trading)",
+    "Stop Loss: ORB opposite side (LONG SL = ORB Low · SHORT SL = ORB High)",
+    "Partial Booking: when price moves 1× SL distance → book 30% of position, SL moves to breakeven",
+    "Tiered Trailing: T1 (1× SL dist) → lock 75% of peak gain · T2 (2×) → lock 85% · T3 (4×) → lock 92%",
+    "Exit Priority: 1) Hard SL hit  2) Tiered trail SL  3) Daily limit reached (max 2 trades)",
+    "Max 2 trades per day (1 long + 1 short) · ₹5,000 INR allocation per trade (paper trading)",
   ],
   btc_ema_confluence: [
     "Instrument: BTC/USD · 24/7 perpetual",
@@ -103,10 +105,11 @@ const RULES: Record<string, string[]> = {
     "  3. VWAP (UTC day) — price above for long, below for short",
     "  4. ATR volatility — ATR must exceed 0.5% of price",
     "  5. EMA9 slope — positive for long, negative for short",
-    "Stop loss: 2× ATR(14) from entry",
-    "Trail SL: 1.5% ratchet trail",
-    "Max 1 trade per direction per day",
-    "₹5,000 INR allocation per trade (paper trading)",
+    "Stop Loss: 2× ATR(14) from entry (approx 20% of entry)",
+    "Partial Booking: when price moves 1× SL distance → book 35% of position, SL moves to breakeven",
+    "Tiered Trailing: T1 (1× SL dist) → lock 70% of peak gain · T2 (2×) → lock 82% · T3 (3×) → lock 92%",
+    "Exit Priority: 1) Hard SL hit  2) Tiered trail SL  3) Any of 5 filters invalidated",
+    "Max 1 trade per direction per day · ₹5,000 INR allocation per trade (paper trading)",
   ],
   btc_supertrend: [
     "Instrument: BTC/USD · 24/7 perpetual",
@@ -115,10 +118,11 @@ const RULES: Record<string, string[]> = {
     "Entry LONG: Supertrend flips bullish (down→up direction change)",
     "Entry SHORT: Supertrend flips bearish (up→down direction change)",
     "On opposite flip — existing position closed, new one opens next cycle",
-    "Stop loss: Supertrend line value at entry",
-    "Trail SL: 0.8% ratchet trail",
-    "Max 2 trades per day",
-    "₹5,000 INR allocation per trade (paper trading)",
+    "Stop Loss: ~20% of entry (Supertrend line distance at entry)",
+    "Partial Booking: when price moves 1× SL distance → book 30% of position, SL moves to breakeven",
+    "Tiered Trailing: T1 (1× SL dist) → lock 72% of peak gain · T2 (2×) → lock 84% · T3 (4×) → lock 92%",
+    "Exit Priority: 1) Hard SL hit  2) Tiered trail SL  3) Supertrend opposite flip",
+    "Max 2 trades per day · ₹5,000 INR allocation per trade (paper trading)",
   ],
   btc_vwap_scalper: [
     "BTC VWAP Momentum Scalper — Runs 24/7",
@@ -134,19 +138,22 @@ const RULES: Record<string, string[]> = {
     "  RSI between 40–60 | Tick volume above 20-candle average",
     "  Previous candle made a lower high",
     "",
-    "SL: 2×ATR normal · Trail: 1% ratchet trail from peak price",
-    "VWAP cross exit: opposite signal closes open position",
+    "Stop Loss: ~20% of entry (2× ATR at entry)",
+    "Partial Booking: at 0.5× SL distance → book 40% of position, SL moves to breakeven",
+    "Tiered Trailing: T1 (0.5× dist) → lock 80% · T2 (1×) → lock 88% · T3 (2×) → lock 95%",
+    "Exit Priority: 1) Hard SL hit  2) Tiered trail SL  3) Opposite VWAP cross",
     "Max: 1 LONG + 1 SHORT per day",
   ],
 };
 
 // Per-strategy rules font size (fit content in ~610px available height)
+// Formula: 610 / (N_lines × 2.0) × 0.8; vwap_scalper subtracts 15px per empty-line spacer
 const RULES_FONT: Record<string, number> = {
-  btc_ema_crossover:  25,
-  btc_orion:          27,
-  btc_ema_confluence: 18,
-  btc_supertrend:     22,
-  btc_vwap_scalper:   15,
+  btc_ema_crossover:  24,  // 10 lines → 610/(10×2) × 0.8 = 24
+  btc_orion:          27,  // 9 lines → 610/(9×2) × 0.8 = 27
+  btc_ema_confluence: 18,  // 13 lines (5 indented) → 610/(13×2) × 0.8 = 18
+  btc_supertrend:     22,  // 11 lines → 610/(11×2) × 0.8 = 22
+  btc_vwap_scalper:   15,  // 18 lines (3 empty) → (610-45)/(15×2) × 0.8 = 15
 };
 
 // Per-strategy default chart interval

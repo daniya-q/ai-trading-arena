@@ -70,11 +70,10 @@ const RULES: Record<string, string[]> = {
     "Trading window: 10:30 AM – 3:00 PM",
     "Entry CE: 16 EMA crosses above 64 EMA → buy CE (₹60–70 premium range)",
     "Entry PE: 16 EMA crosses below 64 EMA → buy PE (₹60–70 premium range)",
-    "Stop loss: 15% of premium paid (e.g. entry ₹65 → SL ₹55.25)",
-    "Trail SL: activates when Nifty moves 1.5× ATR in trade direction → trail at 10% below peak premium",
-    "Exit: SL hit | opposite crossover triggers flip | trail SL hit | 3:00 PM hard close",
-    "Fibonacci 50–61.8% zone used as advisory entry confluence",
-    "Max 1 open trade at a time",
+    "Fibonacci 50–61.8% zone used as advisory entry confluence · Max 1 open trade",
+    "Stop Loss: 15% of premium paid (e.g. entry ₹65 → SL ₹55.25)",
+    "Trail SL: activates when premium up 20% → trails at 10% below peak (ratchet, only tightens)",
+    "Exit Priority: 1) Hard SL hit  2) Opposite EMA crossover (flip)  3) Trail SL hit  4) 3:00 PM hard close",
   ],
   orion: [
     "Instruments: Nifty 50, BankNifty, Sensex options · weekly expiry",
@@ -82,11 +81,10 @@ const RULES: Record<string, string[]> = {
     "Entry CE: price breaks + closes above ORB High AND above VWAP AND CE OI rising (long buildup)",
     "Entry PE: price breaks + closes below ORB Low AND below VWAP AND PE OI rising (short buildup)",
     "VIX filter: skip all trades for the day if India VIX < 13",
-    "Stop loss: 30% of premium paid",
-    "Breakeven rule: when trade up 20%, move SL to entry price",
-    "Trail SL: activates at 35% gain → trail at 15% below peak premium",
-    "Hard close: 2:00 PM",
     "Max 1 trade per instrument simultaneously (can hold Nifty + BankNifty + Sensex at same time)",
+    "Stop Loss: 30% of premium paid",
+    "Trail SL: at 20% gain → move SL to entry (breakeven) · at 35% gain → trail at 15% below peak (ratchet)",
+    "Exit Priority: 1) Hard SL hit  2) Trail SL hit  3) 2:00 PM hard close",
   ],
   ema_confluence: [
     "Instrument: Nifty 50 options · weekly expiry",
@@ -98,9 +96,10 @@ const RULES: Record<string, string[]> = {
     "  3. VWAP — CE: price must be above VWAP · PE: price must be below VWAP",
     "  4. Volume — crossover candle volume must exceed 20-candle average",
     "  5. Fibonacci — price must be near 50–61.8% retracement zone",
-    "Stop loss: 15% of premium paid",
-    "Trail SL: 1.5× ATR move in direction → trail at 10% below peak premium",
-    "Hard close: 3:00 PM · Max 1 open trade at a time",
+    "Stop Loss: 15% of premium paid",
+    "Trail SL: activates when premium up 20% → trails at 10% below peak (ratchet, only tightens)",
+    "Exit Priority: 1) Hard SL hit  2) Opposite EMA crossover (flip)  3) Trail SL hit  4) 3:00 PM hard close",
+    "Max 1 open trade at a time",
   ],
   supertrend: [
     "Instruments: Nifty 50 + BankNifty options · weekly expiry",
@@ -108,22 +107,20 @@ const RULES: Record<string, string[]> = {
     "Indicator: Supertrend with period=7, multiplier=3",
     "Entry CE: Supertrend flips green → price crosses above Supertrend line (bullish flip)",
     "Entry PE: Supertrend flips red → price crosses below Supertrend line (bearish flip)",
-    "Stop loss: 20% of premium paid",
-    "Trail SL: activates at 40% gain → trail at 12% below peak premium",
-    "Exit: SL hit | Supertrend flips opposite | trail SL | 3:00 PM hard close",
-    "Trading window: 9:45 AM – 2:30 PM",
-    "Max 2 trades per instrument per day",
+    "Trading window: 9:45 AM – 2:30 PM · Max 2 trades per instrument per day",
+    "Stop Loss: 20% of premium paid",
+    "Trail SL: activates when premium up 35% → trails at 12% below peak (ratchet, only tightens)",
+    "Exit Priority: 1) Hard SL hit  2) Supertrend opposite flip  3) Trail SL hit  4) 3:00 PM hard close",
   ],
   pcr_reversal: [
     "Instrument: Nifty 50 options · weekly expiry",
     "No candles — checks option chain data every 5 minutes",
     "Entry CE: PCR > 1.3 (market oversold) AND PE OI at ATM fell 10%+ in last 30 min (unwinding)",
     "Entry PE: PCR < 0.7 (market overbought) AND CE OI at ATM fell 10%+ in last 30 min (unwinding)",
-    "Stop loss: 25% of premium paid",
-    "Trail SL: activates at 30% gain → trail at 12% below peak premium",
-    "Exit: SL hit | PCR returns to neutral 0.9–1.1 | OI builds on opposite side | trail SL | 3:00 PM",
-    "Trading window: 10:00 AM – 2:30 PM",
-    "Max 3 trades per day",
+    "Trading window: 10:00 AM – 2:30 PM · Max 3 trades per day",
+    "Stop Loss: 25% of premium paid",
+    "Trail SL: activates when premium up 35% → trails at 12% below peak (ratchet, only tightens)",
+    "Exit Priority: 1) Hard SL hit  2) PCR returns to neutral (0.9–1.1)  3) Opposite OI buildup  4) Trail SL hit  5) 3:00 PM hard close",
   ],
   gap_orb: [
     "Instrument: Nifty 50 options · weekly expiry",
@@ -132,9 +129,9 @@ const RULES: Record<string, string[]> = {
     "Gap > 0.3% down → FADE: buy CE (expect price to reverse and fill the gap)",
     "Gap < 0.3% → ORB BREAKOUT: trade direction of 9:15–9:30 AM range break",
     "Fade target: price returns to previous day's close level (gap filled)",
-    "Stop loss: 20% of premium paid",
-    "Breakout trail SL: 35% gain → trail at 12% below peak premium",
-    "Morning only: no new trades after 11:30 AM",
+    "Stop Loss: 20% of premium paid",
+    "Trail SL: activates when premium up 35% → trails at 12% below peak (ratchet, only tightens)",
+    "Exit Priority: 1) Hard SL hit  2) Fade — gap fills (price reaches prev close)  3) Trail SL hit  4) No new entries after 11:30 AM",
     "Max 2 trades per day",
   ],
   vwap_scalper: [
@@ -152,8 +149,9 @@ const RULES: Record<string, string[]> = {
     "  RSI between 40–60 · OI rising · Previous candle made a lower high",
     "  Option premium in ₹50–80 range",
     "",
-    "SL: 20% of premium | Trail SL: at +25% → breakeven · at +35% → 12% below peak",
-    "Exit priority: SL hit → Trail SL → 3:00 PM hard close → Opposite VWAP cross",
+    "Stop Loss: 20% of premium paid",
+    "Trail SL: at 25% gain → move SL to breakeven · at 35% gain → trail at 12% below peak (ratchet)",
+    "Exit Priority: 1) Hard SL hit  2) Opposite VWAP cross  3) Trail SL hit  4) 3:00 PM hard close",
   ],
 };
 
@@ -162,13 +160,13 @@ const RULES: Record<string, string[]> = {
 //          fontSize = available / (N_lines × lineHeight_2.0)
 // vwap_scalper subtracts 15px for its 3 empty-line spacers before dividing.
 const RULES_FONT: Record<string, number> = {
-  ema_crossover:  25,  // 31 × 0.8 = 24.8 → 25
-  orion:          25,  // 31 × 0.8
-  ema_confluence: 20,  // 25 × 0.8
-  supertrend:     25,  // 31 × 0.8
-  pcr_reversal:   27,  // 34 × 0.8 = 27.2 → 27
-  gap_orb:        25,  // 31 × 0.8
-  vwap_scalper:   18,  // 23 × 0.8 = 18.4 → 18
+  ema_crossover:  27,  // 9 lines → 610/(9×2) × 0.8 = 27
+  orion:          27,  // 9 lines → 27
+  ema_confluence: 19,  // 13 lines (5 indented) → 610/(13×2) × 0.8 = 19
+  supertrend:     27,  // 9 lines → 27
+  pcr_reversal:   30,  // 8 lines → 610/(8×2) × 0.8 = 30
+  gap_orb:        24,  // 10 lines → 610/(10×2) × 0.8 = 24
+  vwap_scalper:   16,  // 17 lines (3 empty) → (610-45)/(14×2) × 0.8 = 16
 };
 
 const STRATEGY_CHARTS: Record<string, Array<{ index: string; interval: string }>> = {
