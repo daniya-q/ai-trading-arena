@@ -2331,7 +2331,7 @@ async function closeBtcPosition(posId, exitPriceUsd, reason) {
         }).eq("id", posId);
         delete btcPeakPrices[posId];
         delete btcSlDists[posId];
-        await updateBtcCapital(p.strategy_id, totalPnlInr);
+        await updateBtcCapital(p.strategy_id);
         if (p.partial_booked) {
             const bookedPct = ((p.partial_qty_inr ?? 0) / p.qty_inr * 100).toFixed(0);
             const remPct = (remainingQty / p.qty_inr * 100).toFixed(0);
@@ -2346,24 +2346,44 @@ async function closeBtcPosition(posId, exitPriceUsd, reason) {
         console.error(`[BTC] closeBtcPosition failed:`, err);
     }
 }
-async function updateBtcCapital(strategyId, pnlInr) {
+async function updateBtcCapital(strategyId) {
     try {
         const { data } = await supabase
-            .from("btc_strategy_capital")
-            .select("total_pnl_inr, total_trades, winning_trades")
-            .eq("strategy_id", strategyId)
-            .single();
-        const cap = data;
+            .from("btc_strategy_positions")
+            .select("pnl_inr, status")
+            .eq("strategy_id", strategyId);
+        const positions = (data ?? []);
+        const closed = positions.filter(p => p.status === "CLOSED");
+        const pnls = closed.map(p => p.pnl_inr ?? 0);
+        const totalPnl = pnls.reduce((s, v) => s + v, 0);
+        const wins = pnls.filter(v => v > 0).length;
+        let sharpe = 0;
+        if (pnls.length >= 2) {
+            const mean = totalPnl / pnls.length;
+            const std = Math.sqrt(pnls.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / pnls.length);
+            sharpe = std > 0 ? mean / std : 0;
+        }
         await supabase.from("btc_strategy_capital").update({
-            total_pnl_inr: (cap?.total_pnl_inr ?? 0) + pnlInr,
-            total_trades: (cap?.total_trades ?? 0) + 1,
-            winning_trades: (cap?.winning_trades ?? 0) + (pnlInr > 0 ? 1 : 0),
+            total_pnl_inr: Number(totalPnl.toFixed(2)),
+            total_trades: closed.length,
+            winning_trades: wins,
+            sharpe_ratio: Number(sharpe.toFixed(4)),
             updated_at: new Date().toISOString(),
         }).eq("strategy_id", strategyId);
     }
     catch (err) {
         console.error(`[BTC] updateBtcCapital failed:`, err);
     }
+}
+async function backfillBtcSharpe() {
+    const strategies = [
+        "btc_ema_crossover", "btc_orion", "btc_ema_confluence",
+        "btc_supertrend", "btc_vwap_scalper",
+    ];
+    for (const s of strategies) {
+        await updateBtcCapital(s);
+    }
+    console.log("[BTC] Sharpe backfill complete for all 5 BTC strategies");
 }
 // ── Monitor BTC positions — every 5s ──────────────────────────
 // Implements: partial profit booking + tiered trailing stop loss.
@@ -3577,3 +3597,5 @@ connectBinanceWS();
 runBtcStrategies();
 setInterval(runBtcStrategies, 30000);
 setInterval(monitorBtcPositions, 5000);
+// One-time Sharpe backfill for all BTC strategies on startup
+backfillBtcSharpe().catch(console.error);
