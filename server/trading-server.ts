@@ -1851,79 +1851,56 @@ async function pollLTP(): Promise<void> {
 }
 
 // ══════════════════════════════════════════════════════════════
-// Real-time option LTP refresh for open equity positions — every 5s
-// Fetches live premiums from Upstox LTP endpoint and updates DB
+// Real-time option price refresh for open equity positions — every 5s
+// Reads from optionPriceCache (populated by fetchFullOptionChain).
+// For non-current expiries, fetches their chain on-demand every 60s.
+// No extra LTP API call — avoids Upstox rate limits.
 // ══════════════════════════════════════════════════════════════
+
+// Tracks last chain fetch time per `${index}|${expiry}` for open-position expiries
+const lastChainFetchForExpiry = new Map<string, number>();
 
 async function pollOpenEquityOptionLTPs(): Promise<void> {
   if (!isMarketOpen() || openEquityPositions.length === 0) return;
-  const token = upstoxToken();
-  if (!token) return;
 
-  // Detect cache misses and fetch the missing option chains on-demand
-  const missingChains = new Map<string, string>(); // `${index}|${expiry}` → index
+  // Phase 1: Ensure optionPriceCache has fresh data for every open position's expiry.
+  // pollOptionChain() handles current-expiry chains every 60s.
+  // Here we handle any expiry that has open positions but hasn't been refreshed recently.
+  const CHAIN_REFRESH_MS = 60_000;
+  const toFetch = new Map<string, string>(); // `${index}|${expiry}` → index
+
   for (const pos of openEquityPositions) {
-    if (!optionInstrKeyCache[pos.symbol]) {
-      const parsed = parseExpiryFromSymbol(pos.symbol);
-      if (parsed) {
-        const key = `${parsed.index}|${parsed.expiry}`;
-        if (!missingChains.has(key)) {
-          missingChains.set(key, parsed.index);
-          console.log(`[OptionLTP] Cache miss: "${pos.symbol}" — fetching chain ${parsed.index} expiry ${parsed.expiry}`);
-        }
-      } else {
+    const parsed = parseExpiryFromSymbol(pos.symbol);
+    if (!parsed) {
+      if (!optionPriceCache[pos.symbol]) {
         console.warn(`[OptionLTP] Cannot parse symbol: "${pos.symbol}"`);
       }
+      continue;
+    }
+    const key = `${parsed.index}|${parsed.expiry}`;
+    const lastFetch = lastChainFetchForExpiry.get(key) ?? 0;
+    if (Date.now() - lastFetch > CHAIN_REFRESH_MS) {
+      toFetch.set(key, parsed.index);
     }
   }
 
-  // Fetch any missing chains to populate optionInstrKeyCache
-  for (const [key] of missingChains) {
+  for (const [key] of toFetch) {
     const [index, expiry] = key.split("|");
+    console.log(`[OptionLTP] Fetching chain ${index} expiry ${expiry} for open positions`);
     await fetchFullOptionChain(index, expiry);
+    lastChainFetchForExpiry.set(key, Date.now());
   }
 
-  // Build instrument key list from (now-populated) cache
-  const instrKeys: string[] = [];
-  const keyToPos: Record<string, { id: string; symbol: string; entry_price: number; quantity: number }> = {};
+  // Phase 2: Write cached prices to DB for all open positions
   for (const pos of openEquityPositions) {
-    const instrKey = optionInstrKeyCache[pos.symbol];
-    if (instrKey) {
-      instrKeys.push(instrKey);
-      // Upstox returns keys with ":" instead of "|" in the response
-      keyToPos[instrKey.replace("|", ":")] = pos;
-    } else {
-      console.warn(`[OptionLTP] No instrKey for "${pos.symbol}" after chain fetch`);
+    const price = optionPriceCache[pos.symbol];
+    if (!price) {
+      console.warn(`[OptionLTP] No price cached for "${pos.symbol}"`);
+      continue;
     }
-  }
-  if (!instrKeys.length) {
-    console.warn(`[OptionLTP] No instrument keys available — skipping LTP poll`);
-    return;
-  }
-
-  try {
-    const keyParam = instrKeys.map(encodeURIComponent).join(",");
-    const res = await fetch(
-      `https://api.upstox.com/v2/market-quote/ltp?instrument_key=${keyParam}`,
-      { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } }
-    );
-    if (!res.ok) {
-      console.error(`[OptionLTP] HTTP ${res.status} ${res.statusText}`);
-      return;
-    }
-    const json = await res.json() as { data?: Record<string, { last_price?: number }> };
-
-    for (const [apiKey, val] of Object.entries(json.data ?? {})) {
-      const pos = keyToPos[apiKey];
-      if (!pos || !val?.last_price) continue;
-      const price = Number(val.last_price.toFixed(2));
-      optionPriceCache[pos.symbol] = price;
-      const pnl = Number(((price - pos.entry_price) * pos.quantity).toFixed(2));
-      console.log(`[OptionLTP] ${pos.symbol} | LTP: ₹${price} | Entry: ₹${pos.entry_price} | PnL: ₹${pnl}`);
-      void supabase.from("strategy_positions").update({ current_price: price, pnl }).eq("id", pos.id);
-    }
-  } catch (err) {
-    console.error("[OptionLTP] Fetch error:", err);
+    const pnl = Number(((price - pos.entry_price) * pos.quantity).toFixed(2));
+    console.log(`[OptionLTP] ${pos.symbol} | ₹${price} | Entry: ₹${pos.entry_price} | PnL: ₹${pnl}`);
+    void supabase.from("strategy_positions").update({ current_price: price, pnl }).eq("id", pos.id);
   }
 }
 
