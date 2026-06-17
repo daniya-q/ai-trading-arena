@@ -573,7 +573,16 @@ function OpenTradesPanel({
                     <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: pos.trail_sl ? "#f5d547" : "#374151" }}>
                       {pos.trail_sl
                         ? `₹${pos.trail_sl.toFixed(2)}`
-                        : ({ ema_crossover: "Activates +20%", ema_confluence: "Activates +20%", orion: "Activates +35%", supertrend: "Activates +35%", pcr_reversal: "Activates +35%", gap_orb: "Activates +35%", vwap_scalper: "Activates +35%" } as Record<string, string>)[pos.strategy_id] ?? "Inactive"}
+                        : (() => {
+                            const ACTIVATION: Record<string, number> = {
+                              ema_crossover: 0.20, ema_confluence: 0.20,
+                              orion: 0.20, supertrend: 0.35,
+                              pcr_reversal: 0.35, gap_orb: 0.35, vwap_scalper: 0.25,
+                            };
+                            const pct = ACTIVATION[pos.strategy_id] ?? 0.35;
+                            const price = pos.entry_price * (1 + pct);
+                            return `Activates +${(pct * 100).toFixed(0)}% (₹${price.toFixed(2)})`;
+                          })()}
                     </td>
                   </tr>
                 );
