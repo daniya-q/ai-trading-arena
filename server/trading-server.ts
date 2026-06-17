@@ -1851,95 +1851,66 @@ async function pollLTP(): Promise<void> {
 }
 
 // ══════════════════════════════════════════════════════════════
-// Targeted batched LTP poll for open equity positions — every 7s
+// Open equity position price updater — every 7s
 //
-// Phase 1: One-time chain fetch per expiry to populate optionInstrKeyCache.
-//   Only runs when an open position's instrKey is not yet cached.
-//   pollOptionChain() (60s) handles current-expiry chains separately.
+// The Upstox /market-quote/ltp endpoint returns HTTP 429 for option
+// instrument keys (subscription limit). Instead, we rely on the option
+// chain endpoint which already returns LTP for every strike.
 //
-// Phase 2: Single batched Upstox LTP call for all open position keys.
-//   1–5 positions = 1 API call vs 160+ strikes in a full chain fetch.
-//   Updates optionPriceCache so monitorOpenPositions() gets live prices.
+// Phase 1: For each open position's expiry, fetch its option chain if
+//   we haven't done so in the last 60s. This refreshes optionPriceCache
+//   with live premiums. pollOptionChain() handles current-expiry chains;
+//   this handles any non-current expiry that has an open position.
 //
-// Fallback: if LTP call fails (e.g. rate limit), writes chain-cached prices
-//   to DB so SL monitoring always has a usable price.
+// Phase 2: Write prices from optionPriceCache to DB (awaited, with error
+//   logging so silent failures are visible).
 // ══════════════════════════════════════════════════════════════
+
+// Tracks last chain-fetch time per `${index}|${expiry}` for open positions
+const lastChainFetchForExpiry = new Map<string, number>();
 
 async function pollOpenPositionLTPsBatched(): Promise<void> {
   if (!isMarketOpen() || openEquityPositions.length === 0) return;
 
-  // Phase 1: Fetch chain for any open position whose instrKey is not yet cached.
-  // Deduplicate by index|expiry so we make at most one chain fetch per expiry.
+  // Phase 1: Refresh option chain for every expiry that has open positions,
+  // at most once per 60s (deduplicated by index|expiry).
+  const CHAIN_REFRESH_MS = 60_000;
   const toFetch = new Map<string, string>(); // `${index}|${expiry}` → index
+
   for (const pos of openEquityPositions) {
-    if (optionInstrKeyCache[pos.symbol]) continue; // instrKey already known
     const parsed = parseExpiryFromSymbol(pos.symbol);
     if (!parsed) {
       console.warn(`[OptionLTP] Cannot parse symbol: "${pos.symbol}"`);
       continue;
     }
-    toFetch.set(`${parsed.index}|${parsed.expiry}`, parsed.index);
+    const key = `${parsed.index}|${parsed.expiry}`;
+    const lastFetch = lastChainFetchForExpiry.get(key) ?? 0;
+    if (Date.now() - lastFetch > CHAIN_REFRESH_MS) {
+      toFetch.set(key, parsed.index);
+    }
   }
+
   for (const [key] of toFetch) {
     const [index, expiry] = key.split("|");
-    console.log(`[OptionLTP] Fetching chain ${index} expiry ${expiry} to cache instrKeys`);
+    console.log(`[OptionLTP] Refreshing chain ${index} expiry ${expiry}`);
     await fetchFullOptionChain(index, expiry);
+    lastChainFetchForExpiry.set(key, Date.now());
   }
 
-  // Phase 2: Build a single batched LTP request (only open position keys — not full chain)
-  const token = upstoxToken();
-  if (!token) return;
-
-  const instrKeys: string[] = [];
-  const keyToPos: Record<string, { id: string; symbol: string; entry_price: number; quantity: number }> = {};
+  // Phase 2: Write live prices from optionPriceCache to DB
   for (const pos of openEquityPositions) {
-    const instrKey = optionInstrKeyCache[pos.symbol];
-    if (instrKey) {
-      instrKeys.push(instrKey);
-      keyToPos[instrKey.replace("|", ":")] = pos; // Upstox response uses ":" not "|"
+    const price = optionPriceCache[pos.symbol];
+    if (!price) {
+      console.warn(`[OptionLTP] No cached price for "${pos.symbol}"`);
+      continue;
     }
-  }
-
-  if (!instrKeys.length) {
-    console.warn(`[OptionLTP] No instrKeys available — skipping batched poll`);
-    return;
-  }
-
-  let ltpUpdated = false;
-  try {
-    const keyParam = instrKeys.map(encodeURIComponent).join(",");
-    const res = await fetch(
-      `https://api.upstox.com/v2/market-quote/ltp?instrument_key=${keyParam}`,
-      { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } }
-    );
-    if (res.ok) {
-      const json = await res.json() as { data?: Record<string, { last_price?: number }> };
-      for (const [apiKey, val] of Object.entries(json.data ?? {})) {
-        const pos = keyToPos[apiKey];
-        if (!pos || !val?.last_price) continue;
-        const price = Number(val.last_price.toFixed(2));
-        optionPriceCache[pos.symbol] = price;
-        const pnl = Number(((price - pos.entry_price) * pos.quantity).toFixed(2));
-        console.log(`[OptionLTP] ${pos.symbol} | LTP: ₹${price} | Entry: ₹${pos.entry_price} | PnL: ₹${pnl}`);
-        void supabase.from("strategy_positions").update({ current_price: price, pnl }).eq("id", pos.id);
-      }
-      ltpUpdated = true;
-    } else {
-      console.warn(`[OptionLTP] Batched LTP HTTP ${res.status} — falling back to chain cache`);
-    }
-  } catch (err) {
-    console.error("[OptionLTP] Batched LTP error:", err);
-  }
-
-  // Fallback: write chain-cached prices to DB if LTP call failed
-  if (!ltpUpdated) {
-    for (const pos of openEquityPositions) {
-      const price = optionPriceCache[pos.symbol];
-      if (!price) continue;
-      const pnl = Number(((price - pos.entry_price) * pos.quantity).toFixed(2));
-      console.log(`[OptionLTP] ${pos.symbol} | Cache: ₹${price} | PnL: ₹${pnl} (chain-cache fallback)`);
-      void supabase.from("strategy_positions").update({ current_price: price, pnl }).eq("id", pos.id);
-    }
+    const pnl = Number(((price - pos.entry_price) * pos.quantity).toFixed(2));
+    console.log(`[OptionLTP] ${pos.symbol} | ₹${price} | Entry: ₹${pos.entry_price} | PnL: ₹${pnl}`);
+    const { error } = await supabase
+      .from("strategy_positions")
+      .update({ current_price: price, pnl })
+      .eq("id", pos.id);
+    if (error) console.error(`[OptionLTP] DB write error for ${pos.symbol} (id=${pos.id}): ${error.message}`);
   }
 }
 
