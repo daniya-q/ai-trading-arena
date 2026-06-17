@@ -632,6 +632,30 @@ function formatExpiryDDMMM(dateStr: string): string {
   return `${String(d.getDate()).padStart(2,"0")}${months[d.getMonth()]}`;
 }
 
+// Parse "NIFTY 23JUN 23800 PE" → { index: "NIFTY", expiry: "2026-06-23" }
+function parseExpiryFromSymbol(symbol: string): { index: string; expiry: string } | null {
+  const parts = symbol.split(" ");
+  if (parts.length < 4) return null;
+  const index = parts[0];
+  const ddmmm = parts[1];
+  if (ddmmm.length < 5) return null;
+  const dd = parseInt(ddmmm.slice(0, 2), 10);
+  const mmm = ddmmm.slice(2).toUpperCase();
+  const MON: Record<string, number> = {
+    JAN:1,FEB:2,MAR:3,APR:4,MAY:5,JUN:6,JUL:7,AUG:8,SEP:9,OCT:10,NOV:11,DEC:12
+  };
+  const month = MON[mmm];
+  if (!month || isNaN(dd)) return null;
+  const now = getIST();
+  let year = now.getUTCFullYear();
+  // If expiry month is earlier than current IST month, it belongs to next year
+  if (month < now.getUTCMonth() + 1) year++;
+  return {
+    index,
+    expiry: `${year}-${String(month).padStart(2,"0")}-${String(dd).padStart(2,"0")}`,
+  };
+}
+
 function getLatestChain(index: string): FullOptionChain | null {
   const hist = optionChainHistory[index];
   if (!hist?.length) return null;
@@ -1836,7 +1860,30 @@ async function pollOpenEquityOptionLTPs(): Promise<void> {
   const token = upstoxToken();
   if (!token) return;
 
-  // Build instrument key list from cached option keys
+  // Detect cache misses and fetch the missing option chains on-demand
+  const missingChains = new Map<string, string>(); // `${index}|${expiry}` → index
+  for (const pos of openEquityPositions) {
+    if (!optionInstrKeyCache[pos.symbol]) {
+      const parsed = parseExpiryFromSymbol(pos.symbol);
+      if (parsed) {
+        const key = `${parsed.index}|${parsed.expiry}`;
+        if (!missingChains.has(key)) {
+          missingChains.set(key, parsed.index);
+          console.log(`[OptionLTP] Cache miss: "${pos.symbol}" — fetching chain ${parsed.index} expiry ${parsed.expiry}`);
+        }
+      } else {
+        console.warn(`[OptionLTP] Cannot parse symbol: "${pos.symbol}"`);
+      }
+    }
+  }
+
+  // Fetch any missing chains to populate optionInstrKeyCache
+  for (const [key] of missingChains) {
+    const [index, expiry] = key.split("|");
+    await fetchFullOptionChain(index, expiry);
+  }
+
+  // Build instrument key list from (now-populated) cache
   const instrKeys: string[] = [];
   const keyToPos: Record<string, { id: string; symbol: string; entry_price: number; quantity: number }> = {};
   for (const pos of openEquityPositions) {
@@ -1845,9 +1892,14 @@ async function pollOpenEquityOptionLTPs(): Promise<void> {
       instrKeys.push(instrKey);
       // Upstox returns keys with ":" instead of "|" in the response
       keyToPos[instrKey.replace("|", ":")] = pos;
+    } else {
+      console.warn(`[OptionLTP] No instrKey for "${pos.symbol}" after chain fetch`);
     }
   }
-  if (!instrKeys.length) return; // instrument keys not yet cached — wait for option chain poll
+  if (!instrKeys.length) {
+    console.warn(`[OptionLTP] No instrument keys available — skipping LTP poll`);
+    return;
+  }
 
   try {
     const keyParam = instrKeys.map(encodeURIComponent).join(",");
@@ -1855,7 +1907,10 @@ async function pollOpenEquityOptionLTPs(): Promise<void> {
       `https://api.upstox.com/v2/market-quote/ltp?instrument_key=${keyParam}`,
       { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } }
     );
-    if (!res.ok) return;
+    if (!res.ok) {
+      console.error(`[OptionLTP] HTTP ${res.status} ${res.statusText}`);
+      return;
+    }
     const json = await res.json() as { data?: Record<string, { last_price?: number }> };
 
     for (const [apiKey, val] of Object.entries(json.data ?? {})) {
@@ -1864,6 +1919,7 @@ async function pollOpenEquityOptionLTPs(): Promise<void> {
       const price = Number(val.last_price.toFixed(2));
       optionPriceCache[pos.symbol] = price;
       const pnl = Number(((price - pos.entry_price) * pos.quantity).toFixed(2));
+      console.log(`[OptionLTP] ${pos.symbol} | LTP: ₹${price} | Entry: ₹${pos.entry_price} | PnL: ₹${pnl}`);
       void supabase.from("strategy_positions").update({ current_price: price, pnl }).eq("id", pos.id);
     }
   } catch (err) {
