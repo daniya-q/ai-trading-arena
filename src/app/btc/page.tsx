@@ -348,7 +348,7 @@ function BtcOpenTradesPanel({
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1320 }}>
             <thead>
               <tr>
-                {["Strategy","Side","Entry USD","Qty (BTC)","Leverage","Entry Time","BTC Price","SL","Partial Booking","Tier","Trail SL","Live PnL"].map(h => (
+                {["Strategy","Side","Entry USD","Qty (BTC)","Leverage","Entry Time","BTC Price","Live PnL","SL","Partial Booking","Tier","Trail SL"].map(h => (
                   <th key={h} style={thStyle}>{h}</th>
                 ))}
               </tr>
@@ -475,11 +475,11 @@ function BtcOpenTradesPanel({
                     <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", color: "#f5d547", fontWeight: 600 }}>
                       {btcPrice > 0 ? `$${btcPrice.toLocaleString("en-US", { maximumFractionDigits: 2 })}` : "—"}
                     </td>
+                    <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", whiteSpace: "nowrap" }}>{pnlCell}</td>
                     <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: "#ef4444", whiteSpace: "nowrap" }}>{slCell}</td>
                     <td style={{ padding: "8px 10px", fontSize: 11, whiteSpace: "nowrap" }}>{partialCell}</td>
                     <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{tierCell}</td>
                     <td style={{ padding: "8px 10px", fontSize: 11, whiteSpace: "nowrap" }}>{trailCell}</td>
-                    <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", whiteSpace: "nowrap" }}>{pnlCell}</td>
                   </tr>
                 );
               })}
