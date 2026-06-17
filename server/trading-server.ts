@@ -3283,7 +3283,7 @@ function calcMetrics(trades: TradeRecord[], allocated: number): MetricsResult {
 
 function pearsonCorr(xs: number[], ys: number[]): number | null {
   const n = xs.length;
-  if (n < 2) return null;
+  if (n < 5) return null;
   const mx = xs.reduce((a, b) => a + b, 0) / n;
   const my = ys.reduce((a, b) => a + b, 0) / n;
   let cov = 0, vx = 0, vy = 0;

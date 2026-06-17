@@ -689,11 +689,15 @@ function StrategyCard({
   const livePnl   = liveCapital - allocated;
   const retPct    = (livePnl / allocated) * 100;
   const sharpe    = capital?.sharpe_ratio ?? 0;
-  const today     = capital?.today_trades ?? 0;
   const life      = capital?.lifetime_trades ?? 0;
 
-  // Today's KPIs — filter by opened_at IST date to match capital.today_trades server logic
+  // All today KPIs computed client-side from positions — avoids dependency on
+  // capital.today_trades which is in-memory on the server and resets on restart.
   const todayIST = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const todayAll = positions.filter(p =>
+    p.strategy_id === strategy.id &&
+    new Date(p.opened_at).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) === todayIST
+  ).length;
   const todayClosed = positions.filter(p =>
     p.strategy_id === strategy.id &&
     p.status === "CLOSED" &&
@@ -758,7 +762,7 @@ function StrategyCard({
           { label: "TOTAL PnL", value: pnlStr(livePnl),            color: pnlColor(livePnl), weight: 700 },
           { label: "RETURN",    value: fmtPct(retPct),             color: pnlColor(retPct),  weight: 600 },
           { label: "SHARPE",    value: sharpe.toFixed(2),          color: "#ffffff",         weight: 600 },
-          { label: "TODAY",     value: String(today),               color: "#ffffff",         weight: 600 },
+          { label: "TODAY",     value: String(todayAll),            color: "#ffffff",         weight: 600 },
           { label: "LIFETIME",  value: String(life),                color: "#ffffff",         weight: 600 },
         ].map((s, i) => (
           <div key={s.label} style={{
@@ -1206,7 +1210,7 @@ function CorrelationHeatmap() {
       </div>
       {(!matrix || data?.insufficient) ? (
         <div style={{ fontSize: 12, color: "#374151", textAlign: "center", padding: "24px 0" }}>
-          Insufficient data — needs at least 2 days of overlapping trade history
+          Insufficient data — needs at least 5 days of overlapping trade history
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
