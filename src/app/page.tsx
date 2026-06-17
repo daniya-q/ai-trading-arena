@@ -533,7 +533,7 @@ function OpenTradesPanel({
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
             <thead>
               <tr>
-                {["Strategy", "Symbol", "Type", "Entry ₹", "Qty", "Entry Time", "Current ₹", "Live PnL", "SL", "Target"].map(h => (
+                {["Strategy", "Symbol", "Type", "Entry ₹", "Qty", "Entry Time", "Current ₹", "Live PnL", "SL", "Target", "Trail SL"].map(h => (
                   <th key={h} style={thStyle}>{h}</th>
                 ))}
               </tr>
@@ -569,6 +569,11 @@ function OpenTradesPanel({
                         const pctLabel = tgtPct * 100 % 1 === 0 ? `+${(tgtPct * 100).toFixed(0)}%` : `+${(tgtPct * 100).toFixed(1)}%`;
                         return `₹${tgtPrice.toFixed(2)} (${pctLabel})`;
                       })()}
+                    </td>
+                    <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: pos.trail_sl ? "#f5d547" : "#374151" }}>
+                      {pos.trail_sl
+                        ? `₹${pos.trail_sl.toFixed(2)}`
+                        : ({ ema_crossover: "Activates +20%", ema_confluence: "Activates +20%", orion: "Activates +35%", supertrend: "Activates +35%", pcr_reversal: "Activates +35%", gap_orb: "Activates +35%", vwap_scalper: "Activates +35%" } as Record<string, string>)[pos.strategy_id] ?? "Inactive"}
                     </td>
                   </tr>
                 );
