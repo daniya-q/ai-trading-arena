@@ -1366,8 +1366,36 @@ async function runStrategy3(): Promise<void> {
     : `OI/Vol=insufficient (ticks=${lastCandle.ticks ?? 0} avg=${avgTicks.toFixed(0)} oiRising=${oiRisingOk})✗`;
 
   const allOk = rsiOk && vwapOk && inFibZone && volOk;
+
+  // Build signal row for logging (inserted whether blocked or traded)
+  const fibLow  = optType === "CE" ? fib["38.2"] : fib["50"];
+  const fibHigh = optType === "CE" ? fib["50"]   : fib["78.6"];
+  const s3SignalRow = {
+    strategy_id: "ema_confluence",
+    index: "NIFTY",
+    direction: bullCross ? "bullish" : "bearish",
+    ema16: Number(fastCurr.toFixed(2)),
+    ema64: Number(slowCurr.toFixed(2)),
+    rsi: Number(rsi.toFixed(2)),
+    price: Number(price.toFixed(2)),
+    vwap: Number(vwap.toFixed(2)),
+    fib_low: Number(fibLow.toFixed(2)),
+    fib_high: Number(fibHigh.toFixed(2)),
+    in_fib_zone: inFibZone,
+    volume_ok: volOk,
+    oi_rising: oiRisingOk,
+    rsi_pass: rsiOk,
+    vwap_pass: vwapOk,
+    all_filters_passed: allOk,
+    trade_taken: false,
+  };
+
   if (!allOk) {
     console.log(`[S3] ${optType === "CE" ? "BULL-CROSS↑" : "BEAR-CROSS↓"} BLOCKED: ${rsiTag} | ${vwapTag} | ${fibTag} | ${volTag}`);
+    supabase.from("strategy_signals").insert(s3SignalRow).then(({ error }) => {
+      if (error) console.error("[S3] Signal log failed:", error.message);
+      else console.log(`[S3] Signal logged — blocked (rsi=${rsiOk} vwap=${vwapOk} fib=${inFibZone} vol=${volOk})`);
+    });
     return;
   }
 
@@ -1397,6 +1425,10 @@ async function runStrategy3(): Promise<void> {
     trail_sl:     null,
     pnl:          0,
     status:       "OPEN",
+  });
+  supabase.from("strategy_signals").insert({ ...s3SignalRow, trade_taken: true }).then(({ error }) => {
+    if (error) console.error("[S3] Signal log (trade) failed:", error.message);
+    else console.log(`[S3] Signal logged — trade taken`);
   });
 }
 
