@@ -91,9 +91,8 @@ interface StrategyPosition {
 
 let lastNiftyPrice     = 0;
 let lastBankniftyPrice = 0;
-let lastSensexPrice    = 0;
-let lastGiftNiftyPrice = 0;
-let lastVix            = 0;
+let lastSensexPrice = 0;
+let lastVix         = 0;
 
 // BTC (unchanged)
 let btcPrice       = 0;
@@ -430,7 +429,7 @@ function upstoxToken(): string {
   return process.env.UPSTOX_ACCESS_TOKEN || process.env.UPSTOX_ANALYTICS_TOKEN || "";
 }
 
-type LTPKey = "NIFTY" | "BANKNIFTY" | "SENSEX" | "GIFT_NIFTY" | "VIX";
+type LTPKey = "NIFTY" | "BANKNIFTY" | "SENSEX" | "VIX";
 
 async function fetchIndexLTP(): Promise<Partial<Record<LTPKey, number>>> {
   const token = upstoxToken();
@@ -439,7 +438,6 @@ async function fetchIndexLTP(): Promise<Partial<Record<LTPKey, number>>> {
     "NSE_INDEX|Nifty 50",
     "NSE_INDEX|Nifty Bank",
     "BSE_INDEX|SENSEX",
-    "NSE_INDEX|GIFT Nifty",
     "NSE_INDEX|India VIX",
   ];
   const keys = rawKeys.map(encodeURIComponent).join(",");
@@ -454,7 +452,6 @@ async function fetchIndexLTP(): Promise<Partial<Record<LTPKey, number>>> {
       "NSE_INDEX:Nifty 50":    "NIFTY",
       "NSE_INDEX:Nifty Bank":  "BANKNIFTY",
       "BSE_INDEX:SENSEX":      "SENSEX",
-      "NSE_INDEX:GIFT Nifty":  "GIFT_NIFTY",
       "NSE_INDEX:India VIX":   "VIX",
     };
     const prices: Partial<Record<LTPKey, number>> = {};
@@ -1863,10 +1860,6 @@ async function pollLTP(): Promise<void> {
     if (prices.SENSEX) {
       lastSensexPrice = prices.SENSEX;
       processTick(prices.SENSEX, "SENSEX", ts);
-    }
-    if (prices.GIFT_NIFTY) {
-      lastGiftNiftyPrice = prices.GIFT_NIFTY;
-      if (!prevDayClose["GIFT_NIFTY"]) prevDayClose["GIFT_NIFTY"] = prices.GIFT_NIFTY;
     }
     if (prices.VIX) lastVix = prices.VIX;
 
@@ -3358,10 +3351,9 @@ app.get("/ping", (_req, res) => {
 // ── /api/indices — live index prices with change vs prev close ──
 app.get("/api/indices", (_req, res) => {
   const ltps: Record<string, number> = {
-    NIFTY:      lastNiftyPrice,
-    BANKNIFTY:  lastBankniftyPrice,
-    SENSEX:     lastSensexPrice,
-    GIFT_NIFTY: lastGiftNiftyPrice,
+    NIFTY:     lastNiftyPrice,
+    BANKNIFTY: lastBankniftyPrice,
+    SENSEX:    lastSensexPrice,
   };
   const result: Record<string, { ltp: number; change: number; changePct: number }> = {};
   for (const [idx, ltp] of Object.entries(ltps)) {

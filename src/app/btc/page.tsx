@@ -520,6 +520,11 @@ function BtcStrategyCard({
   const lifetimePnl = capital?.total_pnl_inr ?? 0;
   const lifeCount   = capital?.total_trades ?? 0;
   const avgPnlLife  = lifeCount > 0 ? lifetimePnl / lifeCount : null;
+  const btcSharpe   = capital?.sharpe_ratio ?? 0;
+  const todayAll    = positions.filter(p =>
+    p.strategy_id === strategy.id &&
+    new Date(p.opened_at).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) === todayIST
+  ).length;
 
   const [metrics, setMetrics] = useState<CardMetrics | null>(null);
   useEffect(() => {
@@ -583,12 +588,14 @@ function BtcStrategyCard({
       {/* Stats grid — row 1: Capital/PnL/Return, row 2: WinRate/Trades/Open */}
       <div className="grid-stats" style={{ borderTop: `1px solid ${accent}30` }}>
         {[
-          { label: "CAPITAL",   value: `₹${fmtINR(liveCapital)}`,  color: "#ffffff",        weight: 600 },
-          { label: "TOTAL PnL", value: pnlStr(livePnl),              color: pnlColor(livePnl), weight: 700 },
-          { label: "RETURN",    value: fmtPct(retPct),               color: pnlColor(retPct),  weight: 600 },
-          { label: "WIN RATE",  value: winRate(capital),             color: "#ffffff",         weight: 600 },
-          { label: "TRADES",    value: String(trades),               color: "#ffffff",         weight: 600 },
-          { label: "OPEN",      value: String(openPositions.length), color: openPositions.length > 0 ? "#f5d547" : "#4b5563", weight: 600 },
+          { label: "CAPITAL",   value: `₹${fmtINR(liveCapital)}`,                             color: "#ffffff",                                              weight: 600 },
+          { label: "TOTAL PnL", value: pnlStr(livePnl),                                       color: pnlColor(livePnl),                                     weight: 700 },
+          { label: "RETURN",    value: fmtPct(retPct),                                        color: pnlColor(retPct),                                      weight: 600 },
+          { label: "SHARPE",    value: btcSharpe.toFixed(2),                                  color: "#ffffff",                                             weight: 600 },
+          { label: "WIN RATE",  value: winRate(capital),                                      color: "#ffffff",                                             weight: 600 },
+          { label: "TODAY",     value: String(todayAll),                                      color: "#ffffff",                                             weight: 600 },
+          { label: "TRADES",    value: String(trades),                                        color: "#ffffff",                                             weight: 600 },
+          { label: "OPEN",      value: String(openPositions.length),                          color: openPositions.length > 0 ? "#f5d547" : "#4b5563",     weight: 600 },
         ].map((s, i) => (
           <div key={s.label} style={{
             padding: "12px 14px",
@@ -626,13 +633,13 @@ function BtcStrategyCard({
           </div>
         </div>
         <div style={{ padding: "10px 14px", borderRight: `1px solid ${accent}25` }}>
-          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>AVG TODAY</div>
+          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>AVG PNL/TRADE TODAY</div>
           <div style={{ fontSize: 13, fontWeight: 700, color: avgPnlToday != null ? pnlColor(avgPnlToday) : "#374151", fontFamily: "monospace" }}>
             {avgPnlToday != null ? pnlStr(avgPnlToday) : "—"}
           </div>
         </div>
         <div style={{ padding: "10px 14px" }}>
-          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>AVG OVERALL</div>
+          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>AVG PNL/TRADE LIFE</div>
           <div style={{ fontSize: 13, fontWeight: 700, color: avgPnlLife != null ? pnlColor(avgPnlLife) : "#374151", fontFamily: "monospace" }}>
             {avgPnlLife != null ? pnlStr(avgPnlLife) : "—"}
           </div>

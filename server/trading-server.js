@@ -72,7 +72,6 @@ const supabase = (0, supabase_js_1.createClient)(process.env.NEXT_PUBLIC_SUPABAS
 let lastNiftyPrice = 0;
 let lastBankniftyPrice = 0;
 let lastSensexPrice = 0;
-let lastGiftNiftyPrice = 0;
 let lastVix = 0;
 // BTC (unchanged)
 let btcPrice = 0;
@@ -384,7 +383,6 @@ async function fetchIndexLTP() {
         "NSE_INDEX|Nifty 50",
         "NSE_INDEX|Nifty Bank",
         "BSE_INDEX|SENSEX",
-        "NSE_INDEX|GIFT Nifty",
         "NSE_INDEX|India VIX",
     ];
     const keys = rawKeys.map(encodeURIComponent).join(",");
@@ -397,7 +395,6 @@ async function fetchIndexLTP() {
             "NSE_INDEX:Nifty 50": "NIFTY",
             "NSE_INDEX:Nifty Bank": "BANKNIFTY",
             "BSE_INDEX:SENSEX": "SENSEX",
-            "NSE_INDEX:GIFT Nifty": "GIFT_NIFTY",
             "NSE_INDEX:India VIX": "VIX",
         };
         const prices = {};
@@ -1749,11 +1746,6 @@ async function pollLTP() {
             lastSensexPrice = prices.SENSEX;
             processTick(prices.SENSEX, "SENSEX", ts);
         }
-        if (prices.GIFT_NIFTY) {
-            lastGiftNiftyPrice = prices.GIFT_NIFTY;
-            if (!prevDayClose["GIFT_NIFTY"])
-                prevDayClose["GIFT_NIFTY"] = prices.GIFT_NIFTY;
-        }
         if (prices.VIX)
             lastVix = prices.VIX;
         if (Object.keys(prices).length) {
@@ -3092,7 +3084,6 @@ app.get("/api/indices", (_req, res) => {
         NIFTY: lastNiftyPrice,
         BANKNIFTY: lastBankniftyPrice,
         SENSEX: lastSensexPrice,
-        GIFT_NIFTY: lastGiftNiftyPrice,
     };
     const result = {};
     for (const [idx, ltp] of Object.entries(ltps)) {

@@ -317,10 +317,9 @@ function useMarketOpen(): boolean {
 // ── TopBar ─────────────────────────────────────────────────────
 
 const INDEX_LABELS: Record<string, string> = {
-  NIFTY:      "NIFTY",
-  BANKNIFTY:  "BANK NIFTY",
-  SENSEX:     "SENSEX",
-  GIFT_NIFTY: "GIFT NIFTY",
+  NIFTY:     "NIFTY",
+  BANKNIFTY: "BANK NIFTY",
+  SENSEX:    "SENSEX",
 };
 
 function TopBar() {
@@ -384,7 +383,7 @@ function TopBar() {
 
       {/* Index prices */}
       <div className="top-bar-indices" style={{ display: "flex", gap: 28, flexWrap: "wrap", justifyContent: "center", flex: 1 }}>
-        {(["NIFTY", "BANKNIFTY", "SENSEX", "GIFT_NIFTY"] as const).map(idx => {
+        {(["NIFTY", "BANKNIFTY", "SENSEX"] as const).map(idx => {
           const q      = indices[idx];
           const ltp    = q?.ltp ?? 0;
           const change = q?.change ?? 0;
@@ -745,6 +744,8 @@ function StrategyCard({
   const avgPnlToday = todayCount > 0 ? todayPnl / todayCount : null;
   const lifetimePnl = capital?.total_pnl ?? 0;
   const avgPnlLife  = life > 0 ? lifetimePnl / life : null;
+  const openCount   = positions.filter(p => p.strategy_id === strategy.id && p.status === "OPEN").length;
+  const winRateStr  = life > 0 ? `${((capital?.win_rate ?? 0) * 100).toFixed(0)}%` : "—";
 
   const [metrics, setMetrics] = useState<CardMetrics | null>(null);
   useEffect(() => {
@@ -795,12 +796,14 @@ function StrategyCard({
       {/* Stats grid — row 1: Capital/PnL/Return, row 2: Sharpe/Today/Lifetime */}
       <div className="grid-stats" style={{ borderTop: `1px solid ${accent}30` }}>
         {[
-          { label: "CAPITAL",   value: `₹${fmtINR(liveCapital)}`, color: "#ffffff",        weight: 600 },
-          { label: "TOTAL PnL", value: pnlStr(livePnl),            color: pnlColor(livePnl), weight: 700 },
-          { label: "RETURN",    value: fmtPct(retPct),             color: pnlColor(retPct),  weight: 600 },
-          { label: "SHARPE",    value: sharpe.toFixed(2),          color: "#ffffff",         weight: 600 },
-          { label: "TODAY",     value: String(todayAll),            color: "#ffffff",         weight: 600 },
-          { label: "LIFETIME",  value: String(life),                color: "#ffffff",         weight: 600 },
+          { label: "CAPITAL",   value: `₹${fmtINR(liveCapital)}`,                             color: "#ffffff",                                    weight: 600 },
+          { label: "TOTAL PnL", value: pnlStr(livePnl),                                       color: pnlColor(livePnl),                               weight: 700 },
+          { label: "RETURN",    value: fmtPct(retPct),                                        color: pnlColor(retPct),                                weight: 600 },
+          { label: "SHARPE",    value: sharpe.toFixed(2),                                     color: "#ffffff",                                       weight: 600 },
+          { label: "WIN RATE",  value: winRateStr,                                            color: "#ffffff",                                       weight: 600 },
+          { label: "TODAY",     value: String(todayAll),                                      color: "#ffffff",                                       weight: 600 },
+          { label: "LIFETIME",  value: String(life),                                          color: "#ffffff",                                       weight: 600 },
+          { label: "OPEN",      value: String(openCount),                                     color: openCount > 0 ? "#f5d547" : "#4b5563",          weight: 600 },
         ].map((s, i) => (
           <div key={s.label} style={{
             padding: "12px 14px",
@@ -838,13 +841,13 @@ function StrategyCard({
           </div>
         </div>
         <div style={{ padding: "10px 14px", borderRight: `1px solid ${accent}25` }}>
-          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>AVG TODAY</div>
+          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>AVG PNL/TRADE TODAY</div>
           <div style={{ fontSize: 13, fontWeight: 700, color: avgPnlToday != null ? pnlColor(avgPnlToday) : "#374151", fontFamily: "monospace" }}>
             {avgPnlToday != null ? pnlStr(avgPnlToday) : "—"}
           </div>
         </div>
         <div style={{ padding: "10px 14px" }}>
-          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>AVG OVERALL</div>
+          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>AVG PNL/TRADE LIFE</div>
           <div style={{ fontSize: 13, fontWeight: 700, color: avgPnlLife != null ? pnlColor(avgPnlLife) : "#374151", fontFamily: "monospace" }}>
             {avgPnlLife != null ? pnlStr(avgPnlLife) : "—"}
           </div>
