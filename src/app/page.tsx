@@ -552,7 +552,7 @@ function OpenTradesPanel({
                     <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", color: "#f5d547", fontWeight: 600 }}>₹{(pos.current_price ?? 0).toFixed(2)}</td>
                     <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", fontWeight: 700, color: pnlColor(pos.pnl ?? 0) }}>{pnlStr(pos.pnl ?? 0)}</td>
                     <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: "#ef4444" }}>
-                      {pos.stop_loss ? `₹${pos.stop_loss.toFixed(2)}` : "—"}
+                      {pos.stop_loss ? `₹${pos.stop_loss.toFixed(1)}` : "—"}
                     </td>
                     <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: "#22c55e" }}>
                       {(() => {
@@ -565,14 +565,14 @@ function OpenTradesPanel({
                           const slPct = (pos.entry_price - pos.stop_loss) / pos.entry_price;
                           if (slPct > 0) tgtPct = slPct * 1.5;
                         }
-                        const tgtPrice = pos.entry_price * (1 + tgtPct);
+                        const tgtPrice = Math.ceil(pos.entry_price * (1 + tgtPct) * 10) / 10;
                         const pctLabel = tgtPct * 100 % 1 === 0 ? `+${(tgtPct * 100).toFixed(0)}%` : `+${(tgtPct * 100).toFixed(1)}%`;
-                        return `₹${tgtPrice.toFixed(2)} (${pctLabel})`;
+                        return `₹${tgtPrice.toFixed(1)} (${pctLabel})`;
                       })()}
                     </td>
                     <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: pos.trail_sl ? "#f5d547" : "#374151" }}>
                       {pos.trail_sl
-                        ? `₹${pos.trail_sl.toFixed(2)}`
+                        ? `₹${pos.trail_sl.toFixed(1)}`
                         : (() => {
                             const ACTIVATION: Record<string, number> = {
                               ema_crossover: 0.20, ema_confluence: 0.20,
@@ -580,8 +580,8 @@ function OpenTradesPanel({
                               pcr_reversal: 0.35, gap_orb: 0.35, vwap_scalper: 0.25,
                             };
                             const pct = ACTIVATION[pos.strategy_id] ?? 0.35;
-                            const price = pos.entry_price * (1 + pct);
-                            return `Activates +${(pct * 100).toFixed(0)}% (₹${price.toFixed(2)})`;
+                            const price = Math.ceil(pos.entry_price * (1 + pct) * 10) / 10;
+                            return `Activates +${(pct * 100).toFixed(0)}% (₹${price.toFixed(1)})`;
                           })()}
                     </td>
                   </tr>

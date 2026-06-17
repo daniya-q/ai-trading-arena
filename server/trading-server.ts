@@ -788,6 +788,11 @@ async function openStrategyPosition(
   }
 }
 
+// NSE option prices trade in 0.1 increments — always ceil to 1 decimal
+function roundUpToOneDecimal(value: number): number {
+  return Math.ceil(value * 10) / 10;
+}
+
 // Fixed profit target % per strategy (full position exits at target)
 const TARGET_PCT: Record<string, number> = {
   ema_crossover:  0.30,   // SL 15% → 1:2 RR
@@ -815,8 +820,8 @@ function generateExitDetail(
   switch (reason) {
     case "SL_HIT": {
       const pct = SL_PCT[pos.strategy_id] ?? 15;
-      const sl  = pos.stop_loss ?? Number((pos.entry_price * (1 - pct / 100)).toFixed(2));
-      return `Stop loss hit at ${timeStr}. Entry: ₹${pos.entry_price.toFixed(2)}. SL was set at ${pct}% below entry = ₹${sl.toFixed(2)}. Price dropped to ₹${exitPrice.toFixed(2)}.`;
+      const sl  = pos.stop_loss ?? roundUpToOneDecimal(pos.entry_price * (1 - pct / 100));
+      return `Stop loss hit at ${timeStr}. Entry: ₹${pos.entry_price.toFixed(2)}. SL was set at ${pct}% below entry = ₹${sl.toFixed(1)}. Price dropped to ₹${exitPrice.toFixed(2)}.`;
     }
     case "CROSSOVER": {
       if (pos.strategy_id === "supertrend") {
@@ -828,10 +833,10 @@ function generateExitDetail(
     }
     case "TRAIL_SL": {
       const tpct  = TRAIL_PCT[pos.strategy_id] ?? 10;
-      const peak  = peakPremium ?? (pos.trail_sl != null ? Number((pos.trail_sl / (1 - tpct / 100)).toFixed(2)) : null);
-      const trail = pos.trail_sl ?? (peak != null ? Number((peak * (1 - tpct / 100)).toFixed(2)) : null);
+      const peak  = peakPremium ?? (pos.trail_sl != null ? Number((pos.trail_sl / (1 - tpct / 100)).toFixed(1)) : null);
+      const trail = pos.trail_sl ?? (peak != null ? roundUpToOneDecimal(peak * (1 - tpct / 100)) : null);
       if (peak != null && trail != null) {
-        return `Trailing stop loss triggered at ${timeStr}. Premium peaked at ₹${peak.toFixed(2)}, trail SL was ${tpct}% below peak = ₹${trail.toFixed(2)}. Price dropped to ₹${exitPrice.toFixed(2)}.`;
+        return `Trailing stop loss triggered at ${timeStr}. Premium peaked at ₹${peak.toFixed(1)}, trail SL was ${tpct}% below peak = ₹${trail.toFixed(1)}. Price dropped to ₹${exitPrice.toFixed(2)}.`;
       }
       return `Trailing stop loss triggered at ${timeStr}. Price dropped to ₹${exitPrice.toFixed(2)}.`;
     }
@@ -845,8 +850,8 @@ function generateExitDetail(
     }
     case "TARGET_HIT": {
       const tgtPct = TARGET_PCT[pos.strategy_id] ?? 0.30;
-      const tgtPrice = Number((pos.entry_price * (1 + tgtPct)).toFixed(2));
-      return `Profit target hit at ${timeStr}. Premium gained ${(tgtPct * 100).toFixed(tgtPct % 0.01 === 0 ? 0 : 1)}% from entry ₹${pos.entry_price.toFixed(2)} → target ₹${tgtPrice.toFixed(2)}. Exit at ₹${exitPrice.toFixed(2)}. Full position closed.`;
+      const tgtPrice = roundUpToOneDecimal(pos.entry_price * (1 + tgtPct));
+      return `Profit target hit at ${timeStr}. Premium gained ${(tgtPct * 100).toFixed(tgtPct % 0.01 === 0 ? 0 : 1)}% from entry ₹${pos.entry_price.toFixed(2)} → target ₹${tgtPrice.toFixed(1)}. Exit at ₹${exitPrice.toFixed(2)}. Full position closed.`;
     }
     case "TARGET":
     case "GAP_FILL":
@@ -1012,7 +1017,7 @@ async function monitorOpenPositions(): Promise<void> {
     } else if (pos.strategy_id === "vwap_scalper") {
       // Tier 1: 25% gain → move SL to breakeven
       if (pnlPct >= 0.25 && pos.stop_loss && pos.stop_loss < pos.entry_price) {
-        await supabase.from("strategy_positions").update({ stop_loss: pos.entry_price }).eq("id", pos.id);
+        await supabase.from("strategy_positions").update({ stop_loss: roundUpToOneDecimal(pos.entry_price) }).eq("id", pos.id);
       }
       trailActivationPct = 0.35;
       trailPct           = 0.12;
@@ -1021,8 +1026,8 @@ async function monitorOpenPositions(): Promise<void> {
     if (pnlPct >= trailActivationPct) {
       const newTrail = peak * (1 - trailPct);
       if (!pos.trail_sl || newTrail > pos.trail_sl) {
-        await supabase.from("strategy_positions").update({ trail_sl: Number(newTrail.toFixed(2)) }).eq("id", pos.id);
-        pos.trail_sl = newTrail;
+        await supabase.from("strategy_positions").update({ trail_sl: roundUpToOneDecimal(newTrail) }).eq("id", pos.id);
+        pos.trail_sl = roundUpToOneDecimal(newTrail);
       }
     }
 
@@ -1034,7 +1039,7 @@ async function monitorOpenPositions(): Promise<void> {
 
     // ── Orion breakeven: up 20% → move SL to breakeven ──
     if (pos.strategy_id === "orion" && pnlPct >= 0.20 && pos.stop_loss && pos.stop_loss < pos.entry_price) {
-      await supabase.from("strategy_positions").update({ stop_loss: pos.entry_price }).eq("id", pos.id);
+      await supabase.from("strategy_positions").update({ stop_loss: roundUpToOneDecimal(pos.entry_price) }).eq("id", pos.id);
     }
 
     // ── Priority 5: Hard close time ──
@@ -1130,7 +1135,7 @@ async function runStrategy1(): Promise<void> {
     entry_price:  option.premium,
     current_price: option.premium,
     quantity:     s1Quantity,
-    stop_loss:    Number((option.premium * 0.85).toFixed(2)),
+    stop_loss:    roundUpToOneDecimal(option.premium * 0.85),
     trail_sl:     null,
     pnl:          0,
     status:       "OPEN",
@@ -1259,7 +1264,7 @@ async function runOrionForIndex(index: string, mins: number): Promise<void> {
     entry_price:  option.premium,
     current_price: option.premium,
     quantity:     s2Quantity,
-    stop_loss:    Number((option.premium * 0.70).toFixed(2)), // 30% SL
+    stop_loss:    roundUpToOneDecimal(option.premium * 0.70), // 30% SL
     trail_sl:     null,
     pnl:          0,
     status:       "OPEN",
@@ -1391,7 +1396,7 @@ async function runStrategy3(): Promise<void> {
     entry_price:  option.premium,
     current_price: option.premium,
     quantity:     s3Quantity,
-    stop_loss:    Number((option.premium * 0.85).toFixed(2)),
+    stop_loss:    roundUpToOneDecimal(option.premium * 0.85),
     trail_sl:     null,
     pnl:          0,
     status:       "OPEN",
@@ -1474,7 +1479,7 @@ async function runSupertrendForIndex(index: "NIFTY" | "BANKNIFTY"): Promise<void
     entry_price:  option.premium,
     current_price: option.premium,
     quantity:     s4Quantity,
-    stop_loss:    Number((option.premium * 0.80).toFixed(2)),
+    stop_loss:    roundUpToOneDecimal(option.premium * 0.80),
     trail_sl:     null,
     pnl:          0,
     status:       "OPEN",
@@ -1543,7 +1548,7 @@ async function runStrategy5(): Promise<void> {
     entry_price:  option.premium,
     current_price: option.premium,
     quantity:     s5Quantity,
-    stop_loss:    Number((option.premium * 0.75).toFixed(2)), // 25% SL
+    stop_loss:    roundUpToOneDecimal(option.premium * 0.75), // 25% SL
     trail_sl:     null,
     pnl:          0,
     status:       "OPEN",
@@ -1667,7 +1672,7 @@ async function runStrategy6(): Promise<void> {
     entry_price:  option.premium,
     current_price: option.premium,
     quantity:     s6Quantity,
-    stop_loss:    Number((option.premium * 0.80).toFixed(2)), // 20% SL
+    stop_loss:    roundUpToOneDecimal(option.premium * 0.80), // 20% SL
     trail_sl:     null,
     pnl:          0,
     status:       "OPEN",
@@ -1773,7 +1778,7 @@ async function runVwapScalperForIndex(index: "NIFTY" | "BANKNIFTY" | "SENSEX"): 
   if (s7BaseQty === 0) { console.log(`[S7:${index}] SIGNAL ${type} — lot calc=0, skipping (capital=₹${Math.round(s7Capital).toLocaleString("en-IN")} premium=₹${option.premium})`); return; }
   const qty        = danger ? Math.max(lotSize, Math.floor(s7BaseQty / 2 / lotSize) * lotSize) : s7BaseQty;
 
-  const sl = Number((option.premium * (1 - slPct)).toFixed(2));
+  const sl = roundUpToOneDecimal(option.premium * (1 - slPct));
 
   const entryNote = `VWAP ${type === "CE" ? "bounce above" : "reject below"} | RSI=${rsi.toFixed(0)} | ATR=${atr.toFixed(0)}${danger ? " | EXPIRY DANGER" : ""}`;
   console.log(`[S7:${index}] SIGNAL ${type} — premium ₹${option.premium} | capital=₹${Math.round(s7Capital).toLocaleString("en-IN")} qty=${qty}${danger ? " [EXPIRY DANGER half-size]" : ""} | SL=${sl}`);
@@ -1826,7 +1831,7 @@ async function monitorVwapPositions(): Promise<void> {
     // Expiry danger window: tighten trail SL to 5% below current price
     const expiryDay = await isExpiryDay(index);
     if (expiryDay && isDangerWindow()) {
-      const tightSL = Number((cp * 0.95).toFixed(2));
+      const tightSL = roundUpToOneDecimal(cp * 0.95);
       if (!pos.trail_sl || tightSL > pos.trail_sl) {
         await supabase.from("strategy_positions").update({ trail_sl: tightSL }).eq("id", pos.id);
       }
