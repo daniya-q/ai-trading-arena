@@ -692,17 +692,18 @@ function StrategyCard({
   const today     = capital?.today_trades ?? 0;
   const life      = capital?.lifetime_trades ?? 0;
 
-  // Today's KPIs (computed from passed positions)
+  // Today's KPIs — filter by opened_at IST date to match capital.today_trades server logic
   const todayIST = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-  const todayClosed = positions.filter(
-    p => p.strategy_id === strategy.id && p.status === "CLOSED" &&
-         p.closed_at?.startsWith(todayIST)
+  const todayClosed = positions.filter(p =>
+    p.strategy_id === strategy.id &&
+    p.status === "CLOSED" &&
+    new Date(p.opened_at).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) === todayIST
   );
-  const todayPnl     = todayClosed.reduce((s, p) => s + (p.pnl ?? 0), 0);
-  const todayCount   = todayClosed.length;
-  const avgPnlToday  = todayCount > 0 ? todayPnl / todayCount : null;
-  const lifetimePnl  = capital?.total_pnl ?? 0;
-  const avgPnlLife   = life > 0 ? lifetimePnl / life : null;
+  const todayPnl    = todayClosed.reduce((s, p) => s + (p.pnl ?? 0), 0);
+  const todayCount  = todayClosed.length;
+  const avgPnlToday = todayCount > 0 ? todayPnl / todayCount : null;
+  const lifetimePnl = capital?.total_pnl ?? 0;
+  const avgPnlLife  = life > 0 ? lifetimePnl / life : null;
 
   const [metrics, setMetrics] = useState<CardMetrics | null>(null);
   useEffect(() => {
