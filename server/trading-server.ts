@@ -788,6 +788,17 @@ async function openStrategyPosition(
   }
 }
 
+// Fixed profit target % per strategy (full position exits at target)
+const TARGET_PCT: Record<string, number> = {
+  ema_crossover:  0.30,   // SL 15% → 1:2 RR
+  orion:          0.45,   // SL 30% → 1:1.5 RR
+  ema_confluence: 0.30,   // SL 15% → 1:2 RR
+  supertrend:     0.40,   // SL 20% → 1:2 RR
+  pcr_reversal:   0.375,  // SL 25% → 1:1.5 RR
+  gap_orb:        0.40,   // SL 20% → 1:2 RR (gap fill is primary exit; 40% is fallback)
+  vwap_scalper:   0.30,   // SL 20% → 1:1.5 RR (danger: SL 10% → target 15%, computed from SL)
+};
+
 function generateExitDetail(
   reason: string,
   pos: { entry_price: number; stop_loss: number | null; trail_sl: number | null; strategy_id: string; type: string },
@@ -831,6 +842,11 @@ function generateExitDetail(
     case "OI_REVERSE": {
       const opposite = pos.type === "CE" ? "PE" : "CE";
       return `${opposite} OI buildup detected at ${timeStr}. Opposite side strengthening — position closed to avoid reversal.`;
+    }
+    case "TARGET_HIT": {
+      const tgtPct = TARGET_PCT[pos.strategy_id] ?? 0.30;
+      const tgtPrice = Number((pos.entry_price * (1 + tgtPct)).toFixed(2));
+      return `Profit target hit at ${timeStr}. Premium gained ${(tgtPct * 100).toFixed(tgtPct % 0.01 === 0 ? 0 : 1)}% from entry ₹${pos.entry_price.toFixed(2)} → target ₹${tgtPrice.toFixed(2)}. Exit at ₹${exitPrice.toFixed(2)}. Full position closed.`;
     }
     case "TARGET":
     case "GAP_FILL":
@@ -964,25 +980,31 @@ async function monitorOpenPositions(): Promise<void> {
       pnl:           Number(pnl.toFixed(2)),
     }).eq("id", pos.id);
 
-    // ── Hard close ──
-    const hc = HARD_CLOSE_MINS[pos.strategy_id];
-    if (hc && currentMins >= hc) {
-      await closeStrategyPosition(pos.id, currentPrice, "HARD_CLOSE");
+    const pnlPct = (currentPrice - pos.entry_price) / pos.entry_price;
+
+    // ── Priority 1: Hard SL hit ──
+    if (pos.stop_loss && currentPrice <= pos.stop_loss) {
+      await closeStrategyPosition(pos.id, currentPrice, "SL_HIT");
+      continue;
+    }
+
+    // ── Priority 2: Fixed profit target hit ──
+    // For vwap_scalper, derive target from stored SL (1:1.5 RR) to handle danger-mode trades
+    let targetPct = TARGET_PCT[pos.strategy_id] ?? 0.30;
+    if (pos.strategy_id === "vwap_scalper" && pos.stop_loss) {
+      const slPct = (pos.entry_price - pos.stop_loss) / pos.entry_price;
+      if (slPct > 0) targetPct = slPct * 1.5;
+    }
+    if (pnlPct >= targetPct) {
+      await closeStrategyPosition(pos.id, currentPrice, "TARGET_HIT");
       continue;
     }
 
     // ── Trail SL activation ──
-    // Strategy 1 & 3: 1.5×ATR move in direction → trail at 10% below peak
-    // Strategy 2: up 35% → trail at 15% below peak
-    // Strategy 4: up 40% → trail at 12% below peak
-    // Strategy 5: up 30% → trail at 12% below peak
-    // Strategy 6 (breakout): up 35% → trail at 12% below peak
-    const pnlPct = (currentPrice - pos.entry_price) / pos.entry_price;
-
     let trailActivationPct = 0.35;
     let trailPct           = 0.12;
     if (pos.strategy_id === "ema_crossover" || pos.strategy_id === "ema_confluence") {
-      trailActivationPct = 0.20; // approximate 1.5×ATR as 20% move
+      trailActivationPct = 0.20;
       trailPct           = 0.10;
     } else if (pos.strategy_id === "orion") {
       trailActivationPct = 0.35;
@@ -1000,25 +1022,26 @@ async function monitorOpenPositions(): Promise<void> {
       const newTrail = peak * (1 - trailPct);
       if (!pos.trail_sl || newTrail > pos.trail_sl) {
         await supabase.from("strategy_positions").update({ trail_sl: Number(newTrail.toFixed(2)) }).eq("id", pos.id);
-        pos.trail_sl = newTrail; // update local copy
+        pos.trail_sl = newTrail;
       }
     }
 
-    // ── SL hit ──
-    if (pos.stop_loss && currentPrice <= pos.stop_loss) {
-      await closeStrategyPosition(pos.id, currentPrice, "SL_HIT");
-      continue;
-    }
-
-    // ── Trail SL hit ──
+    // ── Priority 3: Trail SL hit ──
     if (pos.trail_sl && currentPrice <= pos.trail_sl) {
       await closeStrategyPosition(pos.id, currentPrice, "TRAIL_SL");
       continue;
     }
 
-    // ── Strategy 2 Orion breakeven: up 20% → move SL to breakeven ──
+    // ── Orion breakeven: up 20% → move SL to breakeven ──
     if (pos.strategy_id === "orion" && pnlPct >= 0.20 && pos.stop_loss && pos.stop_loss < pos.entry_price) {
       await supabase.from("strategy_positions").update({ stop_loss: pos.entry_price }).eq("id", pos.id);
+    }
+
+    // ── Priority 5: Hard close time ──
+    const hc = HARD_CLOSE_MINS[pos.strategy_id];
+    if (hc && currentMins >= hc) {
+      await closeStrategyPosition(pos.id, currentPrice, "HARD_CLOSE");
+      continue;
     }
   }
 }

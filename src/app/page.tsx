@@ -80,8 +80,9 @@ const RULES: Record<string, string[]> = {
     "Entry CE: 16 EMA crosses above 64 EMA → buy CE (₹60–70 premium range)",
     "Entry PE: 16 EMA crosses below 64 EMA → buy PE (₹60–70 premium range)",
     "Stop loss: 15% of premium paid (e.g. entry ₹65 → SL ₹55.25)",
+    "Target: 30% of premium (1:2 RR) — full exit on hit",
     "Trail SL: activates when Nifty moves 1.5× ATR in trade direction → trail at 10% below peak premium",
-    "Exit: SL hit | opposite crossover triggers flip | trail SL hit | 3:00 PM hard close",
+    "Exit: SL hit | target hit | opposite crossover triggers flip | trail SL hit | 3:00 PM hard close",
     "Fibonacci 50–61.8% zone used as advisory entry confluence",
     "Max 1 open trade at a time",
   ],
@@ -92,6 +93,7 @@ const RULES: Record<string, string[]> = {
     "Entry PE: price breaks + closes below ORB Low AND below VWAP AND PE OI rising (short buildup)",
     "VIX filter: skip all trades for the day if India VIX < 13",
     "Stop loss: 30% of premium paid",
+    "Target: 45% of premium (1:1.5 RR) — full exit on hit",
     "Breakeven rule: when trade up 20%, move SL to entry price",
     "Trail SL: activates at 35% gain → trail at 15% below peak premium",
     "Hard close: 2:00 PM",
@@ -108,6 +110,7 @@ const RULES: Record<string, string[]> = {
     "  4. Volume — crossover candle volume must exceed 20-candle average",
     "  5. Fibonacci — price must be near 50–61.8% retracement zone",
     "Stop loss: 15% of premium paid",
+    "Target: 30% of premium (1:2 RR) — full exit on hit",
     "Trail SL: 1.5× ATR move in direction → trail at 10% below peak premium",
     "Hard close: 3:00 PM · Max 1 open trade at a time",
   ],
@@ -118,8 +121,9 @@ const RULES: Record<string, string[]> = {
     "Entry CE: Supertrend flips green → price crosses above Supertrend line (bullish flip)",
     "Entry PE: Supertrend flips red → price crosses below Supertrend line (bearish flip)",
     "Stop loss: 20% of premium paid",
+    "Target: 40% of premium (1:2 RR) — full exit on hit",
     "Trail SL: activates at 40% gain → trail at 12% below peak premium",
-    "Exit: SL hit | Supertrend flips opposite (close + open opposite) | trail SL | 3:00 PM hard close",
+    "Exit: SL hit | target hit | Supertrend flips opposite (close + open opposite) | trail SL | 3:00 PM hard close",
     "Trading window: 9:45 AM – 2:30 PM",
     "Max 2 trades per instrument per day",
   ],
@@ -129,8 +133,9 @@ const RULES: Record<string, string[]> = {
     "Entry CE: PCR > 1.3 (market oversold) AND PE OI at ATM fell 10%+ in last 30 min (unwinding)",
     "Entry PE: PCR < 0.7 (market overbought) AND CE OI at ATM fell 10%+ in last 30 min (unwinding)",
     "Stop loss: 25% of premium paid",
+    "Target: 37.5% of premium (1:1.5 RR) — full exit on hit",
     "Trail SL: activates at 30% gain → trail at 12% below peak premium",
-    "Exit: SL hit | PCR returns to neutral 0.9–1.1 | OI builds on opposite side | trail SL | 3:00 PM",
+    "Exit: SL hit | target hit | PCR returns to neutral 0.9–1.1 | OI builds on opposite side | trail SL | 3:00 PM",
     "Trading window: 10:00 AM – 2:30 PM",
     "Max 3 trades per day",
   ],
@@ -140,7 +145,8 @@ const RULES: Record<string, string[]> = {
     "Gap > 0.3% up → FADE: buy PE (expect price to reverse and fill the gap)",
     "Gap > 0.3% down → FADE: buy CE (expect price to reverse and fill the gap)",
     "Gap < 0.3% → ORB BREAKOUT: trade direction of 9:15–9:30 AM range break",
-    "Fade target: price returns to previous day's close level (gap filled)",
+    "Fade target: price returns to previous day's close level (gap filled) — primary exit",
+    "Breakout target: 40% of premium (1:2 RR) — full exit on hit (fallback if gap fill doesn't apply)",
     "Stop loss: 20% of premium paid",
     "Breakout trail SL: 35% gain → trail at 12% below peak premium",
     "Morning only: no new trades after 11:30 AM",
@@ -170,11 +176,14 @@ const RULES: Record<string, string[]> = {
     "  · Open positions: trail SL tightened to 5% below current price",
     "",
     "Normal day rules:",
-    "  · SL: 20% of premium | Max 1 position per index at a time",
+    "  · SL: 20% of premium | Target: 30% of premium (1:1.5 RR) | Max 1 position per index at a time",
     "  · Trail SL: at +25% premium → move SL to breakeven",
     "  · At +35% → trail at 12% below peak premium",
     "",
-    "Exit priority: SL hit → Trail SL hit → 3:00 PM hard close → Opposite VWAP cross",
+    "Expiry danger rules:",
+    "  · SL: 10% of premium | Target: 15% of premium (1:1.5 RR) | Position size halved",
+    "",
+    "Exit priority: SL hit → Target hit → Trail SL hit → 3:00 PM hard close → Opposite VWAP cross",
   ],
 };
 
@@ -545,10 +554,21 @@ function OpenTradesPanel({
                     <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: "#ef4444" }}>
                       {pos.stop_loss ? `₹${pos.stop_loss.toFixed(2)}` : "—"}
                     </td>
-                    <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: pos.trail_sl ? "#f5d547" : "#374151" }}>
-                      {pos.trail_sl
-                        ? `₹${pos.trail_sl.toFixed(2)} Trailing`
-                        : ({ ema_crossover: "Activates +20%", ema_confluence: "Activates +20%", orion: "Activates +35%", supertrend: "Activates +35%", pcr_reversal: "Activates +35%", gap_orb: "Activates +35%", vwap_scalper: "Activates +35%" } as Record<string, string>)[pos.strategy_id] ?? "Activates +35%"}
+                    <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: "#22c55e" }}>
+                      {(() => {
+                        const TGT: Record<string, number> = {
+                          ema_crossover: 0.30, orion: 0.45, ema_confluence: 0.30,
+                          supertrend: 0.40, pcr_reversal: 0.375, gap_orb: 0.40, vwap_scalper: 0.30,
+                        };
+                        let tgtPct = TGT[pos.strategy_id] ?? 0.30;
+                        if (pos.strategy_id === "vwap_scalper" && pos.stop_loss) {
+                          const slPct = (pos.entry_price - pos.stop_loss) / pos.entry_price;
+                          if (slPct > 0) tgtPct = slPct * 1.5;
+                        }
+                        const tgtPrice = pos.entry_price * (1 + tgtPct);
+                        const pctLabel = tgtPct * 100 % 1 === 0 ? `+${(tgtPct * 100).toFixed(0)}%` : `+${(tgtPct * 100).toFixed(1)}%`;
+                        return `₹${tgtPrice.toFixed(2)} (${pctLabel})`;
+                      })()}
                     </td>
                   </tr>
                 );

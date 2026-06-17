@@ -94,7 +94,7 @@ const optionPriceCache = {};
 // Key: option symbol → Upstox instrument_key (e.g. "NSE_FO|12345")
 const optionInstrKeyCache = {};
 // Open equity positions snapshot — updated by monitorOpenPositions every 30s
-// Used by pollOpenEquityOptionLTPs to avoid per-second DB queries
+// Used by pollOpenPositionLTPsBatched to avoid per-second DB queries
 let openEquityPositions = [];
 // Peak premiums for open positions (in-memory, intraday only)
 const peakPremiums = {}; // posId → peak premium
@@ -544,7 +544,7 @@ async function fetchFullOptionChain(index, expiry) {
             if (row.pePremium > 0)
                 optionPriceCache[`${index} ${expiryFmt} ${row.strike} PE`] = row.pePremium;
         }
-        // Cache Upstox instrument keys for real-time LTP polling (used by pollOpenEquityOptionLTPs)
+        // Cache Upstox instrument keys for real-time LTP polling (used by pollOpenPositionLTPsBatched)
         for (const rawRow of chain) {
             const prefix = `${index} ${expiryFmt} ${rawRow.strike_price}`;
             const ceKey = rawRow.call_options?.instrument_key;
@@ -566,6 +566,33 @@ function formatExpiryDDMMM(dateStr) {
     const d = new Date(dateStr);
     const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
     return `${String(d.getDate()).padStart(2, "0")}${months[d.getMonth()]}`;
+}
+// Parse "NIFTY 23JUN 23800 PE" → { index: "NIFTY", expiry: "2026-06-23" }
+function parseExpiryFromSymbol(symbol) {
+    const parts = symbol.split(" ");
+    if (parts.length < 4)
+        return null;
+    const index = parts[0];
+    const ddmmm = parts[1];
+    if (ddmmm.length < 5)
+        return null;
+    const dd = parseInt(ddmmm.slice(0, 2), 10);
+    const mmm = ddmmm.slice(2).toUpperCase();
+    const MON = {
+        JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12
+    };
+    const month = MON[mmm];
+    if (!month || isNaN(dd))
+        return null;
+    const now = getIST();
+    let year = now.getUTCFullYear();
+    // If expiry month is earlier than current IST month, it belongs to next year
+    if (month < now.getUTCMonth() + 1)
+        year++;
+    return {
+        index,
+        expiry: `${year}-${String(month).padStart(2, "0")}-${String(dd).padStart(2, "0")}`,
+    };
 }
 function getLatestChain(index) {
     const hist = optionChainHistory[index];
@@ -688,6 +715,16 @@ async function openStrategyPosition(strategyId, pos) {
         console.log(`[${strategyId}] OPENED ${pos.type} ${pos.symbol} @ ₹${pos.entry_price} | SL: ₹${pos.stop_loss}`);
     }
 }
+// Fixed profit target % per strategy (full position exits at target)
+const TARGET_PCT = {
+    ema_crossover: 0.30, // SL 15% → 1:2 RR
+    orion: 0.45, // SL 30% → 1:1.5 RR
+    ema_confluence: 0.30, // SL 15% → 1:2 RR
+    supertrend: 0.40, // SL 20% → 1:2 RR
+    pcr_reversal: 0.375, // SL 25% → 1:1.5 RR
+    gap_orb: 0.40, // SL 20% → 1:2 RR (gap fill is primary exit; 40% is fallback)
+    vwap_scalper: 0.30, // SL 20% → 1:1.5 RR (danger: SL 10% → target 15%, computed from SL)
+};
 function generateExitDetail(reason, pos, exitPrice, peakPremium) {
     const ist = getIST();
     const timeStr = `${String(ist.getUTCHours()).padStart(2, "0")}:${String(ist.getUTCMinutes()).padStart(2, "0")} IST`;
@@ -724,6 +761,11 @@ function generateExitDetail(reason, pos, exitPrice, peakPremium) {
         case "OI_REVERSE": {
             const opposite = pos.type === "CE" ? "PE" : "CE";
             return `${opposite} OI buildup detected at ${timeStr}. Opposite side strengthening — position closed to avoid reversal.`;
+        }
+        case "TARGET_HIT": {
+            const tgtPct = TARGET_PCT[pos.strategy_id] ?? 0.30;
+            const tgtPrice = Number((pos.entry_price * (1 + tgtPct)).toFixed(2));
+            return `Profit target hit at ${timeStr}. Premium gained ${(tgtPct * 100).toFixed(tgtPct % 0.01 === 0 ? 0 : 1)}% from entry ₹${pos.entry_price.toFixed(2)} → target ₹${tgtPrice.toFixed(2)}. Exit at ₹${exitPrice.toFixed(2)}. Full position closed.`;
         }
         case "TARGET":
         case "GAP_FILL":
@@ -838,23 +880,29 @@ async function monitorOpenPositions() {
             current_price: Number(currentPrice.toFixed(2)),
             pnl: Number(pnl.toFixed(2)),
         }).eq("id", pos.id);
-        // ── Hard close ──
-        const hc = HARD_CLOSE_MINS[pos.strategy_id];
-        if (hc && currentMins >= hc) {
-            await closeStrategyPosition(pos.id, currentPrice, "HARD_CLOSE");
+        const pnlPct = (currentPrice - pos.entry_price) / pos.entry_price;
+        // ── Priority 1: Hard SL hit ──
+        if (pos.stop_loss && currentPrice <= pos.stop_loss) {
+            await closeStrategyPosition(pos.id, currentPrice, "SL_HIT");
+            continue;
+        }
+        // ── Priority 2: Fixed profit target hit ──
+        // For vwap_scalper, derive target from stored SL (1:1.5 RR) to handle danger-mode trades
+        let targetPct = TARGET_PCT[pos.strategy_id] ?? 0.30;
+        if (pos.strategy_id === "vwap_scalper" && pos.stop_loss) {
+            const slPct = (pos.entry_price - pos.stop_loss) / pos.entry_price;
+            if (slPct > 0)
+                targetPct = slPct * 1.5;
+        }
+        if (pnlPct >= targetPct) {
+            await closeStrategyPosition(pos.id, currentPrice, "TARGET_HIT");
             continue;
         }
         // ── Trail SL activation ──
-        // Strategy 1 & 3: 1.5×ATR move in direction → trail at 10% below peak
-        // Strategy 2: up 35% → trail at 15% below peak
-        // Strategy 4: up 40% → trail at 12% below peak
-        // Strategy 5: up 30% → trail at 12% below peak
-        // Strategy 6 (breakout): up 35% → trail at 12% below peak
-        const pnlPct = (currentPrice - pos.entry_price) / pos.entry_price;
         let trailActivationPct = 0.35;
         let trailPct = 0.12;
         if (pos.strategy_id === "ema_crossover" || pos.strategy_id === "ema_confluence") {
-            trailActivationPct = 0.20; // approximate 1.5×ATR as 20% move
+            trailActivationPct = 0.20;
             trailPct = 0.10;
         }
         else if (pos.strategy_id === "orion") {
@@ -873,22 +921,23 @@ async function monitorOpenPositions() {
             const newTrail = peak * (1 - trailPct);
             if (!pos.trail_sl || newTrail > pos.trail_sl) {
                 await supabase.from("strategy_positions").update({ trail_sl: Number(newTrail.toFixed(2)) }).eq("id", pos.id);
-                pos.trail_sl = newTrail; // update local copy
+                pos.trail_sl = newTrail;
             }
         }
-        // ── SL hit ──
-        if (pos.stop_loss && currentPrice <= pos.stop_loss) {
-            await closeStrategyPosition(pos.id, currentPrice, "SL_HIT");
-            continue;
-        }
-        // ── Trail SL hit ──
+        // ── Priority 3: Trail SL hit ──
         if (pos.trail_sl && currentPrice <= pos.trail_sl) {
             await closeStrategyPosition(pos.id, currentPrice, "TRAIL_SL");
             continue;
         }
-        // ── Strategy 2 Orion breakeven: up 20% → move SL to breakeven ──
+        // ── Orion breakeven: up 20% → move SL to breakeven ──
         if (pos.strategy_id === "orion" && pnlPct >= 0.20 && pos.stop_loss && pos.stop_loss < pos.entry_price) {
             await supabase.from("strategy_positions").update({ stop_loss: pos.entry_price }).eq("id", pos.id);
+        }
+        // ── Priority 5: Hard close time ──
+        const hc = HARD_CLOSE_MINS[pos.strategy_id];
+        if (hc && currentMins >= hc) {
+            await closeStrategyPosition(pos.id, currentPrice, "HARD_CLOSE");
+            continue;
         }
     }
 }
@@ -1712,46 +1761,62 @@ async function pollLTP() {
     }
 }
 // ══════════════════════════════════════════════════════════════
-// Real-time option LTP refresh for open equity positions — every 5s
-// Fetches live premiums from Upstox LTP endpoint and updates DB
+// Open equity position price updater — every 7s
+//
+// The Upstox /market-quote/ltp endpoint returns HTTP 429 for option
+// instrument keys (subscription limit). Instead, we rely on the option
+// chain endpoint which already returns LTP for every strike.
+//
+// Phase 1: For each open position's expiry, fetch its option chain if
+//   we haven't done so in the last 60s. This refreshes optionPriceCache
+//   with live premiums. pollOptionChain() handles current-expiry chains;
+//   this handles any non-current expiry that has an open position.
+//
+// Phase 2: Write prices from optionPriceCache to DB (awaited, with error
+//   logging so silent failures are visible).
 // ══════════════════════════════════════════════════════════════
-async function pollOpenEquityOptionLTPs() {
+// Tracks last chain-fetch time per `${index}|${expiry}` for open positions
+const lastChainFetchForExpiry = new Map();
+async function pollOpenPositionLTPsBatched() {
     if (!isMarketOpen() || openEquityPositions.length === 0)
         return;
-    const token = upstoxToken();
-    if (!token)
-        return;
-    // Build instrument key list from cached option keys
-    const instrKeys = [];
-    const keyToPos = {};
+    // Phase 1: Refresh option chain for every expiry that has open positions,
+    // at most once per 60s (deduplicated by index|expiry).
+    const CHAIN_REFRESH_MS = 60000;
+    const toFetch = new Map(); // `${index}|${expiry}` → index
     for (const pos of openEquityPositions) {
-        const instrKey = optionInstrKeyCache[pos.symbol];
-        if (instrKey) {
-            instrKeys.push(instrKey);
-            // Upstox returns keys with ":" instead of "|" in the response
-            keyToPos[instrKey.replace("|", ":")] = pos;
+        const parsed = parseExpiryFromSymbol(pos.symbol);
+        if (!parsed) {
+            console.warn(`[OptionLTP] Cannot parse symbol: "${pos.symbol}"`);
+            continue;
+        }
+        const key = `${parsed.index}|${parsed.expiry}`;
+        const lastFetch = lastChainFetchForExpiry.get(key) ?? 0;
+        if (Date.now() - lastFetch > CHAIN_REFRESH_MS) {
+            toFetch.set(key, parsed.index);
         }
     }
-    if (!instrKeys.length)
-        return; // instrument keys not yet cached — wait for option chain poll
-    try {
-        const keyParam = instrKeys.map(encodeURIComponent).join(",");
-        const res = await fetch(`https://api.upstox.com/v2/market-quote/ltp?instrument_key=${keyParam}`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
-        if (!res.ok)
-            return;
-        const json = await res.json();
-        for (const [apiKey, val] of Object.entries(json.data ?? {})) {
-            const pos = keyToPos[apiKey];
-            if (!pos || !val?.last_price)
-                continue;
-            const price = Number(val.last_price.toFixed(2));
-            optionPriceCache[pos.symbol] = price;
-            const pnl = Number(((price - pos.entry_price) * pos.quantity).toFixed(2));
-            void supabase.from("strategy_positions").update({ current_price: price, pnl }).eq("id", pos.id);
-        }
+    for (const [key] of toFetch) {
+        const [index, expiry] = key.split("|");
+        console.log(`[OptionLTP] Refreshing chain ${index} expiry ${expiry}`);
+        await fetchFullOptionChain(index, expiry);
+        lastChainFetchForExpiry.set(key, Date.now());
     }
-    catch (err) {
-        console.error("[OptionLTP] Fetch error:", err);
+    // Phase 2: Write live prices from optionPriceCache to DB
+    for (const pos of openEquityPositions) {
+        const price = optionPriceCache[pos.symbol];
+        if (!price) {
+            console.warn(`[OptionLTP] No cached price for "${pos.symbol}"`);
+            continue;
+        }
+        const pnl = Number(((price - pos.entry_price) * pos.quantity).toFixed(2));
+        console.log(`[OptionLTP] ${pos.symbol} | ₹${price} | Entry: ₹${pos.entry_price} | PnL: ₹${pnl}`);
+        const { error } = await supabase
+            .from("strategy_positions")
+            .update({ current_price: price, pnl })
+            .eq("id", pos.id);
+        if (error)
+            console.error(`[OptionLTP] DB write error for ${pos.symbol} (id=${pos.id}): ${error.message}`);
     }
 }
 // ══════════════════════════════════════════════════════════════
@@ -3509,8 +3574,8 @@ setInterval(pollOptionChain, 60000);
 // Equity strategy loop every 30 seconds
 runEquityStrategies();
 setInterval(runEquityStrategies, 30000);
-// Live option LTP for open equity positions every 5 seconds
-setInterval(pollOpenEquityOptionLTPs, 5000);
+// Targeted batched LTP for open equity positions every 7 seconds
+setInterval(pollOpenPositionLTPsBatched, 7000);
 // BTC
 connectBinanceWS();
 runBtcStrategies();
