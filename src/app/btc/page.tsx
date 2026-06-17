@@ -283,6 +283,22 @@ function BtcCapitalSummaryBar({
   );
 }
 
+// ── BTC panel tier config (mirrors server BTC_TIER_CONFIG) ─────
+
+const BTC_PANEL_CFG: Record<string, {
+  partialMultiplier: number;
+  partialPct: number;
+  tiers: { multiplier: number; trailPct: number }[];
+}> = {
+  btc_ema_crossover:  { partialMultiplier: 1.0, partialPct: 0.30, tiers: [{ multiplier: 1, trailPct: 0.70 }, { multiplier: 2, trailPct: 0.80 }, { multiplier: 4, trailPct: 0.90 }] },
+  btc_orion:          { partialMultiplier: 1.0, partialPct: 0.30, tiers: [{ multiplier: 1, trailPct: 0.75 }, { multiplier: 2, trailPct: 0.85 }, { multiplier: 4, trailPct: 0.92 }] },
+  btc_ema_confluence: { partialMultiplier: 1.0, partialPct: 0.35, tiers: [{ multiplier: 1, trailPct: 0.70 }, { multiplier: 2, trailPct: 0.82 }, { multiplier: 3, trailPct: 0.92 }] },
+  btc_supertrend:     { partialMultiplier: 1.0, partialPct: 0.30, tiers: [{ multiplier: 1, trailPct: 0.72 }, { multiplier: 2, trailPct: 0.84 }, { multiplier: 4, trailPct: 0.92 }] },
+  btc_vwap_scalper:   { partialMultiplier: 0.5, partialPct: 0.40, tiers: [{ multiplier: 0.5, trailPct: 0.80 }, { multiplier: 1, trailPct: 0.88 }, { multiplier: 2, trailPct: 0.95 }] },
+};
+
+const USD_INR = 83; // fixed rate for BTC qty display
+
 // ── BtcOpenTradesPanel ─────────────────────────────────────────
 
 function BtcOpenTradesPanel({
@@ -295,24 +311,11 @@ function BtcOpenTradesPanel({
   btcPrice: number;
 }) {
   const thStyle: React.CSSProperties = {
-    padding: "8px 12px", fontSize: 10, fontWeight: 700, color: "#4b5563",
+    padding: "8px 10px", fontSize: 10, fontWeight: 700, color: "#4b5563",
     textAlign: "left" as const, letterSpacing: "0.08em",
     whiteSpace: "nowrap" as const, borderBottom: "1px solid #1a1f2e",
     background: "#070A11",
   };
-
-  const rows = openPositions.map(pos => {
-    const stratName    = strategies.find(s => s.id === pos.strategy_id)?.name ?? pos.strategy_id;
-    const remainingQty = pos.remaining_qty_inr ?? pos.qty_inr;
-    const realizedPnl  = pos.realized_pnl ?? 0;
-    const livePnlOnRem = btcPrice > 0 && remainingQty > 0
-      ? (pos.side === "LONG"
-          ? (btcPrice - pos.entry_price_usd) / pos.entry_price_usd
-          : (pos.entry_price_usd - btcPrice) / pos.entry_price_usd) * remainingQty
-      : 0;
-    const pnl = realizedPnl + livePnlOnRem;
-    return { pos, stratName, pnl };
-  });
 
   return (
     <div style={{
@@ -342,53 +345,141 @@ function BtcOpenTradesPanel({
         </div>
       ) : (
         <div style={{ flex: 1, overflowY: "auto", overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 960 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1320 }}>
             <thead>
               <tr>
-                {["Strategy", "Side", "Entry USD", "Entry Time", "BTC Price", "Live PnL", "Tier", "Partial", "Leverage", "SL", "Trail SL"].map(h => (
+                {["Strategy","Side","Entry USD","Qty (BTC)","Leverage","Entry Time","BTC Price","SL","Partial Booking","Tier","Trail SL","Live PnL"].map(h => (
                   <th key={h} style={thStyle}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {rows.map(({ pos, stratName, pnl }) => {
-                const tier        = pos.current_tier ?? 0;
-                const partialQty  = pos.partial_qty_inr ?? 0;
-                const partialPnl  = pos.realized_pnl ?? 0;
-                const bookedPct   = pos.qty_inr > 0 ? Math.round(partialQty / pos.qty_inr * 100) : 0;
+              {openPositions.map(pos => {
+                const stratName    = strategies.find(s => s.id === pos.strategy_id)?.name ?? pos.strategy_id;
+                const cfg          = BTC_PANEL_CFG[pos.strategy_id];
+                const tier         = pos.current_tier ?? 0;
+                const remainingQty = pos.remaining_qty_inr ?? pos.qty_inr;
+                const realizedPnl  = pos.realized_pnl ?? 0;
+                const partialQtyInr = pos.partial_qty_inr ?? 0;
+
+                // ── Live PnL on remaining ──────────────────────
+                const livePnlOnRem = btcPrice > 0 && remainingQty > 0
+                  ? (pos.side === "LONG"
+                      ? (btcPrice - pos.entry_price_usd) / pos.entry_price_usd
+                      : (pos.entry_price_usd - btcPrice) / pos.entry_price_usd) * remainingQty
+                  : 0;
+                const totalPnl = realizedPnl + livePnlOnRem;
+
+                // ── Qty (BTC) ──────────────────────────────────
+                const btcQty = pos.qty_inr > 0 && pos.entry_price_usd > 0
+                  ? (pos.qty_inr / USD_INR) / pos.entry_price_usd
+                  : 0;
+
+                // ── SL column ─────────────────────────────────
+                let slCell = "—";
+                if (pos.stop_loss !== null) {
+                  const slPctRaw = (pos.stop_loss - pos.entry_price_usd) / pos.entry_price_usd * 100;
+                  const slPctStr = `${slPctRaw >= 0 ? "+" : ""}${slPctRaw.toFixed(1)}%`;
+                  slCell = `$${pos.stop_loss.toLocaleString("en-US", { maximumFractionDigits: 0 })} (${slPctStr})`;
+                }
+
+                // ── Partial Booking column ────────────────────
+                let partialCell: React.ReactNode = <span style={{ color: "#374151" }}>—</span>;
+                if (pos.partial_booked) {
+                  const bookedPct = pos.qty_inr > 0 ? Math.round(partialQtyInr / pos.qty_inr * 100) : 0;
+                  // Derive booking price from realized PnL
+                  const bookedPriceUsd = partialQtyInr > 0
+                    ? (pos.side === "LONG"
+                        ? pos.entry_price_usd * (1 + realizedPnl / partialQtyInr)
+                        : pos.entry_price_usd * (1 - realizedPnl / partialQtyInr))
+                    : 0;
+                  partialCell = (
+                    <span>
+                      <span style={{ color: "#4ade80", fontWeight: 700 }}>✓ Booked {bookedPct}%</span>
+                      <span style={{ color: "#6b7280" }}> @ </span>
+                      <span style={{ color: "#9ca3af", fontFamily: "monospace" }}>${bookedPriceUsd > 0 ? bookedPriceUsd.toLocaleString("en-US", { maximumFractionDigits: 0 }) : "—"}</span>
+                      <span style={{ color: "#4ade80" }}> (+₹{fmtINR(realizedPnl)} realized)</span>
+                    </span>
+                  );
+                } else if (cfg && pos.stop_loss !== null) {
+                  const slDist = Math.abs(pos.entry_price_usd - pos.stop_loss);
+                  const triggerPrice = pos.side === "LONG"
+                    ? pos.entry_price_usd + cfg.partialMultiplier * slDist
+                    : pos.entry_price_usd - cfg.partialMultiplier * slDist;
+                  const pct = Math.round(cfg.partialPct * 100);
+                  partialCell = (
+                    <span>
+                      <span style={{ color: "#94a3b8" }}>Books {pct}%</span>
+                      <span style={{ color: "#6b7280" }}> @ </span>
+                      <span style={{ color: "#9ca3af", fontFamily: "monospace" }}>${triggerPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
+                      <span style={{ color: "#4b5563" }}> (+{cfg.partialMultiplier}× SL)</span>
+                    </span>
+                  );
+                }
+
+                // ── Tier column ───────────────────────────────
+                let tierCell: React.ReactNode;
+                if (tier === 0) {
+                  tierCell = <span style={{ fontSize: 11, color: "#4b5563" }}>Tier 0</span>;
+                } else {
+                  const lockPct = cfg && tier <= cfg.tiers.length
+                    ? Math.round(cfg.tiers[tier - 1].trailPct * 100)
+                    : 0;
+                  tierCell = (
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "#f5d547", background: "rgba(245,213,71,0.12)", padding: "2px 7px", borderRadius: 4, whiteSpace: "nowrap" }}>
+                      Tier {tier} ({lockPct}%)
+                    </span>
+                  );
+                }
+
+                // ── Trail SL column ───────────────────────────
+                let trailCell: React.ReactNode;
+                if (pos.trail_sl !== null) {
+                  const lockPct = cfg && tier > 0 && tier <= cfg.tiers.length
+                    ? Math.round(cfg.tiers[tier - 1].trailPct * 100)
+                    : 0;
+                  trailCell = (
+                    <span>
+                      <span style={{ color: "#f5d547", fontFamily: "monospace", fontWeight: 600 }}>${pos.trail_sl.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
+                      {lockPct > 0 && <span style={{ color: "#6b7280" }}> (Locking {lockPct}%)</span>}
+                    </span>
+                  );
+                } else {
+                  trailCell = <span style={{ color: "#374151", fontSize: 10 }}>Pending partial book</span>;
+                }
+
+                // ── Live PnL column ───────────────────────────
+                let pnlCell: React.ReactNode;
+                if (pos.partial_booked && realizedPnl !== 0) {
+                  pnlCell = (
+                    <span>
+                      <span style={{ color: pnlColor(totalPnl), fontWeight: 700 }}>{pnlStr(totalPnl)}</span>
+                      <br />
+                      <span style={{ color: "#4b5563", fontSize: 10 }}>
+                        ₹{fmtINR(realizedPnl)} realized + ₹{fmtINR(livePnlOnRem)} live
+                      </span>
+                    </span>
+                  );
+                } else {
+                  pnlCell = <span style={{ color: pnlColor(totalPnl), fontWeight: 700 }}>{pnlStr(totalPnl)}</span>;
+                }
+
                 return (
                   <tr key={pos.id} style={{ borderTop: "1px solid #0f1520" }}>
-                    <td style={{ padding: "8px 12px", fontSize: 12, color: ACCENT[pos.strategy_id] ?? "#9ca3af", fontWeight: 600, whiteSpace: "nowrap" }}>{stratName}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 12, color: ACCENT[pos.strategy_id] ?? "#9ca3af", fontWeight: 600, whiteSpace: "nowrap" }}>{stratName}</td>
                     <td style={{ padding: "8px 10px", fontSize: 12, fontWeight: 700, color: pos.side === "LONG" ? "#22c55e" : "#ef4444" }}>{pos.side}</td>
                     <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", color: "#9ca3af" }}>${pos.entry_price_usd.toLocaleString("en-US", { maximumFractionDigits: 2 })}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: "#94a3b8" }}>{btcQty > 0 ? `${btcQty.toFixed(4)} BTC` : "—"}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 11, color: "#6b7280" }}>{pos.leverage ? `${pos.leverage}×` : "—"}</td>
                     <td style={{ padding: "8px 10px", fontSize: 11, color: "#4b5563" }}>{fmtTime(pos.opened_at)}</td>
                     <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", color: "#f5d547", fontWeight: 600 }}>
                       {btcPrice > 0 ? `$${btcPrice.toLocaleString("en-US", { maximumFractionDigits: 2 })}` : "—"}
                     </td>
-                    <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", fontWeight: 700, color: pnlColor(pnl) }}>{pnlStr(pnl)}</td>
-                    <td style={{ padding: "8px 10px" }}>
-                      {tier > 0 ? (
-                        <span style={{ fontSize: 10, fontWeight: 700, color: "#f5d547", background: "rgba(245,213,71,0.12)", padding: "2px 6px", borderRadius: 4 }}>
-                          T{tier}
-                        </span>
-                      ) : (
-                        <span style={{ fontSize: 10, color: "#374151" }}>—</span>
-                      )}
-                    </td>
-                    <td style={{ padding: "8px 10px", fontSize: 10, color: pos.partial_booked ? "#4ade80" : "#374151", whiteSpace: "nowrap" }}>
-                      {pos.partial_booked
-                        ? `${bookedPct}% @ $${pos.current_price_usd > 0 ? pos.current_price_usd.toFixed(0) : "—"} (+₹${fmtINR(partialPnl)})`
-                        : "—"}
-                    </td>
-                    <td style={{ padding: "8px 10px", fontSize: 11, color: "#6b7280" }}>
-                      {pos.leverage ? `${pos.leverage}×` : "—"}
-                    </td>
-                    <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: "#ef4444" }}>
-                      {pos.stop_loss ? `$${pos.stop_loss.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "—"}
-                    </td>
-                    <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: pos.trail_sl ? "#f5d547" : "#374151" }}>
-                      {pos.trail_sl ? `$${pos.trail_sl.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "inactive"}
-                    </td>
+                    <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: "#ef4444", whiteSpace: "nowrap" }}>{slCell}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 11, whiteSpace: "nowrap" }}>{partialCell}</td>
+                    <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{tierCell}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 11, whiteSpace: "nowrap" }}>{trailCell}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", whiteSpace: "nowrap" }}>{pnlCell}</td>
                   </tr>
                 );
               })}
