@@ -320,6 +320,7 @@ const INDEX_LABELS: Record<string, string> = {
   NIFTY:     "NIFTY",
   BANKNIFTY: "BANK NIFTY",
   SENSEX:    "SENSEX",
+  VIX:       "INDIA VIX",
 };
 
 function TopBar() {
@@ -405,6 +406,24 @@ function TopBar() {
             </div>
           );
         })}
+        {/* VIX — level-colored, no change display */}
+        {(() => {
+          const vix = indices["VIX"]?.ltp ?? 0;
+          const vixColor = vix === 0 ? "#6b7280" : vix < 13 ? "#22c55e" : vix < 17 ? "#f5d547" : "#f87171";
+          return (
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 12, color: "#94a3b8", letterSpacing: "0.1em", marginBottom: 2, fontWeight: 600 }}>
+                INDIA VIX
+              </div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: vixColor, fontFamily: "monospace", lineHeight: 1 }}>
+                {vix > 0 ? vix.toFixed(2) : "—"}
+              </div>
+              <div style={{ fontSize: 10, color: vix === 0 ? "#374151" : vixColor, marginTop: 2, letterSpacing: "0.06em" }}>
+                {vix === 0 ? "" : vix < 13 ? "LOW" : vix < 17 ? "MODERATE" : "HIGH"}
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* IST Clock */}

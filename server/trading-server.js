@@ -3084,6 +3084,7 @@ app.get("/api/indices", (_req, res) => {
         NIFTY: lastNiftyPrice,
         BANKNIFTY: lastBankniftyPrice,
         SENSEX: lastSensexPrice,
+        VIX: lastVix,
     };
     const result = {};
     for (const [idx, ltp] of Object.entries(ltps)) {

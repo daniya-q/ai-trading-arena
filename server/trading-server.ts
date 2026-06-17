@@ -3354,6 +3354,7 @@ app.get("/api/indices", (_req, res) => {
     NIFTY:     lastNiftyPrice,
     BANKNIFTY: lastBankniftyPrice,
     SENSEX:    lastSensexPrice,
+    VIX:       lastVix,
   };
   const result: Record<string, { ltp: number; change: number; changePct: number }> = {};
   for (const [idx, ltp] of Object.entries(ltps)) {
