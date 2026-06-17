@@ -130,7 +130,7 @@ const optionPriceCache: Record<string, number> = {};
 const optionInstrKeyCache: Record<string, string> = {};
 
 // Open equity positions snapshot — updated by monitorOpenPositions every 30s
-// Used by pollOpenEquityOptionLTPs to avoid per-second DB queries
+// Used by pollOpenPositionLTPsBatched to avoid per-second DB queries
 let openEquityPositions: Array<{ id: string; symbol: string; entry_price: number; quantity: number }> = [];
 
 // Peak premiums for open positions (in-memory, intraday only)
@@ -609,7 +609,7 @@ async function fetchFullOptionChain(index: string, expiry: string): Promise<Full
         optionPriceCache[`${index} ${expiryFmt} ${row.strike} PE`] = row.pePremium;
     }
 
-    // Cache Upstox instrument keys for real-time LTP polling (used by pollOpenEquityOptionLTPs)
+    // Cache Upstox instrument keys for real-time LTP polling (used by pollOpenPositionLTPsBatched)
     for (const rawRow of chain) {
       const prefix = `${index} ${expiryFmt} ${rawRow.strike_price}`;
       const ceKey = rawRow.call_options?.instrument_key;
@@ -1851,56 +1851,95 @@ async function pollLTP(): Promise<void> {
 }
 
 // ══════════════════════════════════════════════════════════════
-// Real-time option price refresh for open equity positions — every 5s
-// Reads from optionPriceCache (populated by fetchFullOptionChain).
-// For non-current expiries, fetches their chain on-demand every 60s.
-// No extra LTP API call — avoids Upstox rate limits.
+// Targeted batched LTP poll for open equity positions — every 7s
+//
+// Phase 1: One-time chain fetch per expiry to populate optionInstrKeyCache.
+//   Only runs when an open position's instrKey is not yet cached.
+//   pollOptionChain() (60s) handles current-expiry chains separately.
+//
+// Phase 2: Single batched Upstox LTP call for all open position keys.
+//   1–5 positions = 1 API call vs 160+ strikes in a full chain fetch.
+//   Updates optionPriceCache so monitorOpenPositions() gets live prices.
+//
+// Fallback: if LTP call fails (e.g. rate limit), writes chain-cached prices
+//   to DB so SL monitoring always has a usable price.
 // ══════════════════════════════════════════════════════════════
 
-// Tracks last chain fetch time per `${index}|${expiry}` for open-position expiries
-const lastChainFetchForExpiry = new Map<string, number>();
-
-async function pollOpenEquityOptionLTPs(): Promise<void> {
+async function pollOpenPositionLTPsBatched(): Promise<void> {
   if (!isMarketOpen() || openEquityPositions.length === 0) return;
 
-  // Phase 1: Ensure optionPriceCache has fresh data for every open position's expiry.
-  // pollOptionChain() handles current-expiry chains every 60s.
-  // Here we handle any expiry that has open positions but hasn't been refreshed recently.
-  const CHAIN_REFRESH_MS = 60_000;
+  // Phase 1: Fetch chain for any open position whose instrKey is not yet cached.
+  // Deduplicate by index|expiry so we make at most one chain fetch per expiry.
   const toFetch = new Map<string, string>(); // `${index}|${expiry}` → index
-
   for (const pos of openEquityPositions) {
+    if (optionInstrKeyCache[pos.symbol]) continue; // instrKey already known
     const parsed = parseExpiryFromSymbol(pos.symbol);
     if (!parsed) {
-      if (!optionPriceCache[pos.symbol]) {
-        console.warn(`[OptionLTP] Cannot parse symbol: "${pos.symbol}"`);
-      }
+      console.warn(`[OptionLTP] Cannot parse symbol: "${pos.symbol}"`);
       continue;
     }
-    const key = `${parsed.index}|${parsed.expiry}`;
-    const lastFetch = lastChainFetchForExpiry.get(key) ?? 0;
-    if (Date.now() - lastFetch > CHAIN_REFRESH_MS) {
-      toFetch.set(key, parsed.index);
-    }
+    toFetch.set(`${parsed.index}|${parsed.expiry}`, parsed.index);
   }
-
   for (const [key] of toFetch) {
     const [index, expiry] = key.split("|");
-    console.log(`[OptionLTP] Fetching chain ${index} expiry ${expiry} for open positions`);
+    console.log(`[OptionLTP] Fetching chain ${index} expiry ${expiry} to cache instrKeys`);
     await fetchFullOptionChain(index, expiry);
-    lastChainFetchForExpiry.set(key, Date.now());
   }
 
-  // Phase 2: Write cached prices to DB for all open positions
+  // Phase 2: Build a single batched LTP request (only open position keys — not full chain)
+  const token = upstoxToken();
+  if (!token) return;
+
+  const instrKeys: string[] = [];
+  const keyToPos: Record<string, { id: string; symbol: string; entry_price: number; quantity: number }> = {};
   for (const pos of openEquityPositions) {
-    const price = optionPriceCache[pos.symbol];
-    if (!price) {
-      console.warn(`[OptionLTP] No price cached for "${pos.symbol}"`);
-      continue;
+    const instrKey = optionInstrKeyCache[pos.symbol];
+    if (instrKey) {
+      instrKeys.push(instrKey);
+      keyToPos[instrKey.replace("|", ":")] = pos; // Upstox response uses ":" not "|"
     }
-    const pnl = Number(((price - pos.entry_price) * pos.quantity).toFixed(2));
-    console.log(`[OptionLTP] ${pos.symbol} | ₹${price} | Entry: ₹${pos.entry_price} | PnL: ₹${pnl}`);
-    void supabase.from("strategy_positions").update({ current_price: price, pnl }).eq("id", pos.id);
+  }
+
+  if (!instrKeys.length) {
+    console.warn(`[OptionLTP] No instrKeys available — skipping batched poll`);
+    return;
+  }
+
+  let ltpUpdated = false;
+  try {
+    const keyParam = instrKeys.map(encodeURIComponent).join(",");
+    const res = await fetch(
+      `https://api.upstox.com/v2/market-quote/ltp?instrument_key=${keyParam}`,
+      { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } }
+    );
+    if (res.ok) {
+      const json = await res.json() as { data?: Record<string, { last_price?: number }> };
+      for (const [apiKey, val] of Object.entries(json.data ?? {})) {
+        const pos = keyToPos[apiKey];
+        if (!pos || !val?.last_price) continue;
+        const price = Number(val.last_price.toFixed(2));
+        optionPriceCache[pos.symbol] = price;
+        const pnl = Number(((price - pos.entry_price) * pos.quantity).toFixed(2));
+        console.log(`[OptionLTP] ${pos.symbol} | LTP: ₹${price} | Entry: ₹${pos.entry_price} | PnL: ₹${pnl}`);
+        void supabase.from("strategy_positions").update({ current_price: price, pnl }).eq("id", pos.id);
+      }
+      ltpUpdated = true;
+    } else {
+      console.warn(`[OptionLTP] Batched LTP HTTP ${res.status} — falling back to chain cache`);
+    }
+  } catch (err) {
+    console.error("[OptionLTP] Batched LTP error:", err);
+  }
+
+  // Fallback: write chain-cached prices to DB if LTP call failed
+  if (!ltpUpdated) {
+    for (const pos of openEquityPositions) {
+      const price = optionPriceCache[pos.symbol];
+      if (!price) continue;
+      const pnl = Number(((price - pos.entry_price) * pos.quantity).toFixed(2));
+      console.log(`[OptionLTP] ${pos.symbol} | Cache: ₹${price} | PnL: ₹${pnl} (chain-cache fallback)`);
+      void supabase.from("strategy_positions").update({ current_price: price, pnl }).eq("id", pos.id);
+    }
   }
 }
 
@@ -3829,8 +3868,8 @@ setInterval(pollOptionChain, 60_000);
 runEquityStrategies();
 setInterval(runEquityStrategies, 30_000);
 
-// Live option LTP for open equity positions every 5 seconds
-setInterval(pollOpenEquityOptionLTPs, 5_000);
+// Targeted batched LTP for open equity positions every 7 seconds
+setInterval(pollOpenPositionLTPsBatched, 7_000);
 
 // BTC
 connectBinanceWS();
