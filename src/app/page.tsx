@@ -1206,7 +1206,7 @@ function CorrelationHeatmap() {
       </div>
       {(!matrix || data?.insufficient) ? (
         <div style={{ fontSize: 12, color: "#374151", textAlign: "center", padding: "24px 0" }}>
-          Insufficient data — needs at least 5 days of overlapping trade history
+          Insufficient data — needs at least 2 days of overlapping trade history
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>

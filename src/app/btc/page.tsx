@@ -490,12 +490,14 @@ function BtcStrategyCard({
   strategy,
   capital,
   openPositions,
+  positions,
   liveCapital,
   onClick,
 }: {
   strategy: BtcStrategy;
   capital: BtcCapital | undefined;
   openPositions: BtcPosition[];
+  positions: BtcPosition[];
   liveCapital: number;
   onClick: () => void;
 }) {
@@ -504,6 +506,20 @@ function BtcStrategyCard({
   const livePnl = liveCapital - alloc;
   const retPct  = (livePnl / alloc) * 100;
   const trades  = capital?.total_trades ?? 0;
+
+  // Today's KPIs — filter by opened_at IST date (matches server dailyTradeCounts logic)
+  const todayIST = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const todayClosed = positions.filter(p =>
+    p.strategy_id === strategy.id &&
+    p.status === "CLOSED" &&
+    new Date(p.opened_at).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) === todayIST
+  );
+  const todayPnl    = todayClosed.reduce((s, p) => s + (p.pnl_inr ?? 0), 0);
+  const todayCount  = todayClosed.length;
+  const avgPnlToday = todayCount > 0 ? todayPnl / todayCount : null;
+  const lifetimePnl = capital?.total_pnl_inr ?? 0;
+  const lifeCount   = capital?.total_trades ?? 0;
+  const avgPnlLife  = lifeCount > 0 ? lifetimePnl / lifeCount : null;
 
   const [metrics, setMetrics] = useState<CardMetrics | null>(null);
   useEffect(() => {
@@ -597,6 +613,28 @@ function BtcStrategyCard({
           <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>MAX DRAWDOWN</div>
           <div style={{ fontSize: 14, fontWeight: 600, color: hasData && ddVal > 0 ? "#f87171" : "#4b5563", fontFamily: "monospace" }}>
             {hasData && ddVal > 0 ? `-₹${fmtINR(ddVal)}` : "—"}
+          </div>
+        </div>
+      </div>
+
+      {/* Row 4: Today PnL | Avg Today | Avg Overall */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", borderTop: `1px solid ${accent}25` }}>
+        <div style={{ padding: "10px 14px", borderRight: `1px solid ${accent}25` }}>
+          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>TODAY PnL</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: todayCount > 0 ? pnlColor(todayPnl) : "#374151", fontFamily: "monospace" }}>
+            {todayCount > 0 ? pnlStr(todayPnl) : "—"}
+          </div>
+        </div>
+        <div style={{ padding: "10px 14px", borderRight: `1px solid ${accent}25` }}>
+          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>AVG TODAY</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: avgPnlToday != null ? pnlColor(avgPnlToday) : "#374151", fontFamily: "monospace" }}>
+            {avgPnlToday != null ? pnlStr(avgPnlToday) : "—"}
+          </div>
+        </div>
+        <div style={{ padding: "10px 14px" }}>
+          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>AVG OVERALL</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: avgPnlLife != null ? pnlColor(avgPnlLife) : "#374151", fontFamily: "monospace" }}>
+            {avgPnlLife != null ? pnlStr(avgPnlLife) : "—"}
           </div>
         </div>
       </div>
@@ -926,6 +964,7 @@ export default function BtcArenaPage() {
                 strategy={s}
                 capital={capitals.find(c => c.strategy_id === s.id)}
                 openPositions={positions.filter(p => p.strategy_id === s.id && p.status === "OPEN")}
+                positions={positions}
                 liveCapital={computeLiveCapital(s.id)}
                 onClick={() => router.push('/btc/strategy/' + s.id)}
               />
