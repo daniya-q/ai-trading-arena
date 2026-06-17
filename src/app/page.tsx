@@ -524,7 +524,7 @@ function OpenTradesPanel({
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
             <thead>
               <tr>
-                {["Strategy", "Symbol", "Type", "Entry ₹", "Entry Time", "Current ₹", "Live PnL", "SL", "Trail SL"].map(h => (
+                {["Strategy", "Symbol", "Type", "Entry ₹", "Qty", "Entry Time", "Current ₹", "Live PnL", "SL", "Target"].map(h => (
                   <th key={h} style={thStyle}>{h}</th>
                 ))}
               </tr>
@@ -538,6 +538,7 @@ function OpenTradesPanel({
                     <td style={{ padding: "8px 10px", fontSize: 11, color: "#c9d1d9", whiteSpace: "nowrap" }}>{pos.symbol}</td>
                     <td style={{ padding: "8px 8px", fontSize: 12, fontWeight: 700, color: pos.type === "CE" ? "#22c55e" : "#ef4444" }}>{pos.type}</td>
                     <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", color: "#6b7280" }}>₹{pos.entry_price.toFixed(2)}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", color: "#9ca3af" }}>{pos.quantity}</td>
                     <td style={{ padding: "8px 10px", fontSize: 11, color: "#4b5563" }}>{fmtTime(pos.opened_at)}</td>
                     <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", color: "#f5d547", fontWeight: 600 }}>₹{(pos.current_price ?? 0).toFixed(2)}</td>
                     <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", fontWeight: 700, color: pnlColor(pos.pnl ?? 0) }}>{pnlStr(pos.pnl ?? 0)}</td>
@@ -545,7 +546,9 @@ function OpenTradesPanel({
                       {pos.stop_loss ? `₹${pos.stop_loss.toFixed(2)}` : "—"}
                     </td>
                     <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: pos.trail_sl ? "#f5d547" : "#374151" }}>
-                      {pos.trail_sl ? `₹${pos.trail_sl.toFixed(2)}` : "inactive"}
+                      {pos.trail_sl
+                        ? `₹${pos.trail_sl.toFixed(2)} Trailing`
+                        : ({ ema_crossover: "Activates +20%", ema_confluence: "Activates +20%", orion: "Activates +35%", supertrend: "Activates +35%", pcr_reversal: "Activates +35%", gap_orb: "Activates +35%", vwap_scalper: "Activates +35%" } as Record<string, string>)[pos.strategy_id] ?? "Activates +35%"}
                     </td>
                   </tr>
                 );
