@@ -1059,6 +1059,30 @@ function calcLots(capital: number, pct: number, premium: number, lotSize: number
   return Math.floor(rawQty / lotSize) * lotSize;
 }
 
+const MAX_LOSS_PER_TRADE = 8000;
+
+// Cap Indian strategy qty so max loss ≤ ₹8,000
+function capQtyByMaxLoss(qty: number, premium: number, slPct: number, lotSize: number, label: string): number {
+  const maxQtyByLoss = Math.floor(MAX_LOSS_PER_TRADE / (premium * slPct) / lotSize) * lotSize;
+  if (qty > maxQtyByLoss) {
+    console.log(`[${label}] Position size capped at ₹8,000 max loss: calculated qty=${qty} → capped qty=${maxQtyByLoss} (SL=${(slPct * 100).toFixed(0)}%, premium=₹${premium})`);
+    return maxQtyByLoss;
+  }
+  return qty;
+}
+
+// Cap BTC strategy qty_inr so max loss ≤ ₹8,000
+function capQtyInrByMaxLoss(qtyInr: number, entryPriceUsd: number, stopLossUsd: number, strategyId: string): number {
+  const slPct = Math.abs(entryPriceUsd - stopLossUsd) / entryPriceUsd;
+  if (slPct <= 0) return qtyInr;
+  const maxQtyInr = Math.floor(MAX_LOSS_PER_TRADE / slPct);
+  if (qtyInr > maxQtyInr) {
+    console.log(`[BTC ${strategyId}] Position size capped at ₹8,000 max loss: calculated qty_inr=₹${Math.round(qtyInr).toLocaleString("en-IN")} → capped qty_inr=₹${maxQtyInr.toLocaleString("en-IN")} (SL=${(slPct * 100).toFixed(1)}%)`);
+    return maxQtyInr;
+  }
+  return qtyInr;
+}
+
 // ══════════════════════════════════════════════════════════════
 // Strategy 1 — EMA Crossover (30s candles, starts 10:30 AM)
 // ══════════════════════════════════════════════════════════════
@@ -1122,7 +1146,7 @@ async function runStrategy1(): Promise<void> {
   }
 
   const s1Capital  = await getEquityCurrentValue("ema_crossover");
-  const s1Quantity = calcLots(s1Capital, 0.60, option.premium, 65);
+  const s1Quantity = capQtyByMaxLoss(calcLots(s1Capital, 0.60, option.premium, 65), option.premium, 0.15, 65, "S1");
   if (s1Quantity === 0) { console.log(`[S1] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s1Capital).toLocaleString("en-IN")} premium=₹${option.premium})`); return; }
   console.log(`[S1] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s1Capital).toLocaleString("en-IN")} qty=${s1Quantity} — opening trade`);
   await openStrategyPosition("ema_crossover", {
@@ -1251,7 +1275,7 @@ async function runOrionForIndex(index: string, mins: number): Promise<void> {
   }
 
   const s2Capital  = await getEquityCurrentValue("orion");
-  const s2Quantity = calcLots(s2Capital, 0.30, option.premium, LOT_SIZES[index]);
+  const s2Quantity = capQtyByMaxLoss(calcLots(s2Capital, 0.30, option.premium, LOT_SIZES[index]), option.premium, 0.30, LOT_SIZES[index], `S2:${index}`);
   if (s2Quantity === 0) { console.log(`[S2:${index}] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s2Capital).toLocaleString("en-IN")} premium=₹${option.premium})`); return; }
   console.log(`[S2:${index}] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s2Capital).toLocaleString("en-IN")} qty=${s2Quantity} — opening trade`);
   await openStrategyPosition("orion", {
@@ -1411,7 +1435,7 @@ async function runStrategy3(): Promise<void> {
   }
 
   const s3Capital  = await getEquityCurrentValue("ema_confluence");
-  const s3Quantity = calcLots(s3Capital, 0.60, option.premium, 65);
+  const s3Quantity = capQtyByMaxLoss(calcLots(s3Capital, 0.60, option.premium, 65), option.premium, 0.15, 65, "S3");
   if (s3Quantity === 0) { console.log(`[S3] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s3Capital).toLocaleString("en-IN")} premium=₹${option.premium})`); return; }
   console.log(`[S3] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s3Capital).toLocaleString("en-IN")} qty=${s3Quantity} — opening trade`);
   await openStrategyPosition("ema_confluence", {
@@ -1498,7 +1522,7 @@ async function runSupertrendForIndex(index: "NIFTY" | "BANKNIFTY"): Promise<void
   }
 
   const s4Capital  = await getEquityCurrentValue("supertrend");
-  const s4Quantity = calcLots(s4Capital, 0.30, option.premium, LOT_SIZES[index]);
+  const s4Quantity = capQtyByMaxLoss(calcLots(s4Capital, 0.30, option.premium, LOT_SIZES[index]), option.premium, 0.20, LOT_SIZES[index], `S4:${index}`);
   if (s4Quantity === 0) { console.log(`[S4:${index}] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s4Capital).toLocaleString("en-IN")} premium=₹${option.premium})`); return; }
   console.log(`[S4:${index}] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s4Capital).toLocaleString("en-IN")} qty=${s4Quantity} — opening trade`);
   await openStrategyPosition("supertrend", {
@@ -1567,7 +1591,7 @@ async function runStrategy5(): Promise<void> {
   if (!option) return;
 
   const s5Capital  = await getEquityCurrentValue("pcr_reversal");
-  const s5Quantity = calcLots(s5Capital, 0.60, option.premium, 65);
+  const s5Quantity = capQtyByMaxLoss(calcLots(s5Capital, 0.60, option.premium, 65), option.premium, 0.25, 65, "S5");
   if (s5Quantity === 0) { console.log(`[S5] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s5Capital).toLocaleString("en-IN")} premium=₹${option.premium})`); return; }
   console.log(`[S5] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s5Capital).toLocaleString("en-IN")} qty=${s5Quantity} — opening trade`);
   await openStrategyPosition("pcr_reversal", {
@@ -1691,7 +1715,7 @@ async function runStrategy6(): Promise<void> {
   if (!option) return;
 
   const s6Capital  = await getEquityCurrentValue("gap_orb");
-  const s6Quantity = calcLots(s6Capital, 0.60, option.premium, 65);
+  const s6Quantity = capQtyByMaxLoss(calcLots(s6Capital, 0.60, option.premium, 65), option.premium, 0.20, 65, "S6");
   if (s6Quantity === 0) { console.log(`[S6] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s6Capital).toLocaleString("en-IN")} premium=₹${option.premium})`); return; }
   console.log(`[S6] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s6Capital).toLocaleString("en-IN")} qty=${s6Quantity} — opening trade`);
   await openStrategyPosition("gap_orb", {
@@ -1805,7 +1829,8 @@ async function runVwapScalperForIndex(index: "NIFTY" | "BANKNIFTY" | "SENSEX"): 
   const lotSize    = LOT_SIZES[index];
   const s7BaseQty  = calcLots(s7Capital, 0.30, option.premium, lotSize);
   if (s7BaseQty === 0) { console.log(`[S7:${index}] SIGNAL ${type} — lot calc=0, skipping (capital=₹${Math.round(s7Capital).toLocaleString("en-IN")} premium=₹${option.premium})`); return; }
-  const qty        = danger ? Math.max(lotSize, Math.floor(s7BaseQty / 2 / lotSize) * lotSize) : s7BaseQty;
+  const rawQty7    = danger ? Math.max(lotSize, Math.floor(s7BaseQty / 2 / lotSize) * lotSize) : s7BaseQty;
+  const qty        = capQtyByMaxLoss(rawQty7, option.premium, slPct, lotSize, `S7:${index}`);
 
   const sl = roundUpToOneDecimal(option.premium * (1 - slPct));
 
@@ -2850,15 +2875,17 @@ async function strategyBtcEmaCrossover(): Promise<void> {
 
   const leverage_ec = BTC_LEVERAGE["btc_ema_crossover"];
   if (bullCross && longs < 1) {
-    const cv = await getBtcCurrentValue("btc_ema_crossover");
-    const qtyInr = Math.round(cv * 0.50 * leverage_ec);
-    await openBtcPosition("btc_ema_crossover", "LONG", btcPrice, btcPrice - 1.5 * atr,
+    const cv       = await getBtcCurrentValue("btc_ema_crossover");
+    const ecSlLong = btcPrice - 1.5 * atr;
+    const qtyInr   = capQtyInrByMaxLoss(Math.round(cv * 0.50 * leverage_ec), btcPrice, ecSlLong, "btc_ema_crossover");
+    await openBtcPosition("btc_ema_crossover", "LONG", btcPrice, ecSlLong,
       `EMA9(${fastNow.toFixed(0)}) crossed above EMA21(${slowNow.toFixed(0)})`, qtyInr, leverage_ec);
     btcDailyTradeCounts["btc_ema_crossover_LONG"] = longs + 1;
   } else if (bearCross && shorts < 1) {
-    const cv = await getBtcCurrentValue("btc_ema_crossover");
-    const qtyInr = Math.round(cv * 0.50 * leverage_ec);
-    await openBtcPosition("btc_ema_crossover", "SHORT", btcPrice, btcPrice + 1.5 * atr,
+    const cv        = await getBtcCurrentValue("btc_ema_crossover");
+    const ecSlShort = btcPrice + 1.5 * atr;
+    const qtyInr    = capQtyInrByMaxLoss(Math.round(cv * 0.50 * leverage_ec), btcPrice, ecSlShort, "btc_ema_crossover");
+    await openBtcPosition("btc_ema_crossover", "SHORT", btcPrice, ecSlShort,
       `EMA9(${fastNow.toFixed(0)}) crossed below EMA21(${slowNow.toFixed(0)})`, qtyInr, leverage_ec);
     btcDailyTradeCounts["btc_ema_crossover_SHORT"] = shorts + 1;
   }
@@ -2939,14 +2966,14 @@ async function strategyBtcOrion(): Promise<void> {
   const leverage_orion = BTC_LEVERAGE["btc_orion"];
   if (btcPrice > btcOrbHigh) {
     const cv     = await getBtcCurrentValue("btc_orion");
-    const qtyInr = Math.round(cv * 0.50 * leverage_orion);
+    const qtyInr = capQtyInrByMaxLoss(Math.round(cv * 0.50 * leverage_orion), btcPrice, btcOrbLow, "btc_orion");
     await openBtcPosition("btc_orion", "LONG", btcPrice, btcOrbLow,
       `Price ($${btcPrice.toFixed(0)}) broke above ORB High ($${btcOrbHigh.toFixed(0)}) — ${String(blockHour).padStart(2,"0")}:00 UTC block`,
       qtyInr, leverage_orion);
     btcDailyTradeCounts["btc_orion"] = total + 1;
   } else if (btcPrice < btcOrbLow) {
     const cv     = await getBtcCurrentValue("btc_orion");
-    const qtyInr = Math.round(cv * 0.50 * leverage_orion);
+    const qtyInr = capQtyInrByMaxLoss(Math.round(cv * 0.50 * leverage_orion), btcPrice, btcOrbHigh, "btc_orion");
     await openBtcPosition("btc_orion", "SHORT", btcPrice, btcOrbHigh,
       `Price ($${btcPrice.toFixed(0)}) broke below ORB Low ($${btcOrbLow.toFixed(0)}) — ${String(blockHour).padStart(2,"0")}:00 UTC block`,
       qtyInr, leverage_orion);
@@ -3000,15 +3027,17 @@ async function strategyBtcEmaConfluence(): Promise<void> {
 
   const leverage_conf = BTC_LEVERAGE["btc_ema_confluence"];
   if (bullish && longs < 1) {
-    const cv = await getBtcCurrentValue("btc_ema_confluence");
-    const qtyInr = Math.round(cv * 0.50 * leverage_conf);
-    await openBtcPosition("btc_ema_confluence", "LONG", btcPrice, btcPrice - 2 * atr,
+    const cv          = await getBtcCurrentValue("btc_ema_confluence");
+    const confSlLong  = btcPrice - 2 * atr;
+    const qtyInr      = capQtyInrByMaxLoss(Math.round(cv * 0.50 * leverage_conf), btcPrice, confSlLong, "btc_ema_confluence");
+    await openBtcPosition("btc_ema_confluence", "LONG", btcPrice, confSlLong,
       `5-filter bullish: EMA20>EMA50, RSI ${rsi.toFixed(0)}, P>VWAP, ATR ${atrPct.toFixed(1)}%, slope+`, qtyInr, leverage_conf);
     btcDailyTradeCounts["btc_ema_confluence_LONG"] = longs + 1;
   } else if (bearish && shorts < 1) {
-    const cv = await getBtcCurrentValue("btc_ema_confluence");
-    const qtyInr = Math.round(cv * 0.50 * leverage_conf);
-    await openBtcPosition("btc_ema_confluence", "SHORT", btcPrice, btcPrice + 2 * atr,
+    const cv          = await getBtcCurrentValue("btc_ema_confluence");
+    const confSlShort = btcPrice + 2 * atr;
+    const qtyInr      = capQtyInrByMaxLoss(Math.round(cv * 0.50 * leverage_conf), btcPrice, confSlShort, "btc_ema_confluence");
+    await openBtcPosition("btc_ema_confluence", "SHORT", btcPrice, confSlShort,
       `5-filter bearish: EMA20<EMA50, RSI ${rsi.toFixed(0)}, P<VWAP, ATR ${atrPct.toFixed(1)}%, slope-`, qtyInr, leverage_conf);
     btcDailyTradeCounts["btc_ema_confluence_SHORT"] = shorts + 1;
   }
@@ -3055,14 +3084,14 @@ async function strategyBtcSupertrend(): Promise<void> {
 
   const leverage_st = BTC_LEVERAGE["btc_supertrend"];
   if (crossUp) {
-    const cv = await getBtcCurrentValue("btc_supertrend");
-    const qtyInr = Math.round(cv * 0.50 * leverage_st);
+    const cv     = await getBtcCurrentValue("btc_supertrend");
+    const qtyInr = capQtyInrByMaxLoss(Math.round(cv * 0.50 * leverage_st), btcPrice, stNow.value, "btc_supertrend");
     await openBtcPosition("btc_supertrend", "LONG", btcPrice, stNow.value,
       `Supertrend flipped bullish (line $${stNow.value.toFixed(0)})`, qtyInr, leverage_st);
     btcDailyTradeCounts["btc_supertrend_LONG"] = longs + 1;
   } else if (crossDown) {
-    const cv = await getBtcCurrentValue("btc_supertrend");
-    const qtyInr = Math.round(cv * 0.50 * leverage_st);
+    const cv     = await getBtcCurrentValue("btc_supertrend");
+    const qtyInr = capQtyInrByMaxLoss(Math.round(cv * 0.50 * leverage_st), btcPrice, stNow.value, "btc_supertrend");
     await openBtcPosition("btc_supertrend", "SHORT", btcPrice, stNow.value,
       `Supertrend flipped bearish (line $${stNow.value.toFixed(0)})`, qtyInr, leverage_st);
     btcDailyTradeCounts["btc_supertrend_SHORT"] = shorts + 1;
@@ -3126,9 +3155,9 @@ async function strategyBtcVwapScalper(): Promise<void> {
   const danger        = isDangerWindow();
   const cv            = await getBtcCurrentValue("btc_vwap_scalper");
   const baseQty       = Math.round(cv * 0.50 * leverage_vwap);
-  const qtyInr        = danger ? Math.round(baseQty / 2) : baseQty;
   const slDist        = danger ? atr : atr * 2;
   const stopLoss      = side === "LONG" ? btcPrice - slDist : btcPrice + slDist;
+  const qtyInr        = capQtyInrByMaxLoss(danger ? Math.round(baseQty / 2) : baseQty, btcPrice, stopLoss, "btc_vwap_scalper");
 
   await openBtcPosition(
     "btc_vwap_scalper",
