@@ -812,7 +812,7 @@ function generateExitDetail(
 
   const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:25, gap_orb:20, vwap_scalper:20 };
   const TRAIL_PCT: Record<string, number> = { ema_crossover:10, ema_confluence:10, orion:15, supertrend:12, pcr_reversal:12, gap_orb:12, vwap_scalper:12 };
-  const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:18 PM", orion:"3:18 PM", ema_confluence:"3:18 PM", supertrend:"3:18 PM", pcr_reversal:"3:18 PM", gap_orb:"3:18 PM", vwap_scalper:"3:18 PM" };
+  const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:20 PM", orion:"3:20 PM", ema_confluence:"3:20 PM", supertrend:"3:20 PM", pcr_reversal:"3:20 PM", gap_orb:"3:20 PM", vwap_scalper:"3:20 PM" };
 
   switch (reason) {
     case "SL_HIT": {
@@ -838,7 +838,7 @@ function generateExitDetail(
       return `Trailing stop loss triggered at ${timeStr}. Price dropped to ₹${exitPrice.toFixed(2)}.`;
     }
     case "HARD_CLOSE":
-      return `Position closed at ${CLOSE_TIME[pos.strategy_id] ?? "3:18 PM"} per the hard close rule.`;
+      return `Position closed at ${CLOSE_TIME[pos.strategy_id] ?? "3:20 PM"} per the hard close rule.`;
     case "PCR_NEUTRAL":
       return `PCR reverted to neutral zone (0.9–1.1) at ${timeStr}. Mean-reversion complete — signal no longer valid.`;
     case "OI_REVERSE": {
@@ -952,13 +952,13 @@ async function monitorOpenPositions(): Promise<void> {
   if (!data?.length) return;
 
   const HARD_CLOSE_MINS: Record<string, number> = {
-    ema_crossover:  918,  // 15:18
-    orion:          918,  // 15:18 (entry window unchanged: 9:30–14:00)
-    ema_confluence: 918,
-    supertrend:     918,
-    pcr_reversal:   918,
-    gap_orb:        918,  // 15:18 (entry window unchanged: before 11:30 AM)
-    vwap_scalper:   918,  // 15:18
+    ema_crossover:  920,  // 15:20
+    orion:          920,  // 15:20 (entry window unchanged: 9:30–14:00)
+    ema_confluence: 920,
+    supertrend:     920,
+    pcr_reversal:   920,
+    gap_orb:        920,  // 15:20 (entry window unchanged: before 11:30 AM)
+    vwap_scalper:   920,  // 15:20
   };
 
   const currentMins = istMins();
@@ -1093,7 +1093,7 @@ let s1PrevSlow = 0;
 async function runStrategy1(): Promise<void> {
   if (!isMarketOpen()) return;
   const mins = istMins();
-  if (mins < 630 || mins >= 915) return; // 10:30–15:15
+  if (mins < 585 || mins >= 920) return; // 9:45–15:20
 
   const candles = getCandles("NIFTY", "30s");
   if (candles.length < 66) {
@@ -1223,7 +1223,7 @@ async function runOrionForIndex(index: string, mins: number): Promise<void> {
     const openPos = await getOpenStrategyPositions("orion");
     const indexPos = openPos.find(p => p.symbol.startsWith(index));
     if (indexPos) {
-      if (mins >= 918) {
+      if (mins >= 920) {
         const cp = getCurrentPrice(indexPos.symbol);
         if (cp > 0) {
           await closeStrategyPosition(indexPos.id, cp, "HARD_CLOSE");
@@ -1303,7 +1303,7 @@ let s3PrevSlow = 0;
 async function runStrategy3(): Promise<void> {
   if (!isMarketOpen()) return;
   const mins = istMins();
-  if (mins < 630 || mins >= 915) return; // 10:30–15:15
+  if (mins < 585 || mins >= 920) return; // 9:45–15:20
 
   const candles = getCandles("NIFTY", "30s");
   if (candles.length < 66) {
@@ -1770,7 +1770,7 @@ async function runStrategy7(): Promise<void> {
 async function runVwapScalperForIndex(index: "NIFTY" | "BANKNIFTY" | "SENSEX"): Promise<void> {
   if (!isMarketOpen()) return;
   const mins = istMins();
-  if (mins < 630 || mins >= 915) return; // 10:30–15:15
+  if (mins < 585 || mins >= 920) return; // 9:45–15:20
 
   const candles = getCandles(index, "1m");
   const MIN_CANDLES = 22;
