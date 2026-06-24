@@ -663,15 +663,17 @@ function getATMOption(
   chain: FullOptionChain,
   type: "CE" | "PE",
   premMin = 60,
-  premMax = 70
+  premMax = 70,
+  spotPrice?: number
 ): { strike: number; premium: number; symbol: string } | null {
   const field = type === "CE" ? "cePremium" : "pePremium";
-  const target = (premMin + premMax) / 2;
-  const candidates = chain.rows
-    .filter(r => r[field] >= premMin && r[field] <= premMax)
-    .sort((a, b) => Math.abs(a[field] - target) - Math.abs(b[field] - target));
+  const candidates = chain.rows.filter(r => r[field] >= premMin && r[field] <= premMax);
   if (!candidates.length) return null;
-  const best = candidates[0];
+  // When spotPrice provided: pick strike closest to spot (highest delta).
+  // Otherwise fall back to pick premium closest to midpoint.
+  const best = spotPrice != null
+    ? candidates.reduce((a, b) => Math.abs(a.strike - spotPrice) <= Math.abs(b.strike - spotPrice) ? a : b)
+    : candidates.reduce((a, b) => Math.abs(a[field] - (premMin + premMax) / 2) <= Math.abs(b[field] - (premMin + premMax) / 2) ? a : b);
   const expiryFmt = formatExpiryDDMMM(chain.expiry);
   return {
     strike:  best.strike,
@@ -1139,9 +1141,9 @@ async function runStrategy1(): Promise<void> {
 
   const fld = optType === "CE" ? "cePremium" : "pePremium";
   const allPrem = chain.rows.map(r => r[fld]).filter(p => p > 0).sort((a, b) => a - b);
-  const option  = getATMOption(chain, optType, 60, 70);
+  const option  = getATMOption(chain, optType, 60, 70, lastNiftyPrice);
   if (!option) {
-    console.log(`[S1] SIGNAL ${optType} — no option in ₹60-70 (chain range ₹${allPrem[0]?.toFixed(0) ?? "?"}-${allPrem[allPrem.length-1]?.toFixed(0) ?? "?"})`);
+    console.log(`[S1] SIGNAL ${optType} — no ${optType} found in ₹60-70 (chain ₹${allPrem[0]?.toFixed(0) ?? "?"}-${allPrem[allPrem.length-1]?.toFixed(0) ?? "?"}, spot=${lastNiftyPrice.toFixed(0)})`);
     return;
   }
 
@@ -1428,9 +1430,9 @@ async function runStrategy3(): Promise<void> {
 
   const fld = optType === "CE" ? "cePremium" : "pePremium";
   const allPrem = chain.rows.map(r => r[fld]).filter(p => p > 0).sort((a, b) => a - b);
-  const option  = getATMOption(chain, optType, 60, 70);
+  const option  = getATMOption(chain, optType, 60, 70, lastNiftyPrice);
   if (!option) {
-    console.log(`[S3] SIGNAL ${optType} — no option in ₹60-70 (chain ₹${allPrem[0]?.toFixed(0) ?? "?"}-${allPrem[allPrem.length-1]?.toFixed(0) ?? "?"})`);
+    console.log(`[S3] SIGNAL ${optType} — no ${optType} found in ₹60-70 (chain ₹${allPrem[0]?.toFixed(0) ?? "?"}-${allPrem[allPrem.length-1]?.toFixed(0) ?? "?"}, spot=${lastNiftyPrice.toFixed(0)})`);
     return;
   }
 
