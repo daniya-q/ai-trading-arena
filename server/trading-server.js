@@ -1299,10 +1299,10 @@ async function runStrategy3() {
         return;
     const optType = bullCross ? "CE" : "PE";
     // Filter 1: RSI
-    const rsiOk = optType === "CE" ? rsi < 65 : rsi > 55;
+    const rsiOk = optType === "CE" ? rsi < 65 : rsi > 35;
     const rsiTag = rsiOk
         ? `RSI=${rsi.toFixed(1)}✓`
-        : `RSI=${rsi.toFixed(1)}✗(CE need <65, PE need >55)`;
+        : `RSI=${rsi.toFixed(1)}✗(CE need <65, PE need >35)`;
     // Filter 2: VWAP
     const price = lastNiftyPrice;
     const vwapOk = optType === "CE" ? price > vwap : price < vwap;
