@@ -227,11 +227,10 @@ function BtcCapitalSummaryBar({
     }, 0);
   }, [capitals, openPositions, btcPrice]);
 
-  const { daysPnl, daysReturn } = useMemo(() => {
+  const { daysPnl, daysReturn, avgPnlToday } = useMemo(() => {
     const todayIST = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-    const todayClosedPnl = positions
-      .filter(p => p.status === "CLOSED" && p.closed_at?.startsWith(todayIST))
-      .reduce((s, p) => s + (p.pnl_inr ?? 0), 0);
+    const todayClosed = positions.filter(p => p.status === "CLOSED" && p.closed_at?.startsWith(todayIST));
+    const todayClosedPnl = todayClosed.reduce((s, p) => s + (p.pnl_inr ?? 0), 0);
     const liveOpenPnl = openPositions.reduce((s, p) => {
       if (!btcPrice) return s + (p.pnl_inr ?? 0);
       const rem = p.remaining_qty_inr ?? p.qty_inr;
@@ -241,7 +240,8 @@ function BtcCapitalSummaryBar({
       return s + (p.realized_pnl ?? 0) + pct * rem;
     }, 0);
     const daysPnl = todayClosedPnl + liveOpenPnl;
-    return { daysPnl, daysReturn: STARTING > 0 ? (daysPnl / STARTING) * 100 : 0 };
+    const avgPnlToday = todayClosed.length > 0 ? todayClosedPnl / todayClosed.length : null;
+    return { daysPnl, daysReturn: STARTING > 0 ? (daysPnl / STARTING) * 100 : 0, avgPnlToday };
   }, [positions, openPositions, btcPrice]);
 
   const totalPnl  = totalCurrent - STARTING;
@@ -250,14 +250,16 @@ function BtcCapitalSummaryBar({
   const rColor    = returnPct > 0 ? "#4ade80" : returnPct < 0 ? "#f87171" : "#9ca3af";
   const dpColor   = daysPnl > 0 ? "#4ade80" : daysPnl < 0 ? "#f87171" : "#9ca3af";
   const drColor   = daysReturn > 0 ? "#4ade80" : daysReturn < 0 ? "#f87171" : "#9ca3af";
+  const apColor   = avgPnlToday != null ? (avgPnlToday > 0 ? "#4ade80" : avgPnlToday < 0 ? "#f87171" : "#9ca3af") : "#4b5563";
 
   const stats = [
-    { label: "STARTING CAPITAL", value: "₹5,00,000",                                                              color: "#9ca3af" },
-    { label: "TOTAL CAPITAL",    value: `₹${totalCurrent.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: "#ffffff" },
-    { label: "TOTAL PnL",        value: `${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: pColor },
-    { label: "TOTAL RETURN",     value: `${returnPct >= 0 ? "+" : ""}${returnPct.toFixed(2)}%`,                    color: rColor },
-    { label: "DAY'S PnL",        value: `${daysPnl >= 0 ? "+" : ""}₹${Math.abs(daysPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: dpColor },
-    { label: "DAY'S RETURN",     value: `${daysReturn >= 0 ? "+" : ""}${daysReturn.toFixed(2)}%`,                  color: drColor },
+    { label: "STARTING CAPITAL",    value: "₹5,00,000",                                                              color: "#9ca3af" },
+    { label: "TOTAL CAPITAL",       value: `₹${totalCurrent.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: "#ffffff" },
+    { label: "TOTAL PnL",           value: `${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: pColor },
+    { label: "TOTAL RETURN",        value: `${returnPct >= 0 ? "+" : ""}${returnPct.toFixed(2)}%`,                    color: rColor },
+    { label: "DAY'S PnL",           value: `${daysPnl >= 0 ? "+" : ""}₹${Math.abs(daysPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: dpColor },
+    { label: "DAY'S RETURN",        value: `${daysReturn >= 0 ? "+" : ""}${daysReturn.toFixed(2)}%`,                  color: drColor },
+    { label: "AVG PNL/TRADE TODAY", value: avgPnlToday != null ? `${avgPnlToday >= 0 ? "+" : ""}₹${Math.abs(avgPnlToday).toLocaleString("en-IN", { maximumFractionDigits: 0 })}` : "—", color: apColor },
   ];
 
   return (
@@ -631,7 +633,6 @@ function BtcStrategyCard({
   }, [strategy.id]);
 
   const pfVal  = metrics?.profit_factor ?? "N/A";
-  const ddVal  = metrics?.max_drawdown_inr ?? 0;
   const hasData = pfVal !== "N/A";
 
   return (
@@ -699,19 +700,11 @@ function BtcStrategyCard({
         ))}
       </div>
 
-      {/* Row 3: Profit Factor | Max Drawdown */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", borderTop: `1px solid ${accent}25` }}>
-        <div style={{ padding: "10px 14px", borderRight: `1px solid ${accent}25` }}>
-          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>PROFIT FACTOR</div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: hasData ? pfColor(pfVal) : "#4b5563", fontFamily: "monospace" }}>
-            {hasData ? pfVal : "—"}
-          </div>
-        </div>
-        <div style={{ padding: "10px 14px" }}>
-          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>MAX DRAWDOWN</div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: hasData && ddVal > 0 ? "#f87171" : "#4b5563", fontFamily: "monospace" }}>
-            {hasData && ddVal > 0 ? `-₹${fmtINR(ddVal)}` : "—"}
-          </div>
+      {/* Row 3: Profit Factor */}
+      <div style={{ borderTop: `1px solid ${accent}25`, padding: "10px 14px" }}>
+        <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>PROFIT FACTOR</div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: hasData ? pfColor(pfVal) : "#4b5563", fontFamily: "monospace" }}>
+          {hasData ? pfVal : "—"}
         </div>
       </div>
 

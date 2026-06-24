@@ -63,13 +63,14 @@ type CardMetrics = { profit_factor: string; max_drawdown_inr: number };
 // ── Strategy Config ─────────────────────────────────────────────
 
 const ACCENT: Record<string, string> = {
-  ema_crossover:  "#F59E0B",
-  orion:          "#6366F1",
-  ema_confluence: "#10B981",
-  supertrend:     "#EF4444",
-  pcr_reversal:   "#8B5CF6",
-  gap_orb:        "#06B6D4",
-  vwap_scalper:   "#F97316",
+  ema_crossover:    "#F59E0B",
+  orion:            "#6366F1",
+  ema_confluence:   "#10B981",
+  supertrend:       "#EF4444",
+  pcr_reversal:     "#8B5CF6",
+  gap_orb:          "#06B6D4",
+  vwap_scalper:     "#F97316",
+  ema_crossover_1m: "#EC4899",
 };
 
 const RULES: Record<string, string[]> = {
@@ -152,6 +153,18 @@ const RULES: Record<string, string[]> = {
     "Morning only: no new trades after 11:30 AM | Hard close: 3:18 PM",
     "Max 2 trades per day",
   ],
+  ema_crossover_1m: [
+    "Instrument: Nifty 50 options · weekly expiry",
+    "Timeframe: 1-minute candles, forming from 9:15 AM",
+    "Trading window: 9:45 AM – 3:20 PM",
+    "Entry CE: 16 EMA crosses above 64 EMA → buy CE (₹60–70 premium range, closest strike to spot)",
+    "Entry PE: 16 EMA crosses below 64 EMA → buy PE (₹60–70 premium range, closest strike to spot)",
+    "Stop loss: 15% of premium paid",
+    "Target: 30% of premium (1:2 RR) — full exit on hit",
+    "Trail SL: activates when price moves 1.5× ATR in trade direction → trail at 10% below peak premium",
+    "Exit: SL hit | target hit | opposite crossover triggers flip | trail SL hit | 3:20 PM hard close",
+    "Max 1 open trade at a time",
+  ],
   vwap_scalper: [
     "· VWAP + RSI Momentum Scalper — Nifty, BankNifty, Sensex options",
     "· Timeframe: 1-minute candles | Window: 10:30 AM – 3:18 PM IST",
@@ -193,6 +206,10 @@ function getEntryReason(strategyId: string, type: string): string {
       return type === "CE"
         ? "16 EMA crossed above 64 EMA on 30s candle. Bullish crossover signal triggered."
         : "16 EMA crossed below 64 EMA on 30s candle. Bearish crossover signal triggered.";
+    case "ema_crossover_1m":
+      return type === "CE"
+        ? "16 EMA crossed above 64 EMA on 1m candle. Bullish crossover signal triggered."
+        : "16 EMA crossed below 64 EMA on 1m candle. Bearish crossover signal triggered.";
     case "ema_confluence":
       return type === "CE"
         ? "All 5 confluence filters aligned: 16 EMA crossed above 64 EMA · RSI < 45 · price above VWAP · volume above 20-candle avg · price near 50–61.8% Fibonacci support zone."
@@ -453,14 +470,14 @@ function CapitalSummaryBar({ capitals, openPositions, positions }: { capitals: C
     }, 0);
   }, [capitals, openPositions]);
 
-  const { daysPnl, daysReturn } = useMemo(() => {
+  const { daysPnl, daysReturn, avgPnlToday } = useMemo(() => {
     const todayIST = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-    const todayClosedPnl = positions
-      .filter(p => p.status === "CLOSED" && p.closed_at?.startsWith(todayIST))
-      .reduce((s, p) => s + (p.pnl ?? 0), 0);
+    const todayClosed = positions.filter(p => p.status === "CLOSED" && p.closed_at?.startsWith(todayIST));
+    const todayClosedPnl = todayClosed.reduce((s, p) => s + (p.pnl ?? 0), 0);
     const liveOpenPnl = openPositions.reduce((s, p) => s + (p.pnl ?? 0), 0);
     const daysPnl = todayClosedPnl + liveOpenPnl;
-    return { daysPnl, daysReturn: STARTING > 0 ? (daysPnl / STARTING) * 100 : 0 };
+    const avgPnlToday = todayClosed.length > 0 ? todayClosedPnl / todayClosed.length : null;
+    return { daysPnl, daysReturn: STARTING > 0 ? (daysPnl / STARTING) * 100 : 0, avgPnlToday };
   }, [positions, openPositions]);
 
   const totalPnl  = totalCurrent - STARTING;
@@ -469,14 +486,16 @@ function CapitalSummaryBar({ capitals, openPositions, positions }: { capitals: C
   const rColor    = returnPct > 0 ? "#4ade80" : returnPct < 0 ? "#f87171" : "#9ca3af";
   const dpColor   = daysPnl > 0 ? "#4ade80" : daysPnl < 0 ? "#f87171" : "#9ca3af";
   const drColor   = daysReturn > 0 ? "#4ade80" : daysReturn < 0 ? "#f87171" : "#9ca3af";
+  const apColor   = avgPnlToday != null ? (avgPnlToday > 0 ? "#4ade80" : avgPnlToday < 0 ? "#f87171" : "#9ca3af") : "#4b5563";
 
   const stats = [
-    { label: "STARTING CAPITAL", value: "₹7,00,000",                                                              color: "#9ca3af" },
-    { label: "TOTAL CAPITAL",    value: `₹${totalCurrent.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: "#ffffff" },
-    { label: "TOTAL PnL",        value: `${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: pColor },
-    { label: "TOTAL RETURN",     value: `${returnPct >= 0 ? "+" : ""}${returnPct.toFixed(2)}%`,                   color: rColor  },
-    { label: "DAY'S PnL",        value: `${daysPnl >= 0 ? "+" : ""}₹${Math.abs(daysPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: dpColor },
-    { label: "DAY'S RETURN",     value: `${daysReturn >= 0 ? "+" : ""}${daysReturn.toFixed(2)}%`,                 color: drColor },
+    { label: "STARTING CAPITAL",    value: "₹7,00,000",                                                              color: "#9ca3af" },
+    { label: "TOTAL CAPITAL",       value: `₹${totalCurrent.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: "#ffffff" },
+    { label: "TOTAL PnL",           value: `${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: pColor },
+    { label: "TOTAL RETURN",        value: `${returnPct >= 0 ? "+" : ""}${returnPct.toFixed(2)}%`,                   color: rColor  },
+    { label: "DAY'S PnL",           value: `${daysPnl >= 0 ? "+" : ""}₹${Math.abs(daysPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: dpColor },
+    { label: "DAY'S RETURN",        value: `${daysReturn >= 0 ? "+" : ""}${daysReturn.toFixed(2)}%`,                 color: drColor },
+    { label: "AVG PNL/TRADE TODAY", value: avgPnlToday != null ? `${avgPnlToday >= 0 ? "+" : ""}₹${Math.abs(avgPnlToday).toLocaleString("en-IN", { maximumFractionDigits: 0 })}` : "—", color: apColor },
   ];
 
   return (
@@ -780,7 +799,6 @@ function StrategyCard({
   }, [strategy.id]);
 
   const pfVal = metrics?.profit_factor ?? "N/A";
-  const ddVal = metrics?.max_drawdown_inr ?? 0;
   const hasData = pfVal !== "N/A";
 
   return (
@@ -835,19 +853,11 @@ function StrategyCard({
         ))}
       </div>
 
-      {/* Row 3: Profit Factor | Max Drawdown */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", borderTop: `1px solid ${accent}25` }}>
-        <div style={{ padding: "10px 14px", borderRight: `1px solid ${accent}25` }}>
-          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>PROFIT FACTOR</div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: hasData ? pfColor(pfVal) : "#4b5563", fontFamily: "monospace" }}>
-            {hasData ? pfVal : "—"}
-          </div>
-        </div>
-        <div style={{ padding: "10px 14px" }}>
-          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>MAX DRAWDOWN</div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: hasData && ddVal > 0 ? "#f87171" : "#4b5563", fontFamily: "monospace" }}>
-            {hasData && ddVal > 0 ? `-₹${fmtINR(ddVal)}` : "—"}
-          </div>
+      {/* Row 3: Profit Factor */}
+      <div style={{ borderTop: `1px solid ${accent}25`, padding: "10px 14px" }}>
+        <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>PROFIT FACTOR</div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: hasData ? pfColor(pfVal) : "#4b5563", fontFamily: "monospace" }}>
+          {hasData ? pfVal : "—"}
         </div>
       </div>
 
