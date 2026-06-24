@@ -1341,10 +1341,10 @@ async function runStrategy3(): Promise<void> {
   const optType = bullCross ? "CE" : "PE";
 
   // Filter 1: RSI
-  const rsiOk = optType === "CE" ? rsi < 45 : rsi > 55;
+  const rsiOk = optType === "CE" ? rsi < 65 : rsi > 55;
   const rsiTag = rsiOk
     ? `RSI=${rsi.toFixed(1)}✓`
-    : `RSI=${rsi.toFixed(1)}✗(CE need <45, PE need >55)`;
+    : `RSI=${rsi.toFixed(1)}✗(CE need <65, PE need >55)`;
 
   // Filter 2: VWAP
   const price   = lastNiftyPrice;
