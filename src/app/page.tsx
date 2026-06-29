@@ -41,6 +41,7 @@ type Position = {
   stop_loss: number | null;
   trail_sl: number | null;
   pnl: number;
+  charges: number | null;
   status: "OPEN" | "CLOSED";
   opened_at: string;
   closed_at: string | null;
@@ -683,10 +684,10 @@ function ClosedTodayPanel({
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 950 }}>
             <thead>
               <tr>
-                {["#", "Strategy", "Symbol", "Type", "Entry ₹", "Exit ₹", "Qty", "PnL", "Exit Reason", "Time Closed"].map(h => (
+                {["#", "Strategy", "Symbol", "Type", "Entry ₹", "Exit ₹", "Qty", "Gross PnL", "Charges", "Net PnL", "Exit Reason", "Time Closed"].map(h => (
                   <th key={h} style={thStyle}>{h}</th>
                 ))}
               </tr>
@@ -704,7 +705,9 @@ function ClosedTodayPanel({
                     <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", color: "#6b7280" }}>₹{pos.entry_price.toFixed(2)}</td>
                     <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", color: "#9ca3af" }}>₹{(pos.exit_price ?? 0).toFixed(2)}</td>
                     <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", color: "#6b7280" }}>{pos.quantity}</td>
-                    <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", fontWeight: 700, color: pnlColor(pos.pnl ?? 0) }}>{pnlStr(pos.pnl ?? 0)}</td>
+                    <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", color: "#6b7280" }}>{pnlStr(pos.pnl ?? 0)}</td>
+                    <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", color: "#4b5563" }}>-₹{(pos.charges ?? 0).toFixed(2)}</td>
+                    <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", fontWeight: 700, color: pnlColor((pos.pnl ?? 0) - (pos.charges ?? 0)) }}>{pnlStr((pos.pnl ?? 0) - (pos.charges ?? 0))}</td>
                     <td style={{ padding: "7px 10px", fontSize: 11, color: "#4b5563", whiteSpace: "nowrap", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{reason || "—"}</td>
                     <td style={{ padding: "7px 10px", fontSize: 11, color: "#374151", whiteSpace: "nowrap" }}>{fmtTime(pos.closed_at)}</td>
                   </tr>
@@ -1154,10 +1157,10 @@ function TradePopup({
               CLOSED TRADES ({closedTrades.length})
             </div>
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 820 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
                 <thead>
                   <tr style={{ background: "#070A11" }}>
-                    {["Symbol", "Type", "Entry", "Exit", "Qty", "Final PnL", "Exit Reason", "Opened", "Closed"].map(h => (
+                    {["Symbol", "Type", "Entry", "Exit", "Qty", "Gross PnL", "Charges", "Net PnL", "Exit Reason", "Opened", "Closed"].map(h => (
                       <th key={h} style={thStyle}>{h}</th>
                     ))}
                   </tr>
@@ -1180,8 +1183,14 @@ function TradePopup({
                           {pos.exit_price != null ? `₹${pos.exit_price.toFixed(2)}` : "—"}
                         </td>
                         <td style={{ padding: "7px 8px", fontSize: 11, color: "#6b7280" }}>{pos.quantity}</td>
-                        <td style={{ padding: "7px 8px", fontSize: 11, fontFamily: "monospace", fontWeight: 600, color: pnlColor(pos.pnl ?? 0) }}>
+                        <td style={{ padding: "7px 8px", fontSize: 11, fontFamily: "monospace", color: "#6b7280" }}>
                           {pnlStr(pos.pnl ?? 0)}
+                        </td>
+                        <td style={{ padding: "7px 8px", fontSize: 11, fontFamily: "monospace", color: "#4b5563" }}>
+                          {pos.charges ? `-₹${pos.charges.toFixed(2)}` : "—"}
+                        </td>
+                        <td style={{ padding: "7px 8px", fontSize: 11, fontFamily: "monospace", fontWeight: 600, color: pnlColor((pos.pnl ?? 0) - (pos.charges ?? 0)) }}>
+                          {pnlStr((pos.pnl ?? 0) - (pos.charges ?? 0))}
                         </td>
                         <td style={{ padding: "7px 8px", fontSize: 10, color: "#374151", whiteSpace: "nowrap" }}>
                           {pos.exit_reason?.replace(/_/g, " ") ?? "—"}
@@ -1191,7 +1200,7 @@ function TradePopup({
                       </tr>
                       {expandedTrade === pos.id && (
                         <tr style={{ borderTop: "1px solid #0f1520" }}>
-                          <td colSpan={9} style={{ padding: "14px 20px", background: "#080B12" }}>
+                          <td colSpan={11} style={{ padding: "14px 20px", background: "#080B12" }}>
                             <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
                               <div style={{ flex: 1, minWidth: 220 }}>
                                 <div style={{ fontSize: 9, fontWeight: 700, color: "#374151", letterSpacing: "0.1em", marginBottom: 7 }}>WHY THIS TRADE WAS ENTERED</div>

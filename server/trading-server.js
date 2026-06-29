@@ -779,6 +779,18 @@ function generateExitDetail(reason, pos, exitPrice, peakPremium) {
             return `Position closed at ${timeStr}. Reason: ${reason}. Exit: ₹${exitPrice.toFixed(2)}.`;
     }
 }
+function calcEquityCharges(entryPrice, exitPrice, qty) {
+    const lotValue_entry = entryPrice * qty;
+    const lotValue_exit = exitPrice * qty;
+    const turnover = lotValue_entry + lotValue_exit;
+    const brokerage = 40; // ₹20/order × 2 orders (entry + exit)
+    const stt = lotValue_exit * 0.001; // 0.1% on sell-side premium (options)
+    const exchangeCharges = turnover * 0.00053; // NSE: 0.053% on total turnover
+    const gst = (brokerage + exchangeCharges) * 0.18; // 18% on brokerage + exchange charges
+    const sebi = (turnover / 10000000) * 10; // ₹10 per crore of turnover
+    const stampDuty = lotValue_entry * 0.00003; // 0.003% on buy-side only
+    return Math.round((brokerage + stt + exchangeCharges + gst + sebi + stampDuty) * 100) / 100;
+}
 async function closeStrategyPosition(posId, exitPrice, reason) {
     const { data: pos } = await supabase
         .from("strategy_positions")
@@ -788,13 +800,16 @@ async function closeStrategyPosition(posId, exitPrice, reason) {
     if (!pos)
         return;
     const p = pos;
-    const pnl = (exitPrice - p.entry_price) * p.quantity;
+    const grossPnl = (exitPrice - p.entry_price) * p.quantity;
+    const charges = calcEquityCharges(p.entry_price, exitPrice, p.quantity);
+    const netPnl = grossPnl - charges;
     const detail = generateExitDetail(reason, p, exitPrice, peakPremiums[posId]);
     const { error } = await supabase.from("strategy_positions").update({
         status: "CLOSED",
         exit_price: exitPrice,
         current_price: exitPrice,
-        pnl: Number(pnl.toFixed(2)),
+        pnl: Number(grossPnl.toFixed(2)),
+        charges: Number(charges.toFixed(2)),
         closed_at: new Date().toISOString(),
         exit_reason: reason,
         exit_reason_detail: detail,
@@ -803,7 +818,7 @@ async function closeStrategyPosition(posId, exitPrice, reason) {
         console.error(`[DB] closeStrategyPosition(${posId}) error:`, error.message);
     }
     else {
-        console.log(`[${p.strategy_id}] CLOSED ${p.symbol} @ ₹${exitPrice} | PnL: ${pnl >= 0 ? "+" : ""}₹${pnl.toFixed(2)} | ${reason}`);
+        console.log(`[${p.strategy_id}] CLOSED ${p.symbol} @ ₹${exitPrice} | Gross: ${grossPnl >= 0 ? "+" : ""}₹${grossPnl.toFixed(2)} | Charges: ₹${charges.toFixed(2)} | Net: ${netPnl >= 0 ? "+" : ""}₹${netPnl.toFixed(2)} | ${reason}`);
         delete peakPremiums[posId];
         await updateStrategyCapital(p.strategy_id);
     }
@@ -811,18 +826,18 @@ async function closeStrategyPosition(posId, exitPrice, reason) {
 async function updateStrategyCapital(strategyId) {
     const { data } = await supabase
         .from("strategy_positions")
-        .select("pnl, status")
+        .select("pnl, charges, status")
         .eq("strategy_id", strategyId);
     const positions = (data ?? []);
     const closed = positions.filter(p => p.status === "CLOSED");
-    const totalPnl = closed.reduce((s, p) => s + (p.pnl ?? 0), 0);
-    const wins = closed.filter(p => (p.pnl ?? 0) > 0).length;
+    const totalPnl = closed.reduce((s, p) => s + ((p.pnl ?? 0) - (p.charges ?? 0)), 0);
+    const wins = closed.filter(p => (p.pnl ?? 0) - (p.charges ?? 0) > 0).length;
     const winRate = closed.length > 0 ? wins / closed.length : 0;
     const currentVal = 100000 + totalPnl;
-    // Simple Sharpe: (return / std) using daily trade PnLs
+    // Simple Sharpe: (return / std) using net PnL per trade (after charges)
     let sharpe = 0;
     if (closed.length >= 2) {
-        const pnls = closed.map(p => p.pnl ?? 0);
+        const pnls = closed.map(p => (p.pnl ?? 0) - (p.charges ?? 0));
         const mean = pnls.reduce((s, v) => s + v, 0) / pnls.length;
         const std = Math.sqrt(pnls.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / pnls.length);
         sharpe = std > 0 ? mean / std : 0;
