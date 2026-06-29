@@ -36,6 +36,7 @@ type BtcPosition = {
   exit_price_usd: number | null;
   qty_inr: number;
   pnl_inr: number;
+  charges_inr: number | null;
   stop_loss: number | null;
   trail_sl: number | null;
   leverage: number | null;
@@ -544,10 +545,10 @@ function BtcClosedTodayPanel({
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 680 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
             <thead>
               <tr>
-                {["#", "Strategy", "Side", "Entry USD", "Exit USD", "PnL", "Exit Reason", "Time Closed"].map(h => (
+                {["#", "Strategy", "Side", "Entry USD", "Exit USD", "Gross PnL", "Charges", "Net PnL", "Exit Reason", "Time Closed"].map(h => (
                   <th key={h} style={thStyle}>{h}</th>
                 ))}
               </tr>
@@ -563,7 +564,9 @@ function BtcClosedTodayPanel({
                     <td style={{ padding: "7px 10px", fontSize: 12, fontWeight: 700, color: pos.side === "LONG" ? "#22c55e" : "#ef4444" }}>{pos.side}</td>
                     <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", color: "#6b7280" }}>${pos.entry_price_usd.toLocaleString("en-US", { maximumFractionDigits: 2 })}</td>
                     <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", color: "#9ca3af" }}>${(pos.exit_price_usd ?? 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}</td>
-                    <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", fontWeight: 700, color: pnlColor(pos.pnl_inr ?? 0) }}>{pnlStr(pos.pnl_inr ?? 0)}</td>
+                    <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", color: "#6b7280" }}>{pnlStr(pos.pnl_inr ?? 0)}</td>
+                    <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", color: "#4b5563" }}>-₹{(pos.charges_inr ?? 0).toFixed(2)}</td>
+                    <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", fontWeight: 700, color: pnlColor((pos.pnl_inr ?? 0) - (pos.charges_inr ?? 0)) }}>{pnlStr((pos.pnl_inr ?? 0) - (pos.charges_inr ?? 0))}</td>
                     <td style={{ padding: "7px 10px", fontSize: 11, color: "#4b5563", whiteSpace: "nowrap", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{reason || "—"}</td>
                     <td style={{ padding: "7px 10px", fontSize: 11, color: "#374151", whiteSpace: "nowrap" }}>{fmtTime(pos.closed_at)}</td>
                   </tr>

@@ -27,7 +27,7 @@ type BtcCapital = {
 type BtcPosition = {
   id: string; strategy_id: string; side: "LONG" | "SHORT";
   entry_price_usd: number; current_price_usd: number; exit_price_usd: number | null;
-  qty_inr: number; pnl_inr: number; stop_loss: number | null; trail_sl: number | null;
+  qty_inr: number; pnl_inr: number; charges_inr: number | null; stop_loss: number | null; trail_sl: number | null;
   leverage: number | null; status: "OPEN" | "CLOSED";
   opened_at: string; closed_at: string | null;
   entry_reason: string | null; exit_reason: string | null; exit_reason_detail: string | null;
@@ -1139,10 +1139,10 @@ export default function BtcStrategyDetailPage() {
                     <span style={{ fontSize: 13, color: "#374151" }}>· {closedTrades.length} total</span>
                   </div>
                   <div style={{ overflowX: "auto", background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, overflow: "hidden" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1000 }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1200 }}>
                       <thead>
                         <tr style={{ background: "#070A11" }}>
-                          {["Side", "Entry (USD)", "Exit (USD)", "Qty (INR)", "Leverage", "Realized (Partial)", "Final PnL", "Exit Reason", "Duration", "Opened", "Closed"].map(h => (
+                          {["Side", "Entry (USD)", "Exit (USD)", "Qty (INR)", "Leverage", "Realized (Partial)", "Gross PnL", "Charges", "Net PnL", "Exit Reason", "Duration", "Opened", "Closed"].map(h => (
                             <th key={h} style={thStyle}>{h}</th>
                           ))}
                         </tr>
@@ -1166,7 +1166,13 @@ export default function BtcStrategyDetailPage() {
                               <td style={{ padding: "12px 16px", fontSize: 11, fontFamily: "monospace", color: (pos.realized_pnl ?? 0) !== 0 ? "#4ade80" : "#374151" }}>
                                 {(pos.realized_pnl ?? 0) !== 0 ? pnlStr(pos.realized_pnl ?? 0) : "—"}
                               </td>
-                              <td style={{ padding: "12px 16px", fontSize: 12, fontFamily: "monospace", fontWeight: 700, color: pnlColor(pos.pnl_inr ?? 0) }}>{pnlStr(pos.pnl_inr ?? 0)}</td>
+                              <td style={{ padding: "12px 16px", fontSize: 12, fontFamily: "monospace", color: "#6b7280" }}>{pnlStr(pos.pnl_inr ?? 0)}</td>
+                              <td style={{ padding: "12px 16px", fontSize: 12, fontFamily: "monospace", color: "#4b5563" }}>
+                                {pos.charges_inr ? `-₹${pos.charges_inr.toFixed(2)}` : "—"}
+                              </td>
+                              <td style={{ padding: "12px 16px", fontSize: 12, fontFamily: "monospace", fontWeight: 700, color: pnlColor((pos.pnl_inr ?? 0) - (pos.charges_inr ?? 0)) }}>
+                                {pnlStr((pos.pnl_inr ?? 0) - (pos.charges_inr ?? 0))}
+                              </td>
                               <td style={{ padding: "12px 16px", fontSize: 11, color: "#374151", whiteSpace: "nowrap" }}>{pos.exit_reason?.replace(/_/g, " ") ?? "—"}</td>
                               <td style={{ padding: "12px 16px", fontSize: 12, color: "#6b7280" }}>{formatDuration(pos.opened_at, pos.closed_at)}</td>
                               <td style={{ padding: "12px 16px", fontSize: 11, color: "#374151" }}>{fmtTime(pos.opened_at)}</td>
@@ -1174,7 +1180,7 @@ export default function BtcStrategyDetailPage() {
                             </tr>
                             {expandedTrade === pos.id && (
                               <tr style={{ borderTop: "1px solid #0f1520" }}>
-                                <td colSpan={11} style={{ padding: "20px 24px", background: "#080B12" }}>
+                                <td colSpan={13} style={{ padding: "20px 24px", background: "#080B12" }}>
                                   <div style={{ display: "flex", gap: 40, flexWrap: "wrap" }}>
                                     {pos.entry_reason && (
                                       <div style={{ flex: 1, minWidth: 260 }}>

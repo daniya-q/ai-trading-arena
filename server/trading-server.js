@@ -2456,6 +2456,15 @@ async function openBtcPosition(strategyId, side, entryPriceUsd, stopLoss, entryR
         return null;
     }
 }
+function calcBtcCharges(entryPriceUsd, exitPriceUsd, qtyInr, usdInrRate = 83) {
+    void entryPriceUsd;
+    void exitPriceUsd; // fee is % of position size, not price delta
+    const positionUsd = qtyInr / usdInrRate;
+    const entryFee = positionUsd * 0.0026; // Kraken taker 0.26% on entry
+    const exitFee = positionUsd * 0.0026; // Kraken taker 0.26% on exit
+    const totalFeeInr = (entryFee + exitFee) * usdInrRate;
+    return Math.round(totalFeeInr * 100) / 100;
+}
 async function closeBtcPosition(posId, exitPriceUsd, reason) {
     try {
         const { data: pos, error: fetchErr } = await supabase
@@ -2471,12 +2480,15 @@ async function closeBtcPosition(posId, exitPriceUsd, reason) {
         const remainingPnl = p.side === "LONG"
             ? ((exitPriceUsd - p.entry_price_usd) / p.entry_price_usd) * remainingQty
             : ((p.entry_price_usd - exitPriceUsd) / p.entry_price_usd) * remainingQty;
-        const totalPnlInr = realizedPnl + remainingPnl;
-        const detail = generateBtcExitDetail(reason, p.side, p.entry_price_usd, exitPriceUsd, totalPnlInr, p.stop_loss, p.trail_sl);
+        const grossPnlInr = realizedPnl + remainingPnl;
+        const chargesInr = calcBtcCharges(p.entry_price_usd, exitPriceUsd, remainingQty);
+        const netPnlInr = grossPnlInr - chargesInr;
+        const detail = generateBtcExitDetail(reason, p.side, p.entry_price_usd, exitPriceUsd, grossPnlInr, p.stop_loss, p.trail_sl);
         await supabase.from("btc_strategy_positions").update({
             exit_price_usd: exitPriceUsd,
             current_price_usd: exitPriceUsd,
-            pnl_inr: totalPnlInr,
+            pnl_inr: Number(grossPnlInr.toFixed(2)),
+            charges_inr: Number(chargesInr.toFixed(2)),
             status: "CLOSED",
             exit_reason: reason,
             exit_reason_detail: detail,
@@ -2486,13 +2498,11 @@ async function closeBtcPosition(posId, exitPriceUsd, reason) {
         delete btcSlDists[posId];
         await updateBtcCapital(p.strategy_id);
         if (p.partial_booked) {
-            const bookedPct = ((p.partial_qty_inr ?? 0) / p.qty_inr * 100).toFixed(0);
             const remPct = (remainingQty / p.qty_inr * 100).toFixed(0);
-            console.log(`[BTC ${p.strategy_id}] Closed remaining ${remPct}% @ $${exitPriceUsd.toFixed(2)} (${reason}) — remaining PnL ₹${remainingPnl.toFixed(0)}. Total PnL (realized + remaining) = ₹${totalPnlInr.toFixed(0)}`);
-            void bookedPct;
+            console.log(`[BTC ${p.strategy_id}] Closed remaining ${remPct}% ${p.side} @ $${exitPriceUsd.toFixed(2)} | Gross: ${grossPnlInr >= 0 ? "+" : ""}₹${grossPnlInr.toFixed(0)} | Charges: ₹${chargesInr.toFixed(2)} | Net: ${netPnlInr >= 0 ? "+" : ""}₹${netPnlInr.toFixed(0)} | ${reason}`);
         }
         else {
-            console.log(`[BTC ${p.strategy_id}] Closed ${p.side} @ $${exitPriceUsd.toFixed(2)} (${reason}) PnL ₹${totalPnlInr.toFixed(2)}`);
+            console.log(`[BTC ${p.strategy_id}] Closed ${p.side} @ $${exitPriceUsd.toFixed(2)} | Gross: ${grossPnlInr >= 0 ? "+" : ""}₹${grossPnlInr.toFixed(2)} | Charges: ₹${chargesInr.toFixed(2)} | Net: ${netPnlInr >= 0 ? "+" : ""}₹${netPnlInr.toFixed(2)} | ${reason}`);
         }
     }
     catch (err) {
@@ -2503,13 +2513,14 @@ async function updateBtcCapital(strategyId) {
     try {
         const { data } = await supabase
             .from("btc_strategy_positions")
-            .select("pnl_inr, status")
+            .select("pnl_inr, charges_inr, status")
             .eq("strategy_id", strategyId);
         const positions = (data ?? []);
         const closed = positions.filter(p => p.status === "CLOSED");
-        const pnls = closed.map(p => p.pnl_inr ?? 0);
+        const pnls = closed.map(p => (p.pnl_inr ?? 0) - (p.charges_inr ?? 0));
         const totalPnl = pnls.reduce((s, v) => s + v, 0);
         const wins = pnls.filter(v => v > 0).length;
+        // Sharpe uses net PnL per trade (after Kraken charges)
         let sharpe = 0;
         if (pnls.length >= 2) {
             const mean = totalPnl / pnls.length;
