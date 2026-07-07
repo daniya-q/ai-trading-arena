@@ -35,7 +35,7 @@ jobs:
       - name: Request Upstox token approval
         run: |
           echo "Sending token request at $(date -u '+%H:%M UTC')"
-          curl -s --max-time 30 -X POST \
+          curl -sf --max-time 30 -X POST \
             "https://ai-trading-arena-backend-production.up.railway.app/api/request-upstox-token" \
             -H "Content-Type: application/json"
 
