@@ -1,0 +1,6 @@
+[deploy]
+# Health check — Railway probes /ping every 10s during deploy.
+# We respond immediately (before candle seeding) so the container
+# is marked healthy as soon as Express binds the port.
+healthcheckPath    = "/ping"
+healthcheckTimeout = 300      # seconds; default is 300 — explicit to prevent silent reductions

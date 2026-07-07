@@ -11,6 +11,7 @@
 import path from "path";
 import * as dotenv from "dotenv";
 dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
+console.log(`[Boot] Server process started — PID ${process.pid} — ${new Date().toISOString()}`);
 
 // ── Global error handlers — prevent process crash on unhandled rejections ──
 process.on("uncaughtException", (err) => {
@@ -3540,9 +3541,10 @@ app.use((_req, res, next) => {
   next();
 });
 const PORT = Number(process.env.PORT ?? process.env.TRADING_SERVER_PORT ?? 8080);
+let bootPhase: "starting" | "ready" = "starting";
 
 app.get("/ping", (_req, res) => {
-  res.json({ status: "ok", time: new Date().toISOString() });
+  res.json({ status: "ok", phase: bootPhase, time: new Date().toISOString() });
 });
 
 // ── /api/indices — live index prices with change vs prev close ──
@@ -4013,18 +4015,12 @@ app.get("/api/btc-capital-history", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`\n[Server] AI Trading Arena backend running on http://localhost:${PORT}`);
-  console.log(`         Health:  http://localhost:${PORT}/health`);
-  console.log(`         Candles: http://localhost:${PORT}/candles\n`);
-});
-
 // ══════════════════════════════════════════════════════════════
 // Boot
 // ══════════════════════════════════════════════════════════════
 
-console.log("[Server] Starting...");
-console.log(`[Server] Supabase: ${process.env.NEXT_PUBLIC_SUPABASE_URL}`);
+console.log("[Boot] Starting server...");
+console.log(`[Boot] Supabase: ${process.env.NEXT_PUBLIC_SUPABASE_URL}`);
 const _accessTok   = process.env.UPSTOX_ACCESS_TOKEN   ?? "";
 const _analyticsTok = process.env.UPSTOX_ANALYTICS_TOKEN ?? "";
 console.log(`[Token] ACCESS_TOKEN   : ${_accessTok   ? _accessTok.substring(0, 10)   + "..." : "NOT SET"}`);
@@ -4035,15 +4031,28 @@ if (_analyticsTok) {
   console.warn("[Token] UPSTOX_ANALYTICS_TOKEN not set — falling back to OAuth token for market data");
 }
 
+// Bind HTTP server BEFORE seeding — Railway health check (/ping) passes immediately.
+// Seeding is async and runs in the background; bootPhase transitions to "ready" when done.
+app.listen(PORT, () => {
+  console.log(`[Boot] HTTP server bound on port ${PORT} — health checks will now pass`);
+  console.log(`       /ping → { status: "ok", phase: "starting"|"ready" }`);
+});
+
 refreshUsdToInr().catch(console.error);
 scheduleTokenRequest();
 
 // Load token first, THEN seed equity candles — seeding needs a valid Upstox token.
 // BTC uses public Kraken API so can start in parallel.
-seedBtcCandlesFromKraken().catch(console.error);
-loadTokenFromSupabase()
-  .then(() => seedEquityCandlesFromUpstox())
-  .catch(console.error);
+console.log("[Boot] Beginning candle seed — server responding to health checks while seeding...");
+Promise.all([
+  seedBtcCandlesFromKraken(),
+  loadTokenFromSupabase().then(() => seedEquityCandlesFromUpstox()),
+]).then(() => {
+  bootPhase = "ready";
+  console.log("[Boot] Candle seeding complete — server fully ready");
+}).catch((err) => {
+  console.error("[Boot] Candle seeding error:", err);
+});
 
 // LTP every second
 pollLTP();
