@@ -64,14 +64,17 @@ type CardMetrics = { profit_factor: string; max_drawdown_inr: number };
 // ── Strategy Config ─────────────────────────────────────────────
 
 const ACCENT: Record<string, string> = {
-  ema_crossover:    "#F59E0B",
-  orion:            "#6366F1",
-  ema_confluence:   "#10B981",
-  supertrend:       "#EF4444",
-  pcr_reversal:     "#8B5CF6",
-  gap_orb:          "#06B6D4",
-  vwap_scalper:     "#F97316",
-  ema_crossover_1m: "#EC4899",
+  ema_crossover:         "#F59E0B",
+  orion:                 "#6366F1",
+  ema_confluence:        "#10B981",
+  supertrend:            "#EF4444",
+  pcr_reversal:          "#8B5CF6",
+  gap_orb:               "#06B6D4",
+  vwap_scalper:          "#F97316",
+  ema_crossover_1m:      "#EC4899",
+  ema_crossover_asym:    "#34D399",
+  ema_crossover_confirm: "#60A5FA",
+  ema_crossover_dualtf:  "#A78BFA",
 };
 
 const RULES: Record<string, string[]> = {
@@ -198,6 +201,36 @@ const RULES: Record<string, string[]> = {
     "  · SL: 10% of premium | Target: 15% of premium (1:1.5 RR) | Position size halved",
     "",
     "Exit priority: SL hit → Target hit → Trail SL hit → 3:18 PM hard close → Opposite VWAP cross",
+  ],
+  ema_crossover_asym: [
+    "Control clone of S1 (EMA Crossover) with one change: exit confirmation",
+    "Instrument: Nifty 50 options · weekly expiry",
+    "Timeframe: 30-second candles | Window: 9:45 AM – 3:20 PM",
+    "Entry: 16/64 EMA cross — acts IMMEDIATELY (same as S1)",
+    "Exit/flip: opposite EMA cross must hold for 2 consecutive 30s bar closes before acting",
+    "  Bar 1: opposite cross detected → signal logged, no action taken",
+    "  Bar 2: if EMA direction still holds → execute close + open opposite",
+    "  If EMA reverts before bar 2 → flip cancelled, logged as 'flip_reverted'",
+    "SL: 15% | Target: 30% | Trail: +20% activates → 10% below peak | Hard close 3:20 PM",
+  ],
+  ema_crossover_confirm: [
+    "Control clone of S1 (EMA Crossover) — 2-bar confirmation on BOTH entry and exit",
+    "Instrument: Nifty 50 options · weekly expiry",
+    "Timeframe: 30-second candles | Window: 9:45 AM – 3:20 PM",
+    "Entry: cross detected → wait for 2nd consecutive 30s bar confirming direction → enter",
+    "Exit/flip: opposite cross detected → wait for 2nd bar confirming → close + flip",
+    "  If EMA reverts before bar 2 → action cancelled, logged as reverted",
+    "SL: 15% | Target: 30% | Trail: +20% activates → 10% below peak | Hard close 3:20 PM",
+  ],
+  ema_crossover_dualtf: [
+    "Control clone of S1 — requires agreement from both 30s AND 1-minute EMA 16/64",
+    "Instrument: Nifty 50 options · weekly expiry",
+    "Timeframe: 30-second candles + 1-minute candles | Window: 9:45 AM – 3:20 PM",
+    "Entry CE: 30s 16 EMA crosses above 64 EMA AND 1m 16 EMA is above 1m 64 EMA",
+    "Entry PE: 30s 16 EMA crosses below 64 EMA AND 1m 16 EMA is below 1m 64 EMA",
+    "Exit/flip: opposite 30s cross AND 1m EMA direction agrees with new side",
+    "  If 1m disagrees → signal blocked, logged as '1m_ema_disagrees'",
+    "SL: 15% | Target: 30% | Trail: +20% activates → 10% below peak | Hard close 3:20 PM",
   ],
 };
 

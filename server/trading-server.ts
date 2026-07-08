@@ -795,10 +795,13 @@ function roundUpToOneDecimal(value: number): number {
 
 // Fixed profit target % per strategy (full position exits at target)
 const TARGET_PCT: Record<string, number> = {
-  ema_crossover:    0.30,   // SL 15% → 1:2 RR
-  orion:            0.45,   // SL 30% → 1:1.5 RR
-  ema_confluence:   0.30,   // SL 15% → 1:2 RR
-  supertrend:       0.40,   // SL 20% → 1:2 RR
+  ema_crossover:         0.30,   // SL 15% → 1:2 RR
+  ema_crossover_asym:    0.30,   // SL 15% → 1:2 RR (control clone)
+  ema_crossover_confirm: 0.30,   // SL 15% → 1:2 RR (control clone)
+  ema_crossover_dualtf:  0.30,   // SL 15% → 1:2 RR (control clone)
+  orion:                 0.45,   // SL 30% → 1:1.5 RR
+  ema_confluence:        0.30,   // SL 15% → 1:2 RR
+  supertrend:            0.40,   // SL 20% → 1:2 RR
   pcr_reversal:     0.375,  // SL 25% → 1:1.5 RR
   gap_orb:          0.40,   // SL 20% → 1:2 RR (gap fill is primary exit; 40% is fallback)
   vwap_scalper:     0.30,   // SL 20% → 1:1.5 RR (danger: SL 10% → target 15%, computed from SL)
@@ -814,9 +817,9 @@ function generateExitDetail(
   const ist   = getIST();
   const timeStr = `${String(ist.getUTCHours()).padStart(2,"0")}:${String(ist.getUTCMinutes()).padStart(2,"0")} IST`;
 
-  const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:25, gap_orb:20, vwap_scalper:20, ema_crossover_1m:15 };
-  const TRAIL_PCT: Record<string, number> = { ema_crossover:10, ema_confluence:10, orion:15, supertrend:12, pcr_reversal:12, gap_orb:12, vwap_scalper:12, ema_crossover_1m:10 };
-  const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:20 PM", orion:"3:20 PM", ema_confluence:"3:20 PM", supertrend:"3:20 PM", pcr_reversal:"3:20 PM", gap_orb:"3:20 PM", vwap_scalper:"3:20 PM", ema_crossover_1m:"3:20 PM" };
+  const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_crossover_asym:15, ema_crossover_confirm:15, ema_crossover_dualtf:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:25, gap_orb:20, vwap_scalper:20, ema_crossover_1m:15 };
+  const TRAIL_PCT: Record<string, number> = { ema_crossover:10, ema_crossover_asym:10, ema_crossover_confirm:10, ema_crossover_dualtf:10, ema_confluence:10, orion:15, supertrend:12, pcr_reversal:12, gap_orb:12, vwap_scalper:12, ema_crossover_1m:10 };
+  const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:20 PM", ema_crossover_asym:"3:20 PM", ema_crossover_confirm:"3:20 PM", ema_crossover_dualtf:"3:20 PM", orion:"3:20 PM", ema_confluence:"3:20 PM", supertrend:"3:20 PM", pcr_reversal:"3:20 PM", gap_orb:"3:20 PM", vwap_scalper:"3:20 PM", ema_crossover_1m:"3:20 PM" };
 
   switch (reason) {
     case "SL_HIT": {
@@ -972,14 +975,17 @@ async function monitorOpenPositions(): Promise<void> {
   if (!data?.length) return;
 
   const HARD_CLOSE_MINS: Record<string, number> = {
-    ema_crossover:    920,  // 15:20
-    orion:            920,  // 15:20 (entry window unchanged: 9:30–14:00)
-    ema_confluence:   920,
-    supertrend:       920,
-    pcr_reversal:     920,
-    gap_orb:          920,  // 15:20 (entry window unchanged: before 11:30 AM)
-    vwap_scalper:     920,  // 15:20
-    ema_crossover_1m: 920,  // 15:20
+    ema_crossover:         920,  // 15:20
+    ema_crossover_asym:    920,
+    ema_crossover_confirm: 920,
+    ema_crossover_dualtf:  920,
+    orion:                 920,  // 15:20 (entry window unchanged: 9:30–14:00)
+    ema_confluence:        920,
+    supertrend:            920,
+    pcr_reversal:          920,
+    gap_orb:               920,  // 15:20 (entry window unchanged: before 11:30 AM)
+    vwap_scalper:          920,  // 15:20
+    ema_crossover_1m:      920,  // 15:20
   };
 
   const currentMins = istMins();
@@ -1026,7 +1032,7 @@ async function monitorOpenPositions(): Promise<void> {
     // ── Trail SL activation ──
     let trailActivationPct = 0.35;
     let trailPct           = 0.12;
-    if (pos.strategy_id === "ema_crossover" || pos.strategy_id === "ema_confluence") {
+    if (["ema_crossover", "ema_crossover_asym", "ema_crossover_confirm", "ema_crossover_dualtf", "ema_confluence"].includes(pos.strategy_id)) {
       trailActivationPct = 0.20;
       trailPct           = 0.10;
     } else if (pos.strategy_id === "orion") {
@@ -1262,6 +1268,423 @@ async function runStrategy8(): Promise<void> {
     pnl:           0,
     status:        "OPEN",
   });
+}
+
+// ══════════════════════════════════════════════════════════════
+// Shared helper — log EMA variant signals to strategy_signals
+// Repurposed columns (no DDL required):
+//   rsi       → confirmation_bar count (0/1/2)
+//   volume_ok → 2nd-bar confirmed (true) | awaiting (false)
+//   oi_rising → 1m EMA agrees (for dualtf)
+//   vwap      → EMA16 on 1m (for dualtf)
+//   fib_low   → EMA64 on 1m (for dualtf)
+// ══════════════════════════════════════════════════════════════
+async function logVariantSignal(opts: {
+  strategyId:      string;
+  direction:       "bullish" | "bearish";
+  ema16:           number;
+  ema64:           number;
+  price:           number;
+  tradeTaken:      boolean;
+  blockedReason?:  string;   // human label for console log
+  confirmBar?:     number;   // 0 | 1 | 2
+  ema161m?:        number;
+  ema641m?:        number;
+  oneMAgrees?:     boolean;
+}): Promise<void> {
+  const tag = `[${opts.strategyId}]`;
+  const blocked = opts.blockedReason ? ` BLOCKED(${opts.blockedReason})` : "";
+  console.log(
+    `${tag} ${opts.direction.toUpperCase()}${blocked}` +
+    ` | EMA16=${opts.ema16.toFixed(1)} EMA64=${opts.ema64.toFixed(1)}` +
+    (opts.ema161m !== undefined ? ` | 1m-EMA16=${opts.ema161m.toFixed(1)} 1m-EMA64=${opts.ema641m!.toFixed(1)} 1m-agrees=${opts.oneMAgrees}` : "") +
+    (opts.confirmBar !== undefined ? ` | confirm_bar=${opts.confirmBar}` : "") +
+    ` | trade_taken=${opts.tradeTaken}`
+  );
+  const row = {
+    strategy_id:        opts.strategyId,
+    index:              "NIFTY",
+    direction:          opts.direction,
+    ema16:              Number(opts.ema16.toFixed(2)),
+    ema64:              Number(opts.ema64.toFixed(2)),
+    price:              Number(opts.price.toFixed(2)),
+    trade_taken:        opts.tradeTaken,
+    all_filters_passed: opts.tradeTaken,
+    rsi:                opts.confirmBar   ?? null,   // confirmation bar count
+    volume_ok:          opts.confirmBar === 2,       // true once confirmed
+    oi_rising:          opts.oneMAgrees  ?? false,
+    vwap:               opts.ema161m     ?? null,
+    fib_low:            opts.ema641m     ?? null,
+    fib_high:           null,
+    in_fib_zone:        false,
+    rsi_pass:           opts.tradeTaken,
+    vwap_pass:          opts.oneMAgrees  ?? false,
+  };
+  supabase.from("strategy_signals").insert(row).then(({ error }) => {
+    if (error) console.error(`${tag} signal log failed: ${error.message}`);
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+// Strategy 9 — EMA Crossover Asym
+// Entry: instant on 16/64 cross (same as S1)
+// Exit/flip: opposite cross must hold for 2 consecutive 30s bars
+// ══════════════════════════════════════════════════════════════
+
+let sAsymPrevFast = 0;
+let sAsymPrevSlow = 0;
+let sAsymPendingFlip: { dir: "CE" | "PE" } | null = null;
+
+async function runStrategyAsym(): Promise<void> {
+  if (!isMarketOpen()) return;
+  const mins = istMins();
+  if (mins < 585 || mins >= 920) return; // 9:45–15:20
+
+  const candles = getCandles("NIFTY", "30s");
+  if (candles.length < 66) {
+    console.log(`[S9-Asym] Waiting for candles — have ${candles.length}/66`);
+    return;
+  }
+
+  const closes   = candles.map(c => c.close);
+  const fastArr  = emaValues(closes, 16);
+  const slowArr  = emaValues(closes, 64);
+  const fastCurr = fastArr[fastArr.length - 1];
+  const slowCurr = slowArr[slowArr.length - 1];
+  const fastPrev = sAsymPrevFast || fastArr[fastArr.length - 2];
+  const slowPrev = sAsymPrevSlow || slowArr[slowArr.length - 2];
+
+  const bullCross = fastPrev <= slowPrev && fastCurr > slowCurr;
+  const bearCross = fastPrev >= slowPrev && fastCurr < slowCurr;
+
+  sAsymPrevFast = fastCurr;
+  sAsymPrevSlow = slowCurr;
+
+  // Current EMA direction (for confirmation check)
+  const emaDir: "CE" | "PE" = fastCurr > slowCurr ? "CE" : "PE";
+
+  // ── Handle pending flip confirmation ──────────────────────────
+  if (sAsymPendingFlip) {
+    if (emaDir === sAsymPendingFlip.dir) {
+      // Bar 2 confirmed — execute the flip
+      console.log(`[S9-Asym] Flip CONFIRMED (bar 2) → ${sAsymPendingFlip.dir}`);
+      const openPos = await getOpenStrategyPositions("ema_crossover_asym");
+      for (const pos of openPos) {
+        const cp = getCurrentPrice(pos.symbol);
+        if (cp > 0) await closeStrategyPosition(pos.id, cp, "CROSSOVER");
+      }
+      const optType = sAsymPendingFlip.dir;
+      sAsymPendingFlip = null;
+
+      const chain = getLatestChain("NIFTY");
+      if (!chain) return;
+      const option = getATMOption(chain, optType, 60, 70, lastNiftyPrice);
+      if (!option) {
+        console.log(`[S9-Asym] Flip confirmed but no ₹60-70 ${optType} available`);
+        await logVariantSignal({ strategyId: "ema_crossover_asym", direction: optType === "CE" ? "bullish" : "bearish", ema16: fastCurr, ema64: slowCurr, price: lastNiftyPrice, tradeTaken: false, blockedReason: "no_option_in_range", confirmBar: 2 });
+        return;
+      }
+      const capital = await getEquityCurrentValue("ema_crossover_asym");
+      const qty = capQtyByMaxLoss(calcLots(capital, 0.60, option.premium, 65), option.premium, 0.15, 65, "S9-Asym");
+      if (qty === 0) return;
+      await openStrategyPosition("ema_crossover_asym", {
+        symbol: option.symbol, type: optType, side: "LONG",
+        entry_price: option.premium, current_price: option.premium,
+        quantity: qty, stop_loss: roundUpToOneDecimal(option.premium * 0.85),
+        trail_sl: null, pnl: 0, status: "OPEN",
+      });
+      await logVariantSignal({ strategyId: "ema_crossover_asym", direction: optType === "CE" ? "bullish" : "bearish", ema16: fastCurr, ema64: slowCurr, price: lastNiftyPrice, tradeTaken: true, confirmBar: 2 });
+    } else {
+      // EMA reverted — cancel the pending flip
+      console.log(`[S9-Asym] Flip REVERTED — was pending ${sAsymPendingFlip.dir}, EMA now favors ${emaDir}`);
+      await logVariantSignal({ strategyId: "ema_crossover_asym", direction: sAsymPendingFlip.dir === "CE" ? "bullish" : "bearish", ema16: fastCurr, ema64: slowCurr, price: lastNiftyPrice, tradeTaken: false, blockedReason: "flip_reverted", confirmBar: 1 });
+      sAsymPendingFlip = null;
+    }
+    return;
+  }
+
+  const openPos = await getOpenStrategyPositions("ema_crossover_asym");
+  const hasPos  = openPos.length > 0;
+  const currentType = hasPos ? openPos[0].type as "CE" | "PE" : null;
+
+  // ── No position: entry is instant (same as S1) ───────────────
+  if (!hasPos) {
+    if (!bullCross && !bearCross) return;
+    const optType = bullCross ? "CE" : "PE";
+    const chain   = getLatestChain("NIFTY");
+    if (!chain) return;
+    const option = getATMOption(chain, optType, 60, 70, lastNiftyPrice);
+    if (!option) {
+      await logVariantSignal({ strategyId: "ema_crossover_asym", direction: bullCross ? "bullish" : "bearish", ema16: fastCurr, ema64: slowCurr, price: lastNiftyPrice, tradeTaken: false, blockedReason: "no_option_in_range" });
+      return;
+    }
+    const capital = await getEquityCurrentValue("ema_crossover_asym");
+    const qty = capQtyByMaxLoss(calcLots(capital, 0.60, option.premium, 65), option.premium, 0.15, 65, "S9-Asym");
+    if (qty === 0) return;
+    console.log(`[S9-Asym] ENTRY ${optType} @ ₹${option.premium} qty=${qty}`);
+    await openStrategyPosition("ema_crossover_asym", {
+      symbol: option.symbol, type: optType, side: "LONG",
+      entry_price: option.premium, current_price: option.premium,
+      quantity: qty, stop_loss: roundUpToOneDecimal(option.premium * 0.85),
+      trail_sl: null, pnl: 0, status: "OPEN",
+    });
+    await logVariantSignal({ strategyId: "ema_crossover_asym", direction: bullCross ? "bullish" : "bearish", ema16: fastCurr, ema64: slowCurr, price: lastNiftyPrice, tradeTaken: true, confirmBar: 0 });
+    return;
+  }
+
+  // ── Position open: detect opposite cross → queue flip ────────
+  const oppositeDir: "CE" | "PE" = currentType === "CE" ? "PE" : "CE";
+  if ((bearCross && currentType === "CE") || (bullCross && currentType === "PE")) {
+    console.log(`[S9-Asym] Opposite cross detected → waiting for bar 2 before flipping to ${oppositeDir}`);
+    sAsymPendingFlip = { dir: oppositeDir };
+    await logVariantSignal({ strategyId: "ema_crossover_asym", direction: oppositeDir === "CE" ? "bullish" : "bearish", ema16: fastCurr, ema64: slowCurr, price: lastNiftyPrice, tradeTaken: false, blockedReason: "awaiting_confirmation_bar_2", confirmBar: 1 });
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Strategy 10 — EMA Crossover Confirm
+// Both entry AND exit/flip require 2 consecutive 30s bar closes
+// confirming the cross direction before acting
+// ══════════════════════════════════════════════════════════════
+
+let sConfirmPrevFast = 0;
+let sConfirmPrevSlow = 0;
+let sConfirmPending: { dir: "CE" | "PE"; phase: "entry" | "flip" } | null = null;
+
+async function runStrategyConfirm(): Promise<void> {
+  if (!isMarketOpen()) return;
+  const mins = istMins();
+  if (mins < 585 || mins >= 920) return;
+
+  const candles = getCandles("NIFTY", "30s");
+  if (candles.length < 66) {
+    console.log(`[S10-Confirm] Waiting for candles — have ${candles.length}/66`);
+    return;
+  }
+
+  const closes   = candles.map(c => c.close);
+  const fastArr  = emaValues(closes, 16);
+  const slowArr  = emaValues(closes, 64);
+  const fastCurr = fastArr[fastArr.length - 1];
+  const slowCurr = slowArr[slowArr.length - 1];
+  const fastPrev = sConfirmPrevFast || fastArr[fastArr.length - 2];
+  const slowPrev = sConfirmPrevSlow || slowArr[slowArr.length - 2];
+
+  const bullCross = fastPrev <= slowPrev && fastCurr > slowCurr;
+  const bearCross = fastPrev >= slowPrev && fastCurr < slowCurr;
+
+  sConfirmPrevFast = fastCurr;
+  sConfirmPrevSlow = slowCurr;
+
+  const emaDir: "CE" | "PE" = fastCurr > slowCurr ? "CE" : "PE";
+
+  // ── Handle pending action ─────────────────────────────────────
+  if (sConfirmPending) {
+    if (emaDir === sConfirmPending.dir) {
+      // Bar 2 confirmed
+      console.log(`[S10-Confirm] ${sConfirmPending.phase.toUpperCase()} CONFIRMED (bar 2) → ${sConfirmPending.dir}`);
+      const optType = sConfirmPending.dir;
+      const phase   = sConfirmPending.phase;
+      sConfirmPending = null;
+
+      if (phase === "flip") {
+        const openPos = await getOpenStrategyPositions("ema_crossover_confirm");
+        for (const pos of openPos) {
+          const cp = getCurrentPrice(pos.symbol);
+          if (cp > 0) await closeStrategyPosition(pos.id, cp, "CROSSOVER");
+        }
+      }
+
+      const chain = getLatestChain("NIFTY");
+      if (!chain) return;
+      const option = getATMOption(chain, optType, 60, 70, lastNiftyPrice);
+      if (!option) {
+        await logVariantSignal({ strategyId: "ema_crossover_confirm", direction: optType === "CE" ? "bullish" : "bearish", ema16: fastCurr, ema64: slowCurr, price: lastNiftyPrice, tradeTaken: false, blockedReason: "no_option_in_range", confirmBar: 2 });
+        return;
+      }
+      const capital = await getEquityCurrentValue("ema_crossover_confirm");
+      const qty = capQtyByMaxLoss(calcLots(capital, 0.60, option.premium, 65), option.premium, 0.15, 65, "S10-Confirm");
+      if (qty === 0) return;
+      await openStrategyPosition("ema_crossover_confirm", {
+        symbol: option.symbol, type: optType, side: "LONG",
+        entry_price: option.premium, current_price: option.premium,
+        quantity: qty, stop_loss: roundUpToOneDecimal(option.premium * 0.85),
+        trail_sl: null, pnl: 0, status: "OPEN",
+      });
+      await logVariantSignal({ strategyId: "ema_crossover_confirm", direction: optType === "CE" ? "bullish" : "bearish", ema16: fastCurr, ema64: slowCurr, price: lastNiftyPrice, tradeTaken: true, confirmBar: 2 });
+    } else {
+      // Reverted
+      console.log(`[S10-Confirm] ${sConfirmPending.phase.toUpperCase()} REVERTED — was pending ${sConfirmPending.dir}, EMA now ${emaDir}`);
+      await logVariantSignal({ strategyId: "ema_crossover_confirm", direction: sConfirmPending.dir === "CE" ? "bullish" : "bearish", ema16: fastCurr, ema64: slowCurr, price: lastNiftyPrice, tradeTaken: false, blockedReason: `${sConfirmPending.phase}_reverted`, confirmBar: 1 });
+      sConfirmPending = null;
+    }
+    return;
+  }
+
+  const openPos     = await getOpenStrategyPositions("ema_crossover_confirm");
+  const hasPos      = openPos.length > 0;
+  const currentType = hasPos ? openPos[0].type as "CE" | "PE" : null;
+
+  if (!hasPos) {
+    // Entry requires 2-bar confirmation
+    if (!bullCross && !bearCross) return;
+    const optType = bullCross ? "CE" : "PE";
+    console.log(`[S10-Confirm] ENTRY cross detected → waiting for bar 2 before entering ${optType}`);
+    sConfirmPending = { dir: optType, phase: "entry" };
+    await logVariantSignal({ strategyId: "ema_crossover_confirm", direction: bullCross ? "bullish" : "bearish", ema16: fastCurr, ema64: slowCurr, price: lastNiftyPrice, tradeTaken: false, blockedReason: "awaiting_entry_bar_2", confirmBar: 1 });
+    return;
+  }
+
+  // Flip: requires 2-bar confirmation
+  if ((bearCross && currentType === "CE") || (bullCross && currentType === "PE")) {
+    const optType: "CE" | "PE" = currentType === "CE" ? "PE" : "CE";
+    console.log(`[S10-Confirm] FLIP cross detected → waiting for bar 2 before flipping to ${optType}`);
+    sConfirmPending = { dir: optType, phase: "flip" };
+    await logVariantSignal({ strategyId: "ema_crossover_confirm", direction: optType === "CE" ? "bullish" : "bearish", ema16: fastCurr, ema64: slowCurr, price: lastNiftyPrice, tradeTaken: false, blockedReason: "awaiting_flip_bar_2", confirmBar: 1 });
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Strategy 11 — EMA Crossover Dual-TF
+// Entry/exit only when 30s cross AND 1-minute EMA direction agree
+// Uses 16/64 EMA on both timeframes (reuses S8's 1m candle builder)
+// ══════════════════════════════════════════════════════════════
+
+let sDualPrev30sFast = 0;
+let sDualPrev30sSlow = 0;
+
+async function runStrategyDualTf(): Promise<void> {
+  if (!isMarketOpen()) return;
+  const mins = istMins();
+  if (mins < 585 || mins >= 920) return;
+
+  const candles30s = getCandles("NIFTY", "30s");
+  const candles1m  = getCandles("NIFTY", "1m");
+
+  if (candles30s.length < 66) {
+    console.log(`[S11-DualTF] Waiting for 30s candles — have ${candles30s.length}/66`);
+    return;
+  }
+  if (candles1m.length < 66) {
+    console.log(`[S11-DualTF] Waiting for 1m candles — have ${candles1m.length}/66`);
+    return;
+  }
+
+  // 30s EMAs
+  const closes30s  = candles30s.map(c => c.close);
+  const fast30sArr = emaValues(closes30s, 16);
+  const slow30sArr = emaValues(closes30s, 64);
+  const fast30sCurr = fast30sArr[fast30sArr.length - 1];
+  const slow30sCurr = slow30sArr[slow30sArr.length - 1];
+  const fast30sPrev = sDualPrev30sFast || fast30sArr[fast30sArr.length - 2];
+  const slow30sPrev = sDualPrev30sSlow || slow30sArr[slow30sArr.length - 2];
+
+  const bullCross30s = fast30sPrev <= slow30sPrev && fast30sCurr > slow30sCurr;
+  const bearCross30s = fast30sPrev >= slow30sPrev && fast30sCurr < slow30sCurr;
+
+  sDualPrev30sFast = fast30sCurr;
+  sDualPrev30sSlow = slow30sCurr;
+
+  // 1m EMAs
+  const closes1m  = candles1m.map(c => c.close);
+  const fast1mArr = emaValues(closes1m, 16);
+  const slow1mArr = emaValues(closes1m, 64);
+  const fast1m    = fast1mArr[fast1mArr.length - 1];
+  const slow1m    = slow1mArr[slow1mArr.length - 1];
+  const oneMBull  = fast1m > slow1m;
+  const oneMBear  = fast1m < slow1m;
+
+  const crossTag = bullCross30s ? "BULL-CROSS↑" : bearCross30s ? "BEAR-CROSS↓" : "no-cross";
+  console.log(`[S11-DualTF] 30s: EMA16=${fast30sCurr.toFixed(1)} EMA64=${slow30sCurr.toFixed(1)} | 1m: EMA16=${fast1m.toFixed(1)} EMA64=${slow1m.toFixed(1)} | ${crossTag} | 1m-dir=${oneMBull?"BULL":"BEAR"}`);
+
+  const openPos     = await getOpenStrategyPositions("ema_crossover_dualtf");
+  const hasPos      = openPos.length > 0;
+  const currentType = hasPos ? openPos[0].type as "CE" | "PE" : null;
+
+  if (!hasPos) {
+    if (!bullCross30s && !bearCross30s) return;
+
+    const optType = bullCross30s ? "CE" : "PE";
+    const oneMAgrees = bullCross30s ? oneMBull : oneMBear;
+
+    if (!oneMAgrees) {
+      console.log(`[S11-DualTF] ${optType} signal BLOCKED — 1m EMA disagrees (1m-bull=${oneMBull})`);
+      await logVariantSignal({ strategyId: "ema_crossover_dualtf", direction: bullCross30s ? "bullish" : "bearish", ema16: fast30sCurr, ema64: slow30sCurr, price: lastNiftyPrice, tradeTaken: false, blockedReason: "1m_ema_disagrees_on_entry", ema161m: fast1m, ema641m: slow1m, oneMAgrees: false });
+      return;
+    }
+
+    const chain = getLatestChain("NIFTY");
+    if (!chain) return;
+    const option = getATMOption(chain, optType, 60, 70, lastNiftyPrice);
+    if (!option) {
+      await logVariantSignal({ strategyId: "ema_crossover_dualtf", direction: bullCross30s ? "bullish" : "bearish", ema16: fast30sCurr, ema64: slow30sCurr, price: lastNiftyPrice, tradeTaken: false, blockedReason: "no_option_in_range", ema161m: fast1m, ema641m: slow1m, oneMAgrees: true });
+      return;
+    }
+    const capital = await getEquityCurrentValue("ema_crossover_dualtf");
+    const qty = capQtyByMaxLoss(calcLots(capital, 0.60, option.premium, 65), option.premium, 0.15, 65, "S11-DualTF");
+    if (qty === 0) return;
+    console.log(`[S11-DualTF] ENTRY ${optType} @ ₹${option.premium} qty=${qty} (30s+1m agree)`);
+    await openStrategyPosition("ema_crossover_dualtf", {
+      symbol: option.symbol, type: optType, side: "LONG",
+      entry_price: option.premium, current_price: option.premium,
+      quantity: qty, stop_loss: roundUpToOneDecimal(option.premium * 0.85),
+      trail_sl: null, pnl: 0, status: "OPEN",
+    });
+    await logVariantSignal({ strategyId: "ema_crossover_dualtf", direction: bullCross30s ? "bullish" : "bearish", ema16: fast30sCurr, ema64: slow30sCurr, price: lastNiftyPrice, tradeTaken: true, ema161m: fast1m, ema641m: slow1m, oneMAgrees: true });
+    return;
+  }
+
+  // Position open: check for exit/flip
+  if (bearCross30s && currentType === "CE") {
+    if (!oneMBear) {
+      console.log(`[S11-DualTF] PE flip signal BLOCKED — 1m EMA disagrees with bearish flip`);
+      await logVariantSignal({ strategyId: "ema_crossover_dualtf", direction: "bearish", ema16: fast30sCurr, ema64: slow30sCurr, price: lastNiftyPrice, tradeTaken: false, blockedReason: "1m_ema_disagrees_on_exit", ema161m: fast1m, ema641m: slow1m, oneMAgrees: false });
+      return;
+    }
+    for (const pos of openPos) {
+      const cp = getCurrentPrice(pos.symbol);
+      if (cp > 0) await closeStrategyPosition(pos.id, cp, "CROSSOVER");
+    }
+    const chain = getLatestChain("NIFTY");
+    if (!chain) return;
+    const option = getATMOption(chain, "PE", 60, 70, lastNiftyPrice);
+    if (!option) return;
+    const capital = await getEquityCurrentValue("ema_crossover_dualtf");
+    const qty = capQtyByMaxLoss(calcLots(capital, 0.60, option.premium, 65), option.premium, 0.15, 65, "S11-DualTF");
+    if (qty === 0) return;
+    await openStrategyPosition("ema_crossover_dualtf", {
+      symbol: option.symbol, type: "PE", side: "LONG",
+      entry_price: option.premium, current_price: option.premium,
+      quantity: qty, stop_loss: roundUpToOneDecimal(option.premium * 0.85),
+      trail_sl: null, pnl: 0, status: "OPEN",
+    });
+    await logVariantSignal({ strategyId: "ema_crossover_dualtf", direction: "bearish", ema16: fast30sCurr, ema64: slow30sCurr, price: lastNiftyPrice, tradeTaken: true, ema161m: fast1m, ema641m: slow1m, oneMAgrees: true });
+
+  } else if (bullCross30s && currentType === "PE") {
+    if (!oneMBull) {
+      console.log(`[S11-DualTF] CE flip signal BLOCKED — 1m EMA disagrees with bullish flip`);
+      await logVariantSignal({ strategyId: "ema_crossover_dualtf", direction: "bullish", ema16: fast30sCurr, ema64: slow30sCurr, price: lastNiftyPrice, tradeTaken: false, blockedReason: "1m_ema_disagrees_on_exit", ema161m: fast1m, ema641m: slow1m, oneMAgrees: false });
+      return;
+    }
+    for (const pos of openPos) {
+      const cp = getCurrentPrice(pos.symbol);
+      if (cp > 0) await closeStrategyPosition(pos.id, cp, "CROSSOVER");
+    }
+    const chain = getLatestChain("NIFTY");
+    if (!chain) return;
+    const option = getATMOption(chain, "CE", 60, 70, lastNiftyPrice);
+    if (!option) return;
+    const capital = await getEquityCurrentValue("ema_crossover_dualtf");
+    const qty = capQtyByMaxLoss(calcLots(capital, 0.60, option.premium, 65), option.premium, 0.15, 65, "S11-DualTF");
+    if (qty === 0) return;
+    await openStrategyPosition("ema_crossover_dualtf", {
+      symbol: option.symbol, type: "CE", side: "LONG",
+      entry_price: option.premium, current_price: option.premium,
+      quantity: qty, stop_loss: roundUpToOneDecimal(option.premium * 0.85),
+      trail_sl: null, pnl: 0, status: "OPEN",
+    });
+    await logVariantSignal({ strategyId: "ema_crossover_dualtf", direction: "bullish", ema16: fast30sCurr, ema64: slow30sCurr, price: lastNiftyPrice, tradeTaken: true, ema161m: fast1m, ema641m: slow1m, oneMAgrees: true });
+  }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2125,6 +2548,9 @@ async function runEquityStrategies(): Promise<void> {
       runStrategy6(),
       runStrategy7(),
       runStrategy8(),
+      runStrategyAsym(),
+      runStrategyConfirm(),
+      runStrategyDualTf(),
     ]);
     await Promise.allSettled([
       monitorOpenPositions(),
@@ -3582,7 +4008,7 @@ app.get("/api/indicators", (req, res) => {
 
   // Determine candle interval based on strategy
   let interval: string;
-  if (["ema_crossover", "ema_confluence", "pcr_reversal"].includes(strategy)) {
+  if (["ema_crossover", "ema_crossover_asym", "ema_crossover_confirm", "ema_crossover_dualtf", "ema_confluence", "pcr_reversal"].includes(strategy)) {
     interval = "30s";
   } else if (strategy === "supertrend") {
     interval = "5m";
@@ -3600,7 +4026,7 @@ app.get("/api/indicators", (req, res) => {
   const result: Record<string, unknown> = {};
 
   // EMA16 + EMA64 (ema_crossover, ema_confluence)
-  if (["ema_crossover", "ema_confluence"].includes(strategy)) {
+  if (["ema_crossover", "ema_crossover_asym", "ema_crossover_confirm", "ema_crossover_dualtf", "ema_confluence"].includes(strategy)) {
     const ema16arr = emaValues(closes, 16);
     const ema64arr = emaValues(closes, 64);
     result.ema16 = ema16arr.map((v, i) => ({ time: candles[i].time, value: v })).slice(-100);

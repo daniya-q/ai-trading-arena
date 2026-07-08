@@ -61,6 +61,10 @@ type CapitalPoint = { date: string; capital: number };
 const ACCENT: Record<string, string> = {
   ema_crossover: "#F59E0B", orion: "#6366F1", ema_confluence: "#10B981",
   supertrend: "#EF4444", pcr_reversal: "#8B5CF6", gap_orb: "#06B6D4", vwap_scalper: "#F97316",
+  ema_crossover_1m: "#EC4899",
+  ema_crossover_asym:    "#34D399",
+  ema_crossover_confirm: "#60A5FA",
+  ema_crossover_dualtf:  "#A78BFA",
 };
 
 const RULES: Record<string, string[]> = {
@@ -153,6 +157,28 @@ const RULES: Record<string, string[]> = {
     "Trail SL: at 25% gain → move SL to breakeven · at 35% gain → trail at 12% below peak (ratchet)",
     "Exit Priority: 1) Hard SL hit  2) Opposite VWAP cross  3) Trail SL hit  4) 3:00 PM hard close",
   ],
+  ema_crossover_asym: [
+    "Control clone of S1 — instant entry, 2-bar exit/flip confirmation",
+    "Timeframe: 30s candles | Window: 9:45 AM – 3:20 PM",
+    "Entry: immediate on 16/64 cross (same as S1)",
+    "Exit/flip: opposite cross must hold for 2 consecutive 30s bars before acting",
+    "SL: 15% | Target: 30% | Trail: +20% → 10% below peak | Hard close 3:20 PM",
+  ],
+  ema_crossover_confirm: [
+    "Control clone of S1 — 2-bar confirmation on BOTH entry and exit",
+    "Timeframe: 30s candles | Window: 9:45 AM – 3:20 PM",
+    "Entry: cross detected → wait 2nd bar confirming direction → enter",
+    "Exit/flip: opposite cross → wait 2nd bar confirming → close + flip",
+    "SL: 15% | Target: 30% | Trail: +20% → 10% below peak | Hard close 3:20 PM",
+  ],
+  ema_crossover_dualtf: [
+    "Control clone of S1 — requires 30s AND 1m EMA 16/64 agreement",
+    "Timeframe: 30s + 1m candles | Window: 9:45 AM – 3:20 PM",
+    "Entry CE: 30s bull cross AND 1m EMA16 > EMA64",
+    "Entry PE: 30s bear cross AND 1m EMA16 < EMA64",
+    "Exit/flip blocked if 1m EMA disagrees with intended new direction",
+    "SL: 15% | Target: 30% | Trail: +20% → 10% below peak | Hard close 3:20 PM",
+  ],
 };
 
 // Per-strategy rules font size — calculated so rules fill the right column height.
@@ -166,7 +192,10 @@ const RULES_FONT: Record<string, number> = {
   supertrend:     27,  // 9 lines → 27
   pcr_reversal:   30,  // 8 lines → 610/(8×2) × 0.8 = 30
   gap_orb:        24,  // 10 lines → 610/(10×2) × 0.8 = 24
-  vwap_scalper:   16,  // 17 lines (3 empty) → (610-45)/(14×2) × 0.8 = 16
+  vwap_scalper:        16,  // 17 lines (3 empty) → (610-45)/(14×2) × 0.8 = 16
+  ema_crossover_asym:    27,  // 5 lines
+  ema_crossover_confirm: 27,  // 5 lines
+  ema_crossover_dualtf:  24,  // 6 lines
 };
 
 const STRATEGY_CHARTS: Record<string, Array<{ index: string; interval: string }>> = {
@@ -176,7 +205,10 @@ const STRATEGY_CHARTS: Record<string, Array<{ index: string; interval: string }>
   supertrend:     [{ index: "NIFTY", interval: "5m" }, { index: "BANKNIFTY", interval: "5m" }],
   pcr_reversal:   [{ index: "NIFTY", interval: "30s" }],
   gap_orb:        [{ index: "NIFTY", interval: "15m" }],
-  vwap_scalper:   [{ index: "NIFTY", interval: "1m" }, { index: "SENSEX", interval: "1m" }, { index: "BANKNIFTY", interval: "1m" }],
+  vwap_scalper:          [{ index: "NIFTY", interval: "1m" }, { index: "SENSEX", interval: "1m" }, { index: "BANKNIFTY", interval: "1m" }],
+  ema_crossover_asym:    [{ index: "NIFTY", interval: "30s" }],
+  ema_crossover_confirm: [{ index: "NIFTY", interval: "30s" }],
+  ema_crossover_dualtf:  [{ index: "NIFTY", interval: "30s" }],
 };
 
 // ── Formatters ───────────────────────────────────────────────────
@@ -204,7 +236,10 @@ function getEntryReason(sid: string, type: string): string {
     case "supertrend":     return CE ? "Supertrend(7,3) flipped green on 5m candle. Price crossed above the Supertrend line — bullish flip." : "Supertrend(7,3) flipped red on 5m candle. Price crossed below the Supertrend line — bearish flip.";
     case "pcr_reversal":   return CE ? "PCR exceeded 1.3 (market oversold). PE OI at ATM fell 10%+ over 30 min — confirming PE unwinding." : "PCR fell below 0.7 (market overbought). CE OI at ATM fell 10%+ over 30 min — confirming CE unwinding.";
     case "gap_orb":        return CE ? "Gap down > 0.3% at open. Fade strategy — buying CE expecting recovery to previous close." : "Gap up > 0.3% at open. Fade strategy — buying PE expecting pullback to previous close.";
-    case "vwap_scalper":   return CE ? "Price pulled back to VWAP and bounced above it on 1m candle. RSI 40–60 · OI rising · higher low formed." : "Price pulled back to VWAP and rejected below it on 1m candle. RSI 40–60 · OI rising · lower high formed.";
+    case "vwap_scalper":        return CE ? "Price pulled back to VWAP and bounced above it on 1m candle. RSI 40–60 · OI rising · higher low formed." : "Price pulled back to VWAP and rejected below it on 1m candle. RSI 40–60 · OI rising · lower high formed.";
+    case "ema_crossover_asym":    return CE ? "16 EMA crossed above 64 EMA on 30s candle — entry taken immediately (2-bar exit confirmation variant)." : "16 EMA crossed below 64 EMA on 30s candle — entry taken immediately (2-bar exit confirmation variant).";
+    case "ema_crossover_confirm": return CE ? "16/64 EMA bull cross confirmed over 2 consecutive 30s bars — entry taken on bar 2." : "16/64 EMA bear cross confirmed over 2 consecutive 30s bars — entry taken on bar 2.";
+    case "ema_crossover_dualtf":  return CE ? "30s EMA bull cross AND 1m EMA16 > EMA64 — both timeframes aligned bullish." : "30s EMA bear cross AND 1m EMA16 < EMA64 — both timeframes aligned bearish.";
     default: return "Entry signal triggered.";
   }
 }
