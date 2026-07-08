@@ -3,6 +3,21 @@
  * All premiums in ₹ (index points). NIFTY options are European.
  */
 
+// ── Mark-to-market T floor ─────────────────────────────────────────────────────
+// Near expiry (T→0), BSM gamma explodes: a 0.04-0.09% spot wiggle can cause a
+// 15-25% modelled premium drop that real bid-ask spreads + market-maker stickiness
+// would absorb. To prevent ghost SL hits on expiry day (Tuesday), all mark-to-market
+// calls use max(actual_T, T_MARK_FLOOR) rather than raw T.
+//
+// Set to 4 NIFTY trading hours:
+//   4 hrs ÷ (6.25 trading hrs/day × 252 trading days/yr) = 4/1575 years
+//   ≈ 0.93 calendar days — covers the entire Tuesday expiry session and the
+//   final hours of the day before, where gamma remains elevated.
+//
+// selectStrike (entry) still uses raw T so strike selection stays realistic.
+// Only position monitoring (SL / trail / target checks) uses the floor.
+export const T_MARK_FLOOR = 4 / (252 * 6.25); // 4 NIFTY trading hours in BSM years
+
 // ── Normal CDF (Abramowitz & Stegun approximation, error < 1.5e-7) ───────────
 function normCdf(x) {
   if (x < -8) return 0;

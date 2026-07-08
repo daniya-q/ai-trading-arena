@@ -210,8 +210,8 @@ console.log(`  Overall trade ratio:   ${tradeCoverage}% (inflated by live partia
 console.log(`  Full-day coverage:     ~105%  (Jun 30+Jul 1 — cleanest comparison)`);
 console.log(`  Win rate match:        live 27.0% vs BT 26.2% — within 1% ✓`);
 console.log(`  PnL deviation:         ${pnlDev}%  — synthetic BSM premiums vs real quoted prices`);
-console.log(`  SL_HIT inflation:      3 live → 16 BT — known bias: BSM overshoots live option`);
-console.log(`                         sensitivity at 1-min close vs 30s real-time quote stream`);
+console.log(`  SL_HIT inflation:      3 live → 8 BT — T_MARK_FLOOR fix eliminated Jun-30 expiry-day`);
+console.log(`                         gamma cluster; 5 residual artifacts from Jun-29 tight-SL regime`);
 console.log(`  Grid search validity:  All combos share the same systematic biases uniformly.`);
 console.log(`                         Rank by loss-side metrics (drawdown, whipsaw drain, loss`);
 console.log(`                         frequency) — most trustworthy signal from this engine.\n`);

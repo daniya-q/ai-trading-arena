@@ -17,7 +17,7 @@
  * Trail/tgt:  checked against BSM at bar.close (mark-to-market)
  */
 
-import { bsmPrice, realizedVol, nextNiftyExpiry, timeToExpiry, selectStrike } from './bsm.mjs';
+import { bsmPrice, realizedVol, nextNiftyExpiry, timeToExpiry, selectStrike, T_MARK_FLOOR } from './bsm.mjs';
 import { calcCharges } from './charges.mjs';
 
 // ── Constants matching live S8 ────────────────────────────────────────────────
@@ -72,8 +72,10 @@ function calcQty(capital, premium) {
 }
 
 // ── BSM mark-to-market at a given spot price ─────────────────────────────────
+// Uses T_MARK_FLOOR to prevent gamma explosion near expiry (see bsm.mjs).
+// selectStrike (entry) still uses raw T — floor only applies to position monitoring.
 function markPremium(spot, pos, nowMs) {
-  const T = timeToExpiry(nowMs, pos.expiryMs);
+  const T = Math.max(timeToExpiry(nowMs, pos.expiryMs), T_MARK_FLOOR);
   return bsmPrice(spot, pos.strike, T, RISK_FREE_RATE, pos.sigma, pos.type);
 }
 
