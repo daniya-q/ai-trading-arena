@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import Sidebar from "@/components/Sidebar";
+import ConditionalSidebar from "@/components/ConditionalSidebar";
 
 export const metadata: Metadata = {
   title: "AI Trading Arena",
@@ -16,7 +16,7 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <main style={{ display: "flex", minHeight: "100vh" }}>
-          <Sidebar />
+          <ConditionalSidebar />
           <div style={{ flex: 1, minWidth: 0 }}>
             {children}
           </div>
