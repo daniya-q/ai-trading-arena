@@ -72,9 +72,11 @@ const ACCENT: Record<string, string> = {
   gap_orb:               "#06B6D4",
   vwap_scalper:          "#F97316",
   ema_crossover_1m:      "#EC4899",
-  ema_crossover_asym:    "#34D399",
-  ema_crossover_confirm: "#60A5FA",
-  ema_crossover_dualtf:  "#A78BFA",
+  ema_crossover_asym:        "#34D399",
+  ema_crossover_confirm:     "#60A5FA",
+  ema_crossover_dualtf:      "#A78BFA",
+  ema_crossover_1m_run:      "#84CC16",
+  ema_crossover_1m_runtrail: "#14B8A6",
 };
 
 const RULES: Record<string, string[]> = {
@@ -232,6 +234,30 @@ const RULES: Record<string, string[]> = {
     "  If 1m disagrees → signal blocked, logged as '1m_ema_disagrees'",
     "SL: 15% | Target: 30% | Trail: +20% activates → 10% below peak | Hard close 3:20 PM",
   ],
+  ema_crossover_1m_run: [
+    "Instrument: Nifty 50 options · weekly expiry",
+    "Timeframe: 1-minute candles, forming from 9:15 AM",
+    "Trading window: 9:45 AM – 3:20 PM",
+    "Entry CE: 16 EMA crosses above 64 EMA → buy CE (₹60–70 premium range, closest strike to spot)",
+    "Entry PE: 16 EMA crosses below 64 EMA → buy PE (₹60–70 premium range, closest strike to spot)",
+    "Stop loss: 15% of premium paid",
+    "NO profit target — position runs until SL, crossover, or hard close",
+    "NO trail SL — hard SL only",
+    "Exit: SL hit | opposite crossover triggers flip | 3:20 PM hard close",
+    "Max 1 open trade at a time",
+  ],
+  ema_crossover_1m_runtrail: [
+    "Instrument: Nifty 50 options · weekly expiry",
+    "Timeframe: 1-minute candles, forming from 9:15 AM",
+    "Trading window: 9:45 AM – 3:20 PM",
+    "Entry CE: 16 EMA crosses above 64 EMA → buy CE (₹60–70 premium range, closest strike to spot)",
+    "Entry PE: 16 EMA crosses below 64 EMA → buy PE (₹60–70 premium range, closest strike to spot)",
+    "Stop loss: 15% of premium paid",
+    "NO profit target — position runs until trail SL, SL, crossover, or hard close",
+    "Trail SL: activates at +20% profit → trails 10% below peak premium (ratchet-only, never loosens)",
+    "Exit: SL hit | trail SL hit | opposite crossover triggers flip | 3:20 PM hard close",
+    "Max 1 open trade at a time",
+  ],
 };
 
 function getEntryReason(strategyId: string, type: string): string {
@@ -244,6 +270,14 @@ function getEntryReason(strategyId: string, type: string): string {
       return type === "CE"
         ? "16 EMA crossed above 64 EMA on 1m candle. Bullish crossover signal triggered."
         : "16 EMA crossed below 64 EMA on 1m candle. Bearish crossover signal triggered.";
+    case "ema_crossover_1m_run":
+      return type === "CE"
+        ? "16 EMA crossed above 64 EMA on 1m candle. Let-It-Run variant — no target, SL-only exit."
+        : "16 EMA crossed below 64 EMA on 1m candle. Let-It-Run variant — no target, SL-only exit.";
+    case "ema_crossover_1m_runtrail":
+      return type === "CE"
+        ? "16 EMA crossed above 64 EMA on 1m candle. Run+Trail variant — no target, trail SL activates at +20%."
+        : "16 EMA crossed below 64 EMA on 1m candle. Run+Trail variant — no target, trail SL activates at +20%.";
     case "ema_confluence":
       return type === "CE"
         ? "All 5 confluence filters aligned: 16 EMA crossed above 64 EMA · RSI < 45 · price above VWAP · volume above 20-candle avg · price near 50–61.8% Fibonacci support zone."
