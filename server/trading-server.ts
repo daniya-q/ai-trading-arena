@@ -136,6 +136,10 @@ let openEquityPositions: Array<{ id: string; symbol: string; entry_price: number
 // Peak premiums for open positions (in-memory, intraday only)
 const peakPremiums: Record<string, number> = {}; // posId → peak premium
 
+// Expiry power hour — tracks which expiry days have been attempted (reset daily)
+const phDirAttempted      = new Set<string>();
+const phStraddleAttempted = new Set<string>();
+
 // ── Daily gap state (Strategy 6) ────────────────────────────
 let dailyGapPct  = 0;
 let gapCalcDate  = "";
@@ -185,6 +189,8 @@ function checkDailyReset(): void {
     // Clear expiry day cache
     for (const k of Object.keys(expiryDayCache)) delete expiryDayCache[k];
     gapCalcDate = "";
+    phDirAttempted.clear();
+    phStraddleAttempted.clear();
     console.log(`[Daily] Reset for ${today}`);
   }
 }
@@ -812,6 +818,8 @@ const TARGET_PCT: Record<string, number> = {
 const NO_TARGET_STRATEGIES = new Set([
   "ema_crossover_1m_run",
   "ema_crossover_1m_runtrail",
+  "expiry_powerhour_dir",
+  "expiry_powerhour_straddle",
 ]);
 
 function generateExitDetail(
@@ -823,9 +831,9 @@ function generateExitDetail(
   const ist   = getIST();
   const timeStr = `${String(ist.getUTCHours()).padStart(2,"0")}:${String(ist.getUTCMinutes()).padStart(2,"0")} IST`;
 
-  const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_crossover_asym:15, ema_crossover_confirm:15, ema_crossover_dualtf:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:15, gap_orb:20, vwap_scalper:20, ema_crossover_1m:15, ema_crossover_1m_run:15, ema_crossover_1m_runtrail:15 };
-  const TRAIL_PCT: Record<string, number> = { ema_crossover:10, ema_crossover_asym:10, ema_crossover_confirm:10, ema_crossover_dualtf:10, ema_confluence:10, orion:15, supertrend:12, pcr_reversal:12, gap_orb:12, vwap_scalper:12, ema_crossover_1m:10, ema_crossover_1m_runtrail:10 };
-  const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:20 PM", ema_crossover_asym:"3:20 PM", ema_crossover_confirm:"3:20 PM", ema_crossover_dualtf:"3:20 PM", orion:"3:20 PM", ema_confluence:"3:20 PM", supertrend:"3:20 PM", pcr_reversal:"3:20 PM", gap_orb:"3:20 PM", vwap_scalper:"3:20 PM", ema_crossover_1m:"3:20 PM", ema_crossover_1m_run:"3:20 PM", ema_crossover_1m_runtrail:"3:20 PM" };
+  const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_crossover_asym:15, ema_crossover_confirm:15, ema_crossover_dualtf:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:15, gap_orb:20, vwap_scalper:20, ema_crossover_1m:15, ema_crossover_1m_run:15, ema_crossover_1m_runtrail:15, expiry_powerhour_dir:40, expiry_powerhour_straddle:40 };
+  const TRAIL_PCT: Record<string, number> = { ema_crossover:10, ema_crossover_asym:10, ema_crossover_confirm:10, ema_crossover_dualtf:10, ema_confluence:10, orion:15, supertrend:12, pcr_reversal:12, gap_orb:12, vwap_scalper:12, ema_crossover_1m:10, ema_crossover_1m_runtrail:10, expiry_powerhour_dir:20, expiry_powerhour_straddle:20 };
+  const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:20 PM", ema_crossover_asym:"3:20 PM", ema_crossover_confirm:"3:20 PM", ema_crossover_dualtf:"3:20 PM", orion:"3:20 PM", ema_confluence:"3:20 PM", supertrend:"3:20 PM", pcr_reversal:"3:20 PM", gap_orb:"3:20 PM", vwap_scalper:"3:20 PM", ema_crossover_1m:"3:20 PM", ema_crossover_1m_run:"3:20 PM", ema_crossover_1m_runtrail:"3:20 PM", expiry_powerhour_dir:"3:18 PM", expiry_powerhour_straddle:"3:18 PM" };
 
   switch (reason) {
     case "SL_HIT": {
@@ -996,6 +1004,8 @@ async function monitorOpenPositions(): Promise<void> {
     ema_crossover_1m:          920,  // 15:20
     ema_crossover_1m_run:      920,  // 15:20
     ema_crossover_1m_runtrail: 920,  // 15:20
+    expiry_powerhour_dir:      918,  // 3:18 PM
+    expiry_powerhour_straddle: 918,  // 3:18 PM
   };
 
   const currentMins = istMins();
@@ -1026,9 +1036,17 @@ async function monitorOpenPositions(): Promise<void> {
       ? (() => { const ch = getLatestChain("NIFTY"); return ch ? `PCR at exit: ${ch.pcr.toFixed(2)}.` : undefined; })()
       : undefined;
 
+    // Pre-compute power hour peak annotation
+    const phExitDetail: string | undefined =
+      (pos.strategy_id === "expiry_powerhour_dir" || pos.strategy_id === "expiry_powerhour_straddle")
+        ? `Peak premium: ₹${(peakPremiums[pos.id] ?? pos.entry_price).toFixed(2)}.`
+        : undefined;
+
+    const appendDetail = pcrExitDetail ?? phExitDetail;
+
     // ── Priority 1: Hard SL hit ──
     if (pos.stop_loss && currentPrice <= pos.stop_loss) {
-      await closeStrategyPosition(pos.id, currentPrice, "SL_HIT", pcrExitDetail);
+      await closeStrategyPosition(pos.id, currentPrice, "SL_HIT", appendDetail);
       continue;
     }
 
@@ -1042,7 +1060,7 @@ async function monitorOpenPositions(): Promise<void> {
         if (slPct > 0) targetPct = slPct * 1.5;
       }
       if (pnlPct >= targetPct) {
-        await closeStrategyPosition(pos.id, currentPrice, "TARGET_HIT", pcrExitDetail);
+        await closeStrategyPosition(pos.id, currentPrice, "TARGET_HIT", appendDetail);
         continue;
       }
     }
@@ -1064,6 +1082,9 @@ async function monitorOpenPositions(): Promise<void> {
       }
       trailActivationPct = 0.35;
       trailPct           = 0.12;
+    } else if (pos.strategy_id === "expiry_powerhour_dir" || pos.strategy_id === "expiry_powerhour_straddle") {
+      trailActivationPct = 0.50;  // +50% from entry
+      trailPct           = 0.20;  // trail 20% below peak
     }
 
     if (pos.strategy_id !== "ema_crossover_1m_run" && pnlPct >= trailActivationPct) {
@@ -1076,7 +1097,7 @@ async function monitorOpenPositions(): Promise<void> {
 
     // ── Priority 3: Trail SL hit ──
     if (pos.trail_sl && currentPrice <= pos.trail_sl) {
-      await closeStrategyPosition(pos.id, currentPrice, "TRAIL_SL", pcrExitDetail);
+      await closeStrategyPosition(pos.id, currentPrice, "TRAIL_SL", appendDetail);
       continue;
     }
 
@@ -1088,7 +1109,7 @@ async function monitorOpenPositions(): Promise<void> {
     // ── Priority 5: Hard close time ──
     const hc = HARD_CLOSE_MINS[pos.strategy_id];
     if (hc && currentMins >= hc) {
-      await closeStrategyPosition(pos.id, currentPrice, "HARD_CLOSE", pcrExitDetail);
+      await closeStrategyPosition(pos.id, currentPrice, "HARD_CLOSE", appendDetail);
       continue;
     }
   }
@@ -2750,6 +2771,221 @@ async function pollOpenPositionLTPsBatched(): Promise<void> {
 }
 
 // ══════════════════════════════════════════════════════════════
+// Strategy 14/15 helpers — Expiry Power Hour
+// ══════════════════════════════════════════════════════════════
+
+// getSpot230: return NIFTY spot price as of 2:30 PM (IST minutes ≤ 870)
+function getSpot230(index: string): number | null {
+  const cs = getCandles(index, "30s");
+  for (let i = cs.length - 1; i >= 0; i--) {
+    // Convert epoch ms to IST minute-of-day
+    const m = Math.floor(((cs[i].time % 86400000) + 5.5 * 3600000) / 60000);
+    if (m <= 870) return cs[i].close; // 870 = 14:30
+  }
+  return null;
+}
+
+// logPowerHourSignal — column-repurposing signal logger
+// Column repurposing for strategy_signals:
+//   ema16   → drift (dir) or CE premium (straddle)
+//   ema64   → chosen strike (dir) or PE premium (straddle)
+//   price   → NIFTY spot at 2:45 PM
+//   vwap    → CE strike (straddle) or null (dir)
+//   fib_low → PE strike (straddle)
+//   rsi_pass  → drift≠0 / CE strike found
+//   vwap_pass → strike found in band / PE strike found
+async function logPowerHourSignal(opts: {
+  strategy: "expiry_powerhour_dir" | "expiry_powerhour_straddle";
+  tradeTaken: boolean;
+  spotAt245: number;
+  skipReason?: string;
+  drift?: number;
+  ceStrike?: number; cePremium?: number;
+  peStrike?: number; pePremium?: number;
+}): Promise<void> {
+  const tag = opts.strategy === "expiry_powerhour_dir" ? "[S14]" : "[S15]";
+  console.log(
+    `${tag} signal | spot245=${opts.spotAt245.toFixed(1)} drift=${opts.drift?.toFixed(1) ?? "n/a"}` +
+    (opts.skipReason ? ` SKIP(${opts.skipReason})` : "") +
+    ` trade_taken=${opts.tradeTaken}`
+  );
+  const row = {
+    strategy_id:        opts.strategy,
+    index:              "NIFTY",
+    direction:          (opts.drift != null ? (opts.drift >= 0 ? "bullish" : "bearish") : "bullish") as "bullish" | "bearish",
+    ema16:              Number((opts.drift        ?? opts.cePremium ?? 0).toFixed(2)),  // drift (dir) or CE premium (straddle)
+    ema64:              Number((opts.ceStrike      ?? opts.pePremium ?? 0).toFixed(2)),  // strike (dir) or PE premium (straddle)
+    price:              Number(opts.spotAt245.toFixed(2)),
+    vwap:               opts.ceStrike  ?? null,   // CE strike (straddle)
+    fib_low:            opts.peStrike  ?? null,   // PE strike (straddle)
+    fib_high:           null,
+    in_fib_zone:        false,
+    rsi:                null,
+    volume_ok:          false,
+    oi_rising:          false,
+    trade_taken:        opts.tradeTaken,
+    all_filters_passed: opts.tradeTaken,
+    rsi_pass:           opts.drift !== 0 && opts.drift != null ? true : opts.cePremium != null,
+    vwap_pass:          opts.ceStrike != null || opts.peStrike != null,
+  };
+  supabase.from("strategy_signals").insert(row).then(({ error }) => {
+    if (error) console.error(`${tag} signal log failed: ${error.message}`);
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+// Strategy 14 — Expiry Power Hour Directional
+// Entry: 2:45 PM on NIFTY expiry day; direction from drift(2:45–2:30)
+// Strike: nearest-to-spot in ₹15–30 premium band
+// SL: 40% | Trail: +50% activates → 20% below peak | Hard close: 3:18 PM
+// ══════════════════════════════════════════════════════════════
+
+async function runStrategy14(): Promise<void> {
+  if (!isMarketOpen()) return;
+  const mins = istMins();
+  if (mins < 885 || mins >= 918) return;  // only 2:45–3:18 PM
+
+  const today = todayIST();
+  if (phDirAttempted.has(today)) return;
+
+  const expiry = await isExpiryDay("NIFTY");
+  if (!expiry) {
+    phDirAttempted.add(today);
+    return;  // silent skip on non-expiry days
+  }
+
+  phDirAttempted.add(today);  // mark before any trade attempt
+
+  const chain = getLatestChain("NIFTY");
+  if (!chain) { console.log("[S14] No option chain at 2:45"); return; }
+
+  const spot245 = chain.spotPrice ?? lastNiftyPrice;
+  const spot230 = getSpot230("NIFTY");
+  if (!spot230) { console.log("[S14] No 2:30 PM spot candle"); return; }
+
+  const drift = spot245 - spot230;
+  if (drift === 0) {
+    console.log(`[S14] drift=0 at 2:45 — skip`);
+    await logPowerHourSignal({ strategy: "expiry_powerhour_dir", tradeTaken: false, spotAt245: spot245, drift, skipReason: "drift=0" });
+    return;
+  }
+
+  const optType = drift > 0 ? "CE" : "PE";
+  const option  = getATMOption(chain, optType, 15, 30, lastNiftyPrice);
+  if (!option) {
+    console.log(`[S14] No ${optType} strike in ₹15–30 band`);
+    await logPowerHourSignal({ strategy: "expiry_powerhour_dir", tradeTaken: false, spotAt245: spot245, drift, skipReason: "no_valid_strike" });
+    return;
+  }
+
+  const capital  = await getEquityCurrentValue("expiry_powerhour_dir");
+  const qty      = capQtyByMaxLoss(calcLots(capital, 0.60, option.premium, 65), option.premium, 0.40, 65, "S14");
+  if (qty === 0) { console.log(`[S14] qty=0`); return; }
+
+  console.log(`[S14] EXPIRY DIR ${optType} drift=${drift.toFixed(1)} → ${option.symbol} @ ₹${option.premium} qty=${qty}`);
+  await logPowerHourSignal({
+    strategy: "expiry_powerhour_dir", tradeTaken: true, spotAt245: spot245, drift,
+    ceStrike: optType === "CE" ? option.strike : undefined, cePremium: optType === "CE" ? option.premium : undefined,
+    peStrike: optType === "PE" ? option.strike : undefined, pePremium: optType === "PE" ? option.premium : undefined,
+  });
+  await openStrategyPosition("expiry_powerhour_dir", {
+    symbol:        option.symbol,
+    type:          optType,
+    side:          "LONG",
+    entry_price:   option.premium,
+    current_price: option.premium,
+    quantity:      qty,
+    stop_loss:     roundUpToOneDecimal(option.premium * 0.60),  // 40% SL
+    trail_sl:      null,
+    pnl:           0,
+    status:        "OPEN",
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+// Strategy 15 — Expiry Power Hour Straddle
+// Entry: 2:45 PM on NIFTY expiry day; both CE and PE in ₹15–30 band
+// Each leg independent SL 40% | Trail: +50% → 20% below peak | 3:18 PM
+// ══════════════════════════════════════════════════════════════
+
+async function runStrategy15(): Promise<void> {
+  if (!isMarketOpen()) return;
+  const mins = istMins();
+  if (mins < 885 || mins >= 918) return;  // only 2:45–3:18 PM
+
+  const today = todayIST();
+  if (phStraddleAttempted.has(today)) return;
+
+  const expiry = await isExpiryDay("NIFTY");
+  if (!expiry) {
+    phStraddleAttempted.add(today);
+    return;  // silent skip on non-expiry days
+  }
+
+  phStraddleAttempted.add(today);  // mark before any trade attempt
+
+  const chain = getLatestChain("NIFTY");
+  if (!chain) { console.log("[S15] No option chain at 2:45"); return; }
+
+  const spot245 = chain.spotPrice ?? lastNiftyPrice;
+
+  // Both sides must be findable BEFORE opening either
+  const ceOption = getATMOption(chain, "CE", 15, 30, lastNiftyPrice);
+  const peOption = getATMOption(chain, "PE", 15, 30, lastNiftyPrice);
+
+  if (!ceOption || !peOption) {
+    const missing = !ceOption && !peOption ? "both_CE_PE" : !ceOption ? "CE" : "PE";
+    console.log(`[S15] No valid ${missing} strike in ₹15–30 band — skip`);
+    await logPowerHourSignal({ strategy: "expiry_powerhour_straddle", tradeTaken: false, spotAt245: spot245, skipReason: `no_${missing}` });
+    return;
+  }
+
+  const capital = await getEquityCurrentValue("expiry_powerhour_straddle");
+
+  const ceQty = capQtyByMaxLoss(calcLots(capital, 0.30, ceOption.premium, 65), ceOption.premium, 0.40, 65, "S15-CE");
+  const peQty = capQtyByMaxLoss(calcLots(capital, 0.30, peOption.premium, 65), peOption.premium, 0.40, 65, "S15-PE");
+
+  if (ceQty === 0 && peQty === 0) { console.log(`[S15] both legs qty=0`); return; }
+
+  console.log(`[S15] EXPIRY STRADDLE → CE: ${ceOption.symbol} @ ₹${ceOption.premium} qty=${ceQty} | PE: ${peOption.symbol} @ ₹${peOption.premium} qty=${peQty}`);
+  await logPowerHourSignal({
+    strategy: "expiry_powerhour_straddle", tradeTaken: true, spotAt245: spot245,
+    ceStrike: ceOption.strike, cePremium: ceOption.premium,
+    peStrike: peOption.strike, pePremium: peOption.premium,
+  });
+
+  if (ceQty > 0) {
+    await openStrategyPosition("expiry_powerhour_straddle", {
+      symbol:        ceOption.symbol,
+      type:          "CE",
+      side:          "LONG",
+      entry_price:   ceOption.premium,
+      current_price: ceOption.premium,
+      quantity:      ceQty,
+      stop_loss:     roundUpToOneDecimal(ceOption.premium * 0.60),  // 40% SL
+      trail_sl:      null,
+      pnl:           0,
+      status:        "OPEN",
+    });
+  }
+
+  if (peQty > 0) {
+    await openStrategyPosition("expiry_powerhour_straddle", {
+      symbol:        peOption.symbol,
+      type:          "PE",
+      side:          "LONG",
+      entry_price:   peOption.premium,
+      current_price: peOption.premium,
+      quantity:      peQty,
+      stop_loss:     roundUpToOneDecimal(peOption.premium * 0.60),  // 40% SL
+      trail_sl:      null,
+      pnl:           0,
+      status:        "OPEN",
+    });
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
 // Main equity strategy loop — every 30s
 // ══════════════════════════════════════════════════════════════
 
@@ -2786,6 +3022,8 @@ async function runEquityStrategies(): Promise<void> {
       runStrategyAsym(),
       runStrategyConfirm(),
       runStrategyDualTf(),
+      runStrategy14(),
+      runStrategy15(),
     ]);
     await Promise.allSettled([
       monitorOpenPositions(),

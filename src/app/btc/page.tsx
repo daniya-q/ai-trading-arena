@@ -211,7 +211,10 @@ function BtcCapitalSummaryBar({
   positions: BtcPosition[];
   btcPrice: number;
 }) {
-  const STARTING = 500_000; // 5 × ₹1,00,000
+  const STARTING = useMemo(() =>
+    capitals.reduce((sum, c) => sum + (c.allocated_inr ?? 100_000), 0),
+    [capitals]
+  );
 
   const totalCurrent = useMemo(() => {
     return capitals.reduce((sum, cap) => {
@@ -243,7 +246,7 @@ function BtcCapitalSummaryBar({
     const daysPnl = todayClosedPnl + liveOpenPnl;
     const avgPnlToday = todayClosed.length > 0 ? todayClosedPnl / todayClosed.length : null;
     return { daysPnl, daysReturn: STARTING > 0 ? (daysPnl / STARTING) * 100 : 0, avgPnlToday };
-  }, [positions, openPositions, btcPrice]);
+  }, [positions, openPositions, btcPrice, STARTING]);
 
   const totalPnl  = totalCurrent - STARTING;
   const returnPct = STARTING > 0 ? (totalPnl / STARTING) * 100 : 0;
@@ -254,7 +257,7 @@ function BtcCapitalSummaryBar({
   const apColor   = avgPnlToday != null ? (avgPnlToday > 0 ? "#4ade80" : avgPnlToday < 0 ? "#f87171" : "#9ca3af") : "#4b5563";
 
   const stats = [
-    { label: "STARTING CAPITAL",    value: "₹5,00,000",                                                              color: "#9ca3af" },
+    { label: "STARTING CAPITAL",    value: `₹${STARTING.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`,    color: "#9ca3af" },
     { label: "TOTAL CAPITAL",       value: `₹${totalCurrent.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: "#ffffff" },
     { label: "TOTAL PnL",           value: `${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: pColor },
     { label: "TOTAL RETURN",        value: `${returnPct >= 0 ? "+" : ""}${returnPct.toFixed(2)}%`,                    color: rColor },
@@ -843,7 +846,7 @@ function BtcCorrelationHeatmap() {
 
 // ── BtcCombinedCapitalHistory ───────────────────────────────────────────────
 
-function BtcCombinedCapitalHistory() {
+function BtcCombinedCapitalHistory({ startingCapital }: { startingCapital: number }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
   const seriesRef    = useRef<ISeriesApi<"Area"> | null>(null);
@@ -881,7 +884,7 @@ function BtcCombinedCapitalHistory() {
       .then(r => r.json())
       .then((data: CapitalPoint[]) => {
         if (!seriesRef.current || !data?.length) return;
-        const BASELINE = 500_000;
+        const BASELINE = startingCapital || 500_000;
         const filtered = data.filter(p => p.date);
         const pts = filtered.map(p => ({
           time:  p.date as unknown as Time,
@@ -904,7 +907,7 @@ function BtcCombinedCapitalHistory() {
         chartRef.current?.timeScale().fitContent();
       })
       .catch(() => {});
-  }, []);
+  }, [startingCapital]);
 
   const pnlColor = livePnl >= 0 ? "#4ade80" : "#f87171";
 
@@ -1076,7 +1079,7 @@ export default function BtcArenaPage() {
         )}
 
         {/* BTC Combined Capital History */}
-        <BtcCombinedCapitalHistory />
+        <BtcCombinedCapitalHistory startingCapital={capitals.reduce((s, c) => s + (c.allocated_inr ?? 100_000), 0)} />
 
         {/* BTC Correlation Heatmap */}
         <BtcCorrelationHeatmap />

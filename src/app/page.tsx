@@ -77,6 +77,8 @@ const ACCENT: Record<string, string> = {
   ema_crossover_dualtf:      "#A78BFA",
   ema_crossover_1m_run:      "#84CC16",
   ema_crossover_1m_runtrail: "#14B8A6",
+  expiry_powerhour_dir:      "#F43F5E",  // rose
+  expiry_powerhour_straddle: "#0EA5E9",  // sky
 };
 
 const RULES: Record<string, string[]> = {
@@ -258,6 +260,32 @@ const RULES: Record<string, string[]> = {
     "Exit: SL hit | trail SL hit | opposite crossover triggers flip | 3:20 PM hard close",
     "Max 1 open trade at a time",
   ],
+  expiry_powerhour_dir: [
+    "Instrument: Nifty 50 weekly options expiring same day",
+    "Active ONLY on Nifty expiry day (Tuesday, not a holiday)",
+    "Entry: 2:45 PM — single decision point per day",
+    "Direction: drift(2:45−2:30) > 0 → buy CE; < 0 → buy PE; = 0 → skip",
+    "Strike: nearest-to-spot in ₹15–30 premium band",
+    "Sizing: capital × 60%, max-loss cap at 40% SL = ₹8,000",
+    "Stop loss: 40% of premium paid",
+    "No target — winners run until trail SL or hard close",
+    "Trail SL: activates at +50% gain → trails 20% below peak (ratchet)",
+    "Hard close: 3:18 PM",
+    "No re-entry after exit; one trade per expiry day",
+  ],
+  expiry_powerhour_straddle: [
+    "Instrument: Nifty 50 weekly options expiring same day",
+    "Active ONLY on Nifty expiry day (Tuesday, not a holiday)",
+    "Entry: 2:45 PM — buy both CE and PE in ₹15–30 band",
+    "If either side has no valid ₹15–30 strike, skip entire day",
+    "Each leg sized at capital × 30%, max-loss cap per leg = ₹4,000",
+    "Combined worst case ≈ ₹8,000",
+    "Each leg managed independently (own SL/trail/close)",
+    "Stop loss per leg: 40% of premium paid",
+    "Trail SL per leg: activates at +50% gain → trails 20% below peak",
+    "Hard close: 3:18 PM",
+    "No re-entry; one straddle per expiry day",
+  ],
 };
 
 function getEntryReason(strategyId: string, type: string): string {
@@ -302,6 +330,14 @@ function getEntryReason(strategyId: string, type: string): string {
       return type === "CE"
         ? "Price pulled back to VWAP and bounced above it on 1m candle. RSI 40–60 (neutral), OI rising, previous candle made a higher low — bullish VWAP reclaim entry."
         : "Price pulled back to VWAP and rejected below it on 1m candle. RSI 40–60 (neutral), OI rising, previous candle made a lower high — bearish VWAP rejection entry.";
+    case "expiry_powerhour_dir":
+      return type === "CE"
+        ? "NIFTY expiry day 2:45 PM — drift (spot 2:45 minus spot 2:30) positive → bought CE in ₹15–30 premium band nearest to spot."
+        : "NIFTY expiry day 2:45 PM — drift (spot 2:45 minus spot 2:30) negative → bought PE in ₹15–30 premium band nearest to spot.";
+    case "expiry_powerhour_straddle":
+      return type === "CE"
+        ? "NIFTY expiry day 2:45 PM straddle — CE leg opened. Both CE and PE in ₹15–30 band found; each leg managed independently."
+        : "NIFTY expiry day 2:45 PM straddle — PE leg opened. Both CE and PE in ₹15–30 band found; each leg managed independently.";
     default:
       return "Entry signal triggered.";
   }
@@ -527,7 +563,10 @@ function TopBar() {
 // ── Capital Summary Bar ─────────────────────────────────────────
 
 function CapitalSummaryBar({ capitals, openPositions, positions }: { capitals: Capital[]; openPositions: Position[]; positions: Position[] }) {
-  const STARTING = 700_000;
+  const STARTING = useMemo(() =>
+    capitals.reduce((sum, c) => sum + (c.allocated_capital ?? 100_000), 0),
+    [capitals]
+  );
 
   const totalCurrent = useMemo(() => {
     return capitals.reduce((sum, cap) => {
@@ -546,7 +585,7 @@ function CapitalSummaryBar({ capitals, openPositions, positions }: { capitals: C
     const daysPnl = todayClosedPnl + liveOpenPnl;
     const avgPnlToday = todayClosed.length > 0 ? todayClosedPnl / todayClosed.length : null;
     return { daysPnl, daysReturn: STARTING > 0 ? (daysPnl / STARTING) * 100 : 0, avgPnlToday };
-  }, [positions, openPositions]);
+  }, [positions, openPositions, STARTING]);
 
   const totalPnl  = totalCurrent - STARTING;
   const returnPct = STARTING > 0 ? (totalPnl / STARTING) * 100 : 0;
@@ -557,7 +596,7 @@ function CapitalSummaryBar({ capitals, openPositions, positions }: { capitals: C
   const apColor   = avgPnlToday != null ? (avgPnlToday > 0 ? "#4ade80" : avgPnlToday < 0 ? "#f87171" : "#9ca3af") : "#4b5563";
 
   const stats = [
-    { label: "STARTING CAPITAL",    value: "₹7,00,000",                                                              color: "#9ca3af" },
+    { label: "STARTING CAPITAL",    value: `₹${STARTING.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`,    color: "#9ca3af" },
     { label: "TOTAL CAPITAL",       value: `₹${totalCurrent.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: "#ffffff" },
     { label: "TOTAL PnL",           value: `${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: pColor },
     { label: "TOTAL RETURN",        value: `${returnPct >= 0 ? "+" : ""}${returnPct.toFixed(2)}%`,                   color: rColor  },
@@ -1410,7 +1449,7 @@ function CorrelationHeatmap() {
 
 // ── CombinedCapitalHistory ──────────────────────────────────────────────────
 
-function CombinedCapitalHistory() {
+function CombinedCapitalHistory({ startingCapital }: { startingCapital: number }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
   const seriesRef    = useRef<ISeriesApi<"Area"> | null>(null);
@@ -1448,7 +1487,7 @@ function CombinedCapitalHistory() {
       .then(r => r.json())
       .then((data: CapitalPoint[]) => {
         if (!seriesRef.current || !data?.length) return;
-        const BASELINE = 700_000;
+        const BASELINE = startingCapital || 700_000;
         const filtered = data.filter(p => p.date);
         const pts = filtered.map(p => ({
           time:  p.date as unknown as Time,
@@ -1471,7 +1510,7 @@ function CombinedCapitalHistory() {
         chartRef.current?.timeScale().fitContent();
       })
       .catch(() => {});
-  }, []);
+  }, [startingCapital]);
 
   const pnlColor = livePnl >= 0 ? "#4ade80" : "#f87171";
 
@@ -1638,7 +1677,7 @@ export default function DashboardPage() {
         )}
 
         {/* Combined Capital History */}
-        <CombinedCapitalHistory />
+        <CombinedCapitalHistory startingCapital={capitals.reduce((s, c) => s + (c.allocated_capital ?? 100_000), 0)} />
 
         {/* Correlation Heatmap */}
         <CorrelationHeatmap />
