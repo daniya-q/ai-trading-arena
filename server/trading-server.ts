@@ -823,7 +823,7 @@ function generateExitDetail(
   const ist   = getIST();
   const timeStr = `${String(ist.getUTCHours()).padStart(2,"0")}:${String(ist.getUTCMinutes()).padStart(2,"0")} IST`;
 
-  const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_crossover_asym:15, ema_crossover_confirm:15, ema_crossover_dualtf:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:25, gap_orb:20, vwap_scalper:20, ema_crossover_1m:15, ema_crossover_1m_run:15, ema_crossover_1m_runtrail:15 };
+  const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_crossover_asym:15, ema_crossover_confirm:15, ema_crossover_dualtf:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:15, gap_orb:20, vwap_scalper:20, ema_crossover_1m:15, ema_crossover_1m_run:15, ema_crossover_1m_runtrail:15 };
   const TRAIL_PCT: Record<string, number> = { ema_crossover:10, ema_crossover_asym:10, ema_crossover_confirm:10, ema_crossover_dualtf:10, ema_confluence:10, orion:15, supertrend:12, pcr_reversal:12, gap_orb:12, vwap_scalper:12, ema_crossover_1m:10, ema_crossover_1m_runtrail:10 };
   const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:20 PM", ema_crossover_asym:"3:20 PM", ema_crossover_confirm:"3:20 PM", ema_crossover_dualtf:"3:20 PM", orion:"3:20 PM", ema_confluence:"3:20 PM", supertrend:"3:20 PM", pcr_reversal:"3:20 PM", gap_orb:"3:20 PM", vwap_scalper:"3:20 PM", ema_crossover_1m:"3:20 PM", ema_crossover_1m_run:"3:20 PM", ema_crossover_1m_runtrail:"3:20 PM" };
 
@@ -889,7 +889,8 @@ function calcEquityCharges(entryPrice: number, exitPrice: number, qty: number): 
 async function closeStrategyPosition(
   posId: string,
   exitPrice: number,
-  reason: string
+  reason: string,
+  appendDetail?: string  // optional text appended to exit_reason_detail (e.g. "PCR at exit: 1.04.")
 ): Promise<void> {
   const { data: pos } = await supabase
     .from("strategy_positions")
@@ -899,10 +900,11 @@ async function closeStrategyPosition(
   if (!pos) return;
 
   const p = pos as { entry_price: number; quantity: number; strategy_id: string; symbol: string; type: string; stop_loss: number | null; trail_sl: number | null };
-  const grossPnl = (exitPrice - p.entry_price) * p.quantity;
-  const charges  = calcEquityCharges(p.entry_price, exitPrice, p.quantity);
-  const netPnl   = grossPnl - charges;
-  const detail   = generateExitDetail(reason, p, exitPrice, peakPremiums[posId]);
+  const grossPnl  = (exitPrice - p.entry_price) * p.quantity;
+  const charges   = calcEquityCharges(p.entry_price, exitPrice, p.quantity);
+  const netPnl    = grossPnl - charges;
+  const baseDetail = generateExitDetail(reason, p, exitPrice, peakPremiums[posId]);
+  const detail     = appendDetail ? `${baseDetail} ${appendDetail}` : baseDetail;
 
   const { error } = await supabase.from("strategy_positions").update({
     status:             "CLOSED",
@@ -1019,9 +1021,14 @@ async function monitorOpenPositions(): Promise<void> {
 
     const pnlPct = (currentPrice - pos.entry_price) / pos.entry_price;
 
+    // Pre-compute PCR exit annotation for pcr_reversal (appended to exit_reason_detail on any close)
+    const pcrExitDetail: string | undefined = pos.strategy_id === "pcr_reversal"
+      ? (() => { const ch = getLatestChain("NIFTY"); return ch ? `PCR at exit: ${ch.pcr.toFixed(2)}.` : undefined; })()
+      : undefined;
+
     // ── Priority 1: Hard SL hit ──
     if (pos.stop_loss && currentPrice <= pos.stop_loss) {
-      await closeStrategyPosition(pos.id, currentPrice, "SL_HIT");
+      await closeStrategyPosition(pos.id, currentPrice, "SL_HIT", pcrExitDetail);
       continue;
     }
 
@@ -1035,7 +1042,7 @@ async function monitorOpenPositions(): Promise<void> {
         if (slPct > 0) targetPct = slPct * 1.5;
       }
       if (pnlPct >= targetPct) {
-        await closeStrategyPosition(pos.id, currentPrice, "TARGET_HIT");
+        await closeStrategyPosition(pos.id, currentPrice, "TARGET_HIT", pcrExitDetail);
         continue;
       }
     }
@@ -1069,7 +1076,7 @@ async function monitorOpenPositions(): Promise<void> {
 
     // ── Priority 3: Trail SL hit ──
     if (pos.trail_sl && currentPrice <= pos.trail_sl) {
-      await closeStrategyPosition(pos.id, currentPrice, "TRAIL_SL");
+      await closeStrategyPosition(pos.id, currentPrice, "TRAIL_SL", pcrExitDetail);
       continue;
     }
 
@@ -1081,7 +1088,7 @@ async function monitorOpenPositions(): Promise<void> {
     // ── Priority 5: Hard close time ──
     const hc = HARD_CLOSE_MINS[pos.strategy_id];
     if (hc && currentMins >= hc) {
-      await closeStrategyPosition(pos.id, currentPrice, "HARD_CLOSE");
+      await closeStrategyPosition(pos.id, currentPrice, "HARD_CLOSE", pcrExitDetail);
       continue;
     }
   }
@@ -2240,6 +2247,47 @@ async function runSupertrendForIndex(index: "NIFTY" | "BANKNIFTY"): Promise<void
 // Strategy 5 — PCR Reversal (5-min checks, 10:00–14:30)
 // ══════════════════════════════════════════════════════════════
 
+// Column repurposing for strategy_signals (migration 009 DDL not yet on live DB):
+//   ema16     → PCR value at evaluation time
+//   ema64     → ATM OI-change % for triggering side (negative = unwinding)
+//   price     → NIFTY spot price at signal time
+//   rsi_pass  → PCR threshold condition met (PCR > 1.3 for CE, < 0.7 for PE)
+//   vwap_pass → OI-fall condition met (oiChangePct ≤ -10%)
+async function logPCRSignal(opts: {
+  direction:   "CE" | "PE";
+  tradeTaken:  boolean;
+  pcr:         number;
+  oiChangePct: number;
+  spotPrice:   number;
+  blockedBy?:  "oi_unwind_insufficient";
+}): Promise<void> {
+  const pcrOk = opts.direction === "CE" ? opts.pcr > 1.3 : opts.pcr < 0.7;
+  const oiOk  = opts.oiChangePct <= -10;
+  const row = {
+    strategy_id:        "pcr_reversal",
+    index:              "NIFTY",
+    direction:          opts.direction === "CE" ? "bullish" : "bearish",
+    trade_taken:        opts.tradeTaken,
+    all_filters_passed: opts.tradeTaken,
+    ema16:              Number(opts.pcr.toFixed(3)),
+    ema64:              Number(opts.oiChangePct.toFixed(2)),
+    price:              Number(opts.spotPrice.toFixed(2)),
+    rsi_pass:           pcrOk,
+    vwap_pass:          oiOk,
+    rsi:                null,
+    volume_ok:          false,
+    oi_rising:          false,
+    vwap:               null,
+    fib_low:            null,
+    fib_high:           null,
+    in_fib_zone:        false,
+  };
+  console.log(`[S5] signal-log ${opts.direction} PCR=${opts.pcr.toFixed(2)} OI=${opts.oiChangePct.toFixed(1)}% → ${opts.blockedBy ?? (opts.tradeTaken ? "TAKEN" : "?")}`);
+  supabase.from("strategy_signals").insert(row).then(({ error }) => {
+    if (error) console.error(`[S5] signal log failed: ${error.message}`);
+  });
+}
+
 async function runStrategy5(): Promise<void> {
   if (!isMarketOpen()) return;
   const mins = istMins();
@@ -2267,18 +2315,27 @@ async function runStrategy5(): Promise<void> {
   const ceOI30 = getOIChangeForATM("NIFTY", "CE", 30);
   const peOIStr = peOI30 ? `${peOI30.pctChange >= 0 ? "+" : ""}${peOI30.pctChange.toFixed(1)}%` : "no-hist";
   const ceOIStr = ceOI30 ? `${ceOI30.pctChange >= 0 ? "+" : ""}${ceOI30.pctChange.toFixed(1)}%` : "no-hist";
-  const distCE  = (1.15 - pcr).toFixed(2);
-  const distPE  = (pcr - 0.85).toFixed(2);
-  console.log(`[S5] PCR=${pcr.toFixed(2)} (need >1.15 or <0.85) | dist-to-trigger: CE=${distCE} PE=${distPE} | PE-OI-30m=${peOIStr} CE-OI-30m=${ceOIStr} (need <-7%) | trades=${dayCount}/3`);
+  const distCE  = (1.3 - pcr).toFixed(2);
+  const distPE  = (pcr - 0.7).toFixed(2);
+  console.log(`[S5] PCR=${pcr.toFixed(2)} (need >1.3 or <0.7) | dist-to-trigger: CE=${distCE} PE=${distPE} | PE-OI-30m=${peOIStr} CE-OI-30m=${ceOIStr} (need <-10%) | trades=${dayCount}/3`);
 
+  const spotPrice = chain.spotPrice ?? 0;
   let optType: "CE" | "PE" | null = null;
 
-  if (pcr > 1.15) {
-    if (peOI30 && peOI30.pctChange <= -7) optType = "CE";
-    else console.log(`[S5] PCR oversold (${pcr.toFixed(2)}>1.15) but PE-OI unwind insufficient (${peOIStr}, need <-7%)`);
-  } else if (pcr < 0.85) {
-    if (ceOI30 && ceOI30.pctChange <= -7) optType = "PE";
-    else console.log(`[S5] PCR overbought (${pcr.toFixed(2)}<0.85) but CE-OI unwind insufficient (${ceOIStr}, need <-7%)`);
+  if (pcr > 1.3) {
+    if (peOI30 && peOI30.pctChange <= -10) {
+      optType = "CE";
+    } else {
+      console.log(`[S5] PCR oversold (${pcr.toFixed(2)}>1.3) but PE-OI unwind insufficient (${peOIStr}, need <-10%)`);
+      await logPCRSignal({ direction: "CE", tradeTaken: false, pcr, oiChangePct: peOI30?.pctChange ?? 0, spotPrice, blockedBy: "oi_unwind_insufficient" });
+    }
+  } else if (pcr < 0.7) {
+    if (ceOI30 && ceOI30.pctChange <= -10) {
+      optType = "PE";
+    } else {
+      console.log(`[S5] PCR overbought (${pcr.toFixed(2)}<0.7) but CE-OI unwind insufficient (${ceOIStr}, need <-10%)`);
+      await logPCRSignal({ direction: "PE", tradeTaken: false, pcr, oiChangePct: ceOI30?.pctChange ?? 0, spotPrice, blockedBy: "oi_unwind_insufficient" });
+    }
   }
 
   if (!optType) return;
@@ -2286,10 +2343,12 @@ async function runStrategy5(): Promise<void> {
   const option = getATMOption(chain, optType, 60, 70);
   if (!option) return;
 
+  const oiChangePct = optType === "CE" ? (peOI30?.pctChange ?? 0) : (ceOI30?.pctChange ?? 0);
   const s5Capital  = await getEquityCurrentValue("pcr_reversal");
-  const s5Quantity = capQtyByMaxLoss(calcLots(s5Capital, 0.60, option.premium, 65), option.premium, 0.25, 65, "S5");
+  const s5Quantity = capQtyByMaxLoss(calcLots(s5Capital, 0.60, option.premium, 65), option.premium, 0.15, 65, "S5");
   if (s5Quantity === 0) { console.log(`[S5] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s5Capital).toLocaleString("en-IN")} premium=₹${option.premium})`); return; }
   console.log(`[S5] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s5Capital).toLocaleString("en-IN")} qty=${s5Quantity} — opening trade`);
+  await logPCRSignal({ direction: optType, tradeTaken: true, pcr, oiChangePct, spotPrice });
   await openStrategyPosition("pcr_reversal", {
     symbol:       option.symbol,
     type:         optType,
@@ -2297,7 +2356,7 @@ async function runStrategy5(): Promise<void> {
     entry_price:  option.premium,
     current_price: option.premium,
     quantity:     s5Quantity,
-    stop_loss:    roundUpToOneDecimal(option.premium * 0.75), // 25% SL
+    stop_loss:    roundUpToOneDecimal(option.premium * 0.85), // 15% SL
     trail_sl:     null,
     pnl:          0,
     status:       "OPEN",
@@ -2317,11 +2376,13 @@ async function monitorPCRPositions(): Promise<void> {
 
   const pcr = chain.pcr;
 
+  const pcrText = `PCR at exit: ${pcr.toFixed(2)}.`;
+
   for (const pos of openPos) {
     // PCR back to neutral zone
     if (pcr >= 0.9 && pcr <= 1.1) {
       const cp = getCurrentPrice(pos.symbol);
-      if (cp > 0) await closeStrategyPosition(pos.id, cp, "PCR_NEUTRAL");
+      if (cp > 0) await closeStrategyPosition(pos.id, cp, "PCR_NEUTRAL", pcrText);
       continue;
     }
     // OI buildup on opposite side — detect reversal
@@ -2330,7 +2391,7 @@ async function monitorPCRPositions(): Promise<void> {
     if (oiChange && oiChange.pctChange > 10) {
       // Opposite side building up → exit
       const cp = getCurrentPrice(pos.symbol);
-      if (cp > 0) await closeStrategyPosition(pos.id, cp, "OI_REVERSE");
+      if (cp > 0) await closeStrategyPosition(pos.id, cp, "OI_REVERSE", pcrText);
     }
   }
 }
