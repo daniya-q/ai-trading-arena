@@ -812,6 +812,9 @@ const TARGET_PCT: Record<string, number> = {
   gap_orb:          0.40,   // SL 20% → 1:2 RR (gap fill is primary exit; 40% is fallback)
   vwap_scalper:     0.30,   // SL 20% → 1:1.5 RR (danger: SL 10% → target 15%, computed from SL)
   ema_crossover_1m: 0.30,   // SL 15% → 1:2 RR
+  ema_crossover_chop_lo: 0.30,  // chop filter 0.05% — same RR as S1
+  ema_crossover_chop_md: 0.30,  // chop filter 0.10%
+  ema_crossover_chop_hi: 0.30,  // chop filter 0.15%
 };
 
 // Strategies with no profit target — target check skipped entirely
@@ -831,9 +834,9 @@ function generateExitDetail(
   const ist   = getIST();
   const timeStr = `${String(ist.getUTCHours()).padStart(2,"0")}:${String(ist.getUTCMinutes()).padStart(2,"0")} IST`;
 
-  const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_crossover_asym:15, ema_crossover_confirm:15, ema_crossover_dualtf:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:15, gap_orb:20, vwap_scalper:20, ema_crossover_1m:15, ema_crossover_1m_run:15, ema_crossover_1m_runtrail:15, expiry_powerhour_dir:40, expiry_powerhour_straddle:40 };
-  const TRAIL_PCT: Record<string, number> = { ema_crossover:10, ema_crossover_asym:10, ema_crossover_confirm:10, ema_crossover_dualtf:10, ema_confluence:10, orion:15, supertrend:12, pcr_reversal:12, gap_orb:12, vwap_scalper:12, ema_crossover_1m:10, ema_crossover_1m_runtrail:10, expiry_powerhour_dir:20, expiry_powerhour_straddle:20 };
-  const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:20 PM", ema_crossover_asym:"3:20 PM", ema_crossover_confirm:"3:20 PM", ema_crossover_dualtf:"3:20 PM", orion:"3:20 PM", ema_confluence:"3:20 PM", supertrend:"3:20 PM", pcr_reversal:"3:20 PM", gap_orb:"3:20 PM", vwap_scalper:"3:20 PM", ema_crossover_1m:"3:20 PM", ema_crossover_1m_run:"3:20 PM", ema_crossover_1m_runtrail:"3:20 PM", expiry_powerhour_dir:"3:18 PM", expiry_powerhour_straddle:"3:18 PM" };
+  const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_crossover_asym:15, ema_crossover_confirm:15, ema_crossover_dualtf:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:15, gap_orb:20, vwap_scalper:20, ema_crossover_1m:15, ema_crossover_1m_run:15, ema_crossover_1m_runtrail:15, expiry_powerhour_dir:40, expiry_powerhour_straddle:40, ema_crossover_chop_lo:15, ema_crossover_chop_md:15, ema_crossover_chop_hi:15 };
+  const TRAIL_PCT: Record<string, number> = { ema_crossover:10, ema_crossover_asym:10, ema_crossover_confirm:10, ema_crossover_dualtf:10, ema_confluence:10, orion:15, supertrend:12, pcr_reversal:12, gap_orb:12, vwap_scalper:12, ema_crossover_1m:10, ema_crossover_1m_runtrail:10, expiry_powerhour_dir:20, expiry_powerhour_straddle:20, ema_crossover_chop_lo:10, ema_crossover_chop_md:10, ema_crossover_chop_hi:10 };
+  const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:20 PM", ema_crossover_asym:"3:20 PM", ema_crossover_confirm:"3:20 PM", ema_crossover_dualtf:"3:20 PM", orion:"3:20 PM", ema_confluence:"3:20 PM", supertrend:"3:20 PM", pcr_reversal:"3:20 PM", gap_orb:"3:20 PM", vwap_scalper:"3:20 PM", ema_crossover_1m:"3:20 PM", ema_crossover_1m_run:"3:20 PM", ema_crossover_1m_runtrail:"3:20 PM", expiry_powerhour_dir:"3:18 PM", expiry_powerhour_straddle:"3:18 PM", ema_crossover_chop_lo:"3:20 PM", ema_crossover_chop_md:"3:20 PM", ema_crossover_chop_hi:"3:20 PM" };
 
   switch (reason) {
     case "SL_HIT": {
@@ -1006,6 +1009,9 @@ async function monitorOpenPositions(): Promise<void> {
     ema_crossover_1m_runtrail: 920,  // 15:20
     expiry_powerhour_dir:      918,  // 3:18 PM
     expiry_powerhour_straddle: 918,  // 3:18 PM
+    ema_crossover_chop_lo:     920,  // 15:20 — same as S1
+    ema_crossover_chop_md:     920,
+    ema_crossover_chop_hi:     920,
   };
 
   const currentMins = istMins();
@@ -1069,7 +1075,7 @@ async function monitorOpenPositions(): Promise<void> {
     // ema_crossover_1m_run: no trail at all — skip activation block entirely
     let trailActivationPct = 0.35;
     let trailPct           = 0.12;
-    if (["ema_crossover", "ema_crossover_asym", "ema_crossover_confirm", "ema_crossover_dualtf", "ema_confluence", "ema_crossover_1m_runtrail"].includes(pos.strategy_id)) {
+    if (["ema_crossover", "ema_crossover_asym", "ema_crossover_confirm", "ema_crossover_dualtf", "ema_confluence", "ema_crossover_1m_runtrail", "ema_crossover_chop_lo", "ema_crossover_chop_md", "ema_crossover_chop_hi"].includes(pos.strategy_id)) {
       trailActivationPct = 0.20;
       trailPct           = 0.10;
     } else if (pos.strategy_id === "orion") {
@@ -1522,6 +1528,27 @@ async function logVariantSignal(opts: {
   };
   supabase.from("strategy_signals").insert(row).then(({ error }) => {
     if (error) console.error(`${tag} signal log failed: ${error.message}`);
+  });
+}
+
+// Chop-filter signal logger
+// Repurposed columns: rsi → separation% (stored as-is), volume_ok → entered (true) | blocked (false)
+async function logChopSignal(
+  strategyId: string, direction: "bullish" | "bearish",
+  ema16: number, ema64: number, price: number, separationPct: number, tradeTaken: boolean
+): Promise<void> {
+  const row = {
+    strategy_id: strategyId, index: "NIFTY", direction,
+    ema16: Number(ema16.toFixed(2)), ema64: Number(ema64.toFixed(2)),
+    price: Number(price.toFixed(2)), trade_taken: tradeTaken,
+    all_filters_passed: tradeTaken,
+    rsi: Number(separationPct.toFixed(4)),   // separation % at signal
+    volume_ok: tradeTaken,                    // entered vs blocked
+    oi_rising: false, vwap: null, fib_low: null, fib_high: null,
+    in_fib_zone: false, rsi_pass: tradeTaken, vwap_pass: false,
+  };
+  supabase.from("strategy_signals").insert(row).then(({ error }) => {
+    if (error) console.error(`[${strategyId}] chop signal log failed: ${error.message}`);
   });
 }
 
@@ -2986,6 +3013,117 @@ async function runStrategy15(): Promise<void> {
 }
 
 // ══════════════════════════════════════════════════════════════
+// Strategies 16/17/18 — EMA Crossover Chop-Filter variants
+// separation = |EMA16 − EMA64| / spot × 100; enter only if separation ≥ threshold.
+// Exits/flips identical to S1 (unfiltered). State vars are per-variant.
+// ══════════════════════════════════════════════════════════════
+
+let chopLoPrevFast = 0, chopLoPrevSlow = 0;
+let chopMdPrevFast = 0, chopMdPrevSlow = 0;
+let chopHiPrevFast = 0, chopHiPrevSlow = 0;
+
+async function runChopVariant(
+  strategyId: string,
+  threshold: number,
+  prev: { fast: number; slow: number },
+  tag: string
+): Promise<void> {
+  if (!isMarketOpen()) return;
+  const mins = istMins();
+  if (mins < 585 || mins >= 920) return; // 9:45–15:20
+
+  const candles = getCandles("NIFTY", "30s");
+  if (candles.length < 66) return;
+
+  const closes   = candles.map(c => c.close);
+  const fastArr  = emaValues(closes, 16);
+  const slowArr  = emaValues(closes, 64);
+  const fastCurr = fastArr[fastArr.length - 1];
+  const slowCurr = slowArr[slowArr.length - 1];
+  const fastPrev = prev.fast || fastArr[fastArr.length - 2];
+  const slowPrev = prev.slow || slowArr[slowArr.length - 2];
+
+  const bullCross = fastPrev <= slowPrev && fastCurr > slowCurr;
+  const bearCross = fastPrev >= slowPrev && fastCurr < slowCurr;
+
+  prev.fast = fastCurr;
+  prev.slow = slowCurr;
+
+  if (!bullCross && !bearCross) return;
+
+  const optType = bullCross ? "CE" : "PE";
+
+  // EXIT/FLIP first — unfiltered, so an open position always closes on opposite cross
+  const openPos = await getOpenStrategyPositions(strategyId);
+  for (const pos of openPos) {
+    if (pos.type !== optType) {
+      const cp = getCurrentPrice(pos.symbol);
+      if (cp > 0) await closeStrategyPosition(pos.id, cp, "CROSSOVER");
+    } else {
+      return; // already in same direction
+    }
+  }
+
+  // CHOP FILTER — entry gate only
+  const separation = Math.abs(fastCurr - slowCurr) / lastNiftyPrice * 100;
+  if (separation < threshold) {
+    await logChopSignal(strategyId, optType === "CE" ? "bullish" : "bearish",
+      fastCurr, slowCurr, lastNiftyPrice, separation, false);
+    console.log(`${tag} ${optType} BLOCKED(chop) sep=${separation.toFixed(3)}% < ${threshold}%`);
+    return;
+  }
+
+  // ENTRY — identical to S1
+  const chain = getLatestChain("NIFTY");
+  if (!chain) return;
+  const option = getATMOption(chain, optType, 60, 70, lastNiftyPrice);
+  if (!option) return;
+
+  const cap = await getEquityCurrentValue(strategyId);
+  const qty = capQtyByMaxLoss(calcLots(cap, 0.60, option.premium, 65), option.premium, 0.15, 65, tag);
+  if (qty === 0) return;
+
+  await logChopSignal(strategyId, optType === "CE" ? "bullish" : "bearish",
+    fastCurr, slowCurr, lastNiftyPrice, separation, true);
+  console.log(`${tag} ${optType} → ${option.symbol} @ ₹${option.premium} sep=${separation.toFixed(3)}% qty=${qty} — opening`);
+
+  await openStrategyPosition(strategyId, {
+    symbol:        option.symbol,
+    type:          optType,
+    side:          "LONG",
+    entry_price:   option.premium,
+    current_price: option.premium,
+    quantity:      qty,
+    stop_loss:     roundUpToOneDecimal(option.premium * 0.85),
+    trail_sl:      null,
+    pnl:           0,
+    status:        "OPEN",
+  });
+}
+
+async function runChopLo(): Promise<void> {
+  await runChopVariant(
+    "ema_crossover_chop_lo", 0.05,
+    { get fast() { return chopLoPrevFast; }, set fast(v) { chopLoPrevFast = v; }, get slow() { return chopLoPrevSlow; }, set slow(v) { chopLoPrevSlow = v; } },
+    "[ChopLo]"
+  );
+}
+async function runChopMd(): Promise<void> {
+  await runChopVariant(
+    "ema_crossover_chop_md", 0.10,
+    { get fast() { return chopMdPrevFast; }, set fast(v) { chopMdPrevFast = v; }, get slow() { return chopMdPrevSlow; }, set slow(v) { chopMdPrevSlow = v; } },
+    "[ChopMd]"
+  );
+}
+async function runChopHi(): Promise<void> {
+  await runChopVariant(
+    "ema_crossover_chop_hi", 0.15,
+    { get fast() { return chopHiPrevFast; }, set fast(v) { chopHiPrevFast = v; }, get slow() { return chopHiPrevSlow; }, set slow(v) { chopHiPrevSlow = v; } },
+    "[ChopHi]"
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
 // Main equity strategy loop — every 30s
 // ══════════════════════════════════════════════════════════════
 
@@ -3024,6 +3162,9 @@ async function runEquityStrategies(): Promise<void> {
       runStrategyDualTf(),
       runStrategy14(),
       runStrategy15(),
+      runChopLo(),
+      runChopMd(),
+      runChopHi(),
     ]);
     await Promise.allSettled([
       monitorOpenPositions(),

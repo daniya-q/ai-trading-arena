@@ -79,6 +79,9 @@ const ACCENT: Record<string, string> = {
   ema_crossover_1m_runtrail: "#14B8A6",
   expiry_powerhour_dir:      "#F43F5E",  // rose
   expiry_powerhour_straddle: "#0EA5E9",  // sky
+  ema_crossover_chop_lo:     "#22D3EE",  // cyan-loose
+  ema_crossover_chop_md:     "#2DD4BF",  // teal-mid
+  ema_crossover_chop_hi:     "#4ADE80",  // green-strict
 };
 
 const RULES: Record<string, string[]> = {
@@ -285,6 +288,48 @@ const RULES: Record<string, string[]> = {
     "Trail SL per leg: activates at +50% gain → trails 20% below peak",
     "Hard close: 3:18 PM",
     "No re-entry; one straddle per expiry day",
+  ],
+  ema_crossover_chop_lo: [
+    "Instrument: Nifty 50 options · weekly expiry",
+    "Timeframe: 30-second candles, forming from 9:15 AM",
+    "Trading window: 9:45 AM – 3:20 PM",
+    "Entry CE: 16 EMA crosses above 64 EMA → buy CE (₹60–70 premium range)",
+    "Entry PE: 16 EMA crosses below 64 EMA → buy PE (₹60–70 premium range)",
+    "Stop loss: 15% of premium paid",
+    "Target: 30% of premium (1:2 RR) — full exit on hit",
+    "Trail SL: activates when price moves 1.5× ATR in trade direction → trail at 10% below peak premium",
+    "Exit: SL hit | target hit | opposite crossover triggers flip | trail SL hit | 3:20 PM hard close",
+    "Chop filter: skip entry when |EMA16−EMA64| / spot < 0.05% (loose — most crossovers pass)",
+    "Exits/flips are NOT filtered — open positions always close on opposite cross",
+    "Max 1 open trade at a time",
+  ],
+  ema_crossover_chop_md: [
+    "Instrument: Nifty 50 options · weekly expiry",
+    "Timeframe: 30-second candles, forming from 9:15 AM",
+    "Trading window: 9:45 AM – 3:20 PM",
+    "Entry CE: 16 EMA crosses above 64 EMA → buy CE (₹60–70 premium range)",
+    "Entry PE: 16 EMA crosses below 64 EMA → buy PE (₹60–70 premium range)",
+    "Stop loss: 15% of premium paid",
+    "Target: 30% of premium (1:2 RR) — full exit on hit",
+    "Trail SL: activates when price moves 1.5× ATR in trade direction → trail at 10% below peak premium",
+    "Exit: SL hit | target hit | opposite crossover triggers flip | trail SL hit | 3:20 PM hard close",
+    "Chop filter: skip entry when |EMA16−EMA64| / spot < 0.10% (medium — blocks half the chop signals)",
+    "Exits/flips are NOT filtered — open positions always close on opposite cross",
+    "Max 1 open trade at a time",
+  ],
+  ema_crossover_chop_hi: [
+    "Instrument: Nifty 50 options · weekly expiry",
+    "Timeframe: 30-second candles, forming from 9:15 AM",
+    "Trading window: 9:45 AM – 3:20 PM",
+    "Entry CE: 16 EMA crosses above 64 EMA → buy CE (₹60–70 premium range)",
+    "Entry PE: 16 EMA crosses below 64 EMA → buy PE (₹60–70 premium range)",
+    "Stop loss: 15% of premium paid",
+    "Target: 30% of premium (1:2 RR) — full exit on hit",
+    "Trail SL: activates when price moves 1.5× ATR in trade direction → trail at 10% below peak premium",
+    "Exit: SL hit | target hit | opposite crossover triggers flip | trail SL hit | 3:20 PM hard close",
+    "Chop filter: skip entry when |EMA16−EMA64| / spot < 0.15% (strict — only strong trend crossovers pass)",
+    "Exits/flips are NOT filtered — open positions always close on opposite cross",
+    "Max 1 open trade at a time",
   ],
 };
 
