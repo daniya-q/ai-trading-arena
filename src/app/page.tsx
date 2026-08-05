@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { createChart, HistogramSeries, AreaSeries, ColorType, createSeriesMarkers } from "lightweight-charts";
 import type { IChartApi, ISeriesApi, Time } from "lightweight-charts";
+import { accentFor, shortLabel, STRATEGY_FAMILIES } from '@/lib/strategySpec';
+import ValidationDots from '@/components/ValidationDots';
 
 const BACKEND = "https://ai-trading-arena-backend-production.up.railway.app";
 
@@ -63,32 +65,13 @@ type CardMetrics = { profit_factor: string; max_drawdown_inr: number };
 
 // ── Strategy Config ─────────────────────────────────────────────
 
-const ACCENT: Record<string, string> = {
-  ema_crossover:         "#F59E0B",
-  orion:                 "#6366F1",
-  ema_confluence:        "#10B981",
-  supertrend:            "#EF4444",
-  pcr_reversal:          "#8B5CF6",
-  gap_orb:               "#06B6D4",
-  vwap_scalper:          "#F97316",
-  ema_crossover_1m:      "#EC4899",
-  ema_crossover_asym:        "#34D399",
-  ema_crossover_confirm:     "#60A5FA",
-  ema_crossover_dualtf:      "#A78BFA",
-  ema_crossover_1m_run:      "#84CC16",
-  ema_crossover_1m_runtrail: "#14B8A6",
-  expiry_powerhour_dir:      "#F43F5E",  // rose
-  expiry_powerhour_straddle: "#0EA5E9",  // sky
-  ema_crossover_chop_lo:     "#22D3EE",  // cyan-loose
-  ema_crossover_chop_md:     "#2DD4BF",  // teal-mid
-  ema_crossover_chop_hi:     "#4ADE80",  // green-strict
-};
+// ACCENT map removed — use accentFor(id) from @/lib/strategySpec
 
 const RULES: Record<string, string[]> = {
   ema_crossover: [
     "Instrument: Nifty 50 options · weekly expiry",
     "Timeframe: 30-second candles, forming from 9:15 AM",
-    "Trading window: 10:30 AM – 3:18 PM",
+    "Trading window: 9:45 AM – 3:20 PM",
     "Entry CE: 16 EMA crosses above 64 EMA → buy CE (₹60–70 premium range)",
     "Entry PE: 16 EMA crosses below 64 EMA → buy PE (₹60–70 premium range)",
     "Stop loss: 15% of premium paid (e.g. entry ₹65 → SL ₹55.25)",
@@ -114,7 +97,7 @@ const RULES: Record<string, string[]> = {
   ema_confluence: [
     "Instrument: Nifty 50 options · weekly expiry",
     "Timeframe: 30-second candles, forming from 9:15 AM",
-    "Trading window: 10:30 AM – 3:00 PM",
+    "Trading window: 9:45 AM – 3:20 PM",
     "All 5 filters must align simultaneously for entry:",
     "  1. EMA crossover — 16 EMA crosses above/below 64 EMA",
     "  2. RSI(14) — CE entry requires RSI < 45 · PE entry requires RSI > 55",
@@ -178,7 +161,7 @@ const RULES: Record<string, string[]> = {
   ],
   vwap_scalper: [
     "· VWAP + RSI Momentum Scalper — Nifty, BankNifty, Sensex options",
-    "· Timeframe: 1-minute candles | Window: 10:30 AM – 3:18 PM IST",
+    "· Timeframe: 1-minute candles | Window: 9:45 AM – 3:20 PM IST",
     "",
     "Entry — Buy CE (bullish bounce):",
     "  · Price pulls back to VWAP then closes above it",
@@ -662,11 +645,12 @@ function CapitalSummaryBar({ capitals, openPositions, positions }: { capitals: C
       {stats.map((s, i) => (
         <div key={s.label} style={{
           flex: 1,
+          minWidth: 0,
           padding: "12px 20px",
           borderLeft: i > 0 ? "1px solid #1a1f2e" : undefined,
         }}>
           <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 5, fontWeight: 600 }}>{s.label}</div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
+          <div style={{ fontSize: "clamp(13px, 1.35vw, 19px)", fontWeight: 700, color: s.color, fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.value}</div>
         </div>
       ))}
     </div>
@@ -714,7 +698,7 @@ function OpenTradesPanel({
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div style={{ textAlign: "center" }}>
             <div style={{ fontSize: 13, color: "#374151", marginBottom: 4 }}>No open trades</div>
-            <div style={{ fontSize: 10, color: "#1f2937" }}>Market open: 10:30 AM – 3:00 PM IST</div>
+            <div style={{ fontSize: 10, color: "#1f2937" }}>Market hours: 9:45 AM – 3:20 PM IST</div>
           </div>
         </div>
       ) : (
@@ -732,7 +716,7 @@ function OpenTradesPanel({
                 const stratName = strategies.find(s => s.id === pos.strategy_id)?.name ?? pos.strategy_id;
                 return (
                   <tr key={pos.id} style={{ borderTop: "1px solid #0f1520" }}>
-                    <td style={{ padding: "8px 12px", fontSize: 12, color: ACCENT[pos.strategy_id] ?? "#9ca3af", fontWeight: 600, whiteSpace: "nowrap" }}>{stratName}</td>
+                    <td style={{ padding: "8px 12px", fontSize: 12, color: accentFor(pos.strategy_id), fontWeight: 600, whiteSpace: "nowrap" }}>{stratName}</td>
                     <td style={{ padding: "8px 10px", fontSize: 11, color: "#c9d1d9", whiteSpace: "nowrap" }}>{pos.symbol}</td>
                     <td style={{ padding: "8px 8px", fontSize: 12, fontWeight: 700, color: pos.type === "CE" ? "#22c55e" : "#ef4444" }}>{pos.type}</td>
                     <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", color: "#6b7280" }}>₹{pos.entry_price.toFixed(2)}</td>
@@ -803,13 +787,13 @@ function ClosedTodayPanel({
     padding: "7px 10px", fontSize: 10, fontWeight: 700, color: "#4b5563",
     textAlign: "left" as const, letterSpacing: "0.08em",
     whiteSpace: "nowrap" as const, borderBottom: "1px solid #1a1f2e",
-    background: "#070A11",
+    background: "#070A11", position: "sticky" as const, top: 0, zIndex: 1,
   };
 
   return (
     <div style={{
       background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12,
-      overflow: "hidden", marginTop: 10,
+      overflow: "hidden", display: "flex", flexDirection: "column", height: "100%",
     }}>
       {/* Header */}
       <div style={{
@@ -830,11 +814,11 @@ function ClosedTodayPanel({
       </div>
 
       {rows.length === 0 ? (
-        <div style={{ padding: "16px 16px", fontSize: 12, color: "#374151" }}>
-          No trades closed today yet
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#374151" }}>
+          No trades closed today
         </div>
       ) : (
-        <div style={{ overflowX: "auto" }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 950 }}>
             <thead>
               <tr>
@@ -850,7 +834,7 @@ function ClosedTodayPanel({
                 return (
                   <tr key={pos.id} style={{ borderTop: "1px solid #0f1520" }}>
                     <td style={{ padding: "7px 10px", fontSize: 11, color: "#374151", fontFamily: "monospace", textAlign: "right" as const }}>{idx + 1}</td>
-                    <td style={{ padding: "7px 10px", fontSize: 12, color: ACCENT[pos.strategy_id] ?? "#9ca3af", fontWeight: 600, whiteSpace: "nowrap" }}>{stratName}</td>
+                    <td style={{ padding: "7px 10px", fontSize: 12, color: accentFor(pos.strategy_id), fontWeight: 600, whiteSpace: "nowrap" }}>{stratName}</td>
                     <td style={{ padding: "7px 10px", fontSize: 11, color: "#c9d1d9", whiteSpace: "nowrap" }}>{pos.symbol}</td>
                     <td style={{ padding: "7px 8px", fontSize: 12, fontWeight: 700, color: pos.type === "CE" ? "#22c55e" : "#ef4444" }}>{pos.type}</td>
                     <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", color: "#6b7280" }}>₹{pos.entry_price.toFixed(2)}</td>
@@ -912,7 +896,7 @@ function StrategyCard({
   positions: Position[];
   onClick: () => void;
 }) {
-  const accent    = ACCENT[strategy.id] ?? "#6b7280";
+  const accent    = accentFor(strategy.id);
   const allocated = capital?.allocated_capital ?? 100000;
   const livePnl   = liveCapital - allocated;
   const retPct    = (livePnl / allocated) * 100;
@@ -922,10 +906,6 @@ function StrategyCard({
   // All today KPIs computed client-side from positions — avoids dependency on
   // capital.today_trades which is in-memory on the server and resets on restart.
   const todayIST = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-  const todayAll = positions.filter(p =>
-    p.strategy_id === strategy.id &&
-    new Date(p.opened_at).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) === todayIST
-  ).length;
   const todayClosed = positions.filter(p =>
     p.strategy_id === strategy.id &&
     p.status === "CLOSED" &&
@@ -977,6 +957,7 @@ function StrategyCard({
           <div>
             <div className="strategy-name" style={{ fontSize: 18, fontWeight: 700, color: "#ffffff" }}>{strategy.name}</div>
             <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 4, lineHeight: 1.5 }}>{strategy.description}</div>
+            <div style={{ marginTop: 6 }}><ValidationDots strategyId={strategy.id} /></div>
           </div>
           <div style={{ fontSize: 10, color: "#4b5563", letterSpacing: "0.06em", marginTop: 3, whiteSpace: "nowrap" }}>
             VIEW →
@@ -984,58 +965,56 @@ function StrategyCard({
         </div>
       </div>
 
-      {/* Stats grid — row 1: Capital/PnL/Return, row 2: Sharpe/Today/Lifetime */}
-      <div className="grid-stats" style={{ borderTop: `1px solid ${accent}30` }}>
-        {[
-          { label: "CAPITAL",   value: `₹${fmtINR(liveCapital)}`,                             color: "#ffffff",                                    weight: 600 },
-          { label: "TOTAL PnL", value: pnlStr(livePnl),                                       color: pnlColor(livePnl),                               weight: 700 },
-          { label: "RETURN",    value: fmtPct(retPct),                                        color: pnlColor(retPct),                                weight: 600 },
-          { label: "SHARPE",    value: sharpe.toFixed(2),                                     color: "#ffffff",                                       weight: 600 },
-          { label: "WIN RATE",  value: winRateStr,                                            color: "#ffffff",                                       weight: 600 },
-          { label: "TODAY",     value: String(todayAll),                                      color: "#ffffff",                                       weight: 600 },
-          { label: "LIFETIME",  value: String(life),                                          color: "#ffffff",                                       weight: 600 },
-          { label: "OPEN",      value: String(openCount),                                     color: openCount > 0 ? "#f5d547" : "#4b5563",          weight: 600 },
-        ].map((s, i) => (
-          <div key={s.label} style={{
-            padding: "12px 14px",
-            borderRight: i % 3 < 2 ? `1px solid ${accent}25` : undefined,
-            borderTop:   i >= 3    ? `1px solid ${accent}25` : undefined,
-          }}>
-            <div style={{ fontSize: 11, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 5, textTransform: "uppercase" as const }}>{s.label}</div>
-            <div className="stat-value" style={{ fontSize: 16, fontWeight: s.weight, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
+        {/* ── HERO: PnL + Return ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", borderTop: `1px solid ${accent}30`, height: 74 }}>
+          <div style={{ padding: "10px 14px", borderRight: `1px solid ${accent}25`, minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+            <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>TOTAL PnL</div>
+            <div style={{ fontSize: "clamp(15px, 1.5vw, 22px)", fontWeight: 700, color: pnlColor(livePnl), fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{pnlStr(livePnl)}</div>
           </div>
-        ))}
-      </div>
+          <div style={{ padding: "10px 14px", minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+            <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>RETURN</div>
+            <div style={{ fontSize: "clamp(15px, 1.5vw, 22px)", fontWeight: 700, color: pnlColor(retPct), fontFamily: "monospace", whiteSpace: "nowrap" }}>{fmtPct(retPct)}</div>
+          </div>
+        </div>
 
-      {/* Row 3: Profit Factor */}
-      <div style={{ borderTop: `1px solid ${accent}25`, padding: "10px 14px" }}>
-        <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>PROFIT FACTOR</div>
-        <div style={{ fontSize: 14, fontWeight: 600, color: hasData ? pfColor(pfVal) : "#4b5563", fontFamily: "monospace" }}>
-          {hasData ? pfVal : "—"}
+        {/* ── COMPACT: 3×2 secondary metrics ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderTop: `1px solid ${accent}25` }}>
+          {[
+            { label: "CAPITAL",       value: `₹${fmtINR(liveCapital)}`,                       color: "#ffffff" },
+            { label: "WIN RATE",      value: winRateStr,                                       color: "#ffffff" },
+            { label: "PROFIT FACTOR", value: hasData ? pfVal : "—",                            color: hasData ? pfColor(pfVal) : "#4b5563" },
+            { label: "SHARPE",        value: sharpe.toFixed(2),                                color: "#ffffff" },
+            { label: "LIFETIME",      value: String(life),                                     color: "#ffffff" },
+            { label: "OPEN",          value: String(openCount),                                color: openCount > 0 ? "#f5d547" : "#4b5563" },
+          ].map((s, i) => (
+            <div key={s.label} style={{
+              padding: "8px 14px", minWidth: 0, height: 52,
+              display: "flex", flexDirection: "column", justifyContent: "center",
+              borderRight: i % 3 < 2 ? `1px solid ${accent}25` : undefined,
+              borderTop:   i >= 3    ? `1px solid ${accent}25` : undefined,
+            }}>
+              <div style={{ fontSize: 9, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 3, textTransform: "uppercase" as const, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.label}</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: s.color, fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.value}</div>
+            </div>
+          ))}
         </div>
-      </div>
 
-      {/* Row 4: Today's PnL | Avg PnL Today | Avg PnL Overall */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", borderTop: `1px solid ${accent}25` }}>
-        <div style={{ padding: "10px 14px", borderRight: `1px solid ${accent}25` }}>
-          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>TODAY PnL</div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: todayCount > 0 ? pnlColor(todayPnl) : "#374151", fontFamily: "monospace" }}>
-            {todayCount > 0 ? pnlStr(todayPnl) : "—"}
-          </div>
+        {/* ── FOOTER: today / averages ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderTop: `1px solid ${accent}25`, height: 48 }}>
+          {[
+            { label: "TODAY PnL",       value: todayCount > 0 ? pnlStr(todayPnl)  : "—", color: todayCount > 0   ? pnlColor(todayPnl)  : "#374151" },
+            { label: "AVG/TRADE TODAY", value: avgPnlToday != null ? pnlStr(avgPnlToday) : "—", color: avgPnlToday != null ? pnlColor(avgPnlToday) : "#374151" },
+            { label: "AVG/TRADE LIFE",  value: avgPnlLife  != null ? pnlStr(avgPnlLife)  : "—", color: avgPnlLife  != null ? pnlColor(avgPnlLife)  : "#374151" },
+          ].map((s, i) => (
+            <div key={s.label} style={{
+              padding: "7px 14px", minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center",
+              borderRight: i < 2 ? `1px solid ${accent}25` : undefined,
+            }}>
+              <div style={{ fontSize: 9, color: "#6b7280", letterSpacing: "0.06em", marginBottom: 2, textTransform: "uppercase" as const, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.label}</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: s.color, fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.value}</div>
+            </div>
+          ))}
         </div>
-        <div style={{ padding: "10px 14px", borderRight: `1px solid ${accent}25` }}>
-          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>AVG PNL/TRADE TODAY</div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: avgPnlToday != null ? pnlColor(avgPnlToday) : "#374151", fontFamily: "monospace" }}>
-            {avgPnlToday != null ? pnlStr(avgPnlToday) : "—"}
-          </div>
-        </div>
-        <div style={{ padding: "10px 14px" }}>
-          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>AVG PNL/TRADE LIFE</div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: avgPnlLife != null ? pnlColor(avgPnlLife) : "#374151", fontFamily: "monospace" }}>
-            {avgPnlLife != null ? pnlStr(avgPnlLife) : "—"}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -1055,7 +1034,7 @@ function TradePopup({
   positions: Position[];
   onClose: () => void;
 }) {
-  const accent    = ACCENT[strategy.id] ?? "#6b7280";
+  const accent    = accentFor(strategy.id);
   const rules     = RULES[strategy.id] ?? [];
   const allocated = capital?.allocated_capital ?? 100000;
   const livePnl   = liveCapital - allocated;
@@ -1387,14 +1366,7 @@ function TradePopup({
 
 // ── CorrelationHeatmap ──────────────────────────────────────────────────────
 
-const STRATEGY_LABELS: Record<string, string> = {
-  ema_crossover: "EMA ×",
-  orion: "ORION",
-  ema_confluence: "EMA Conf",
-  supertrend: "Supertrend",
-  pcr_reversal: "PCR Rev",
-  gap_orb: "GAP ORB",
-};
+// STRATEGY_LABELS removed — use shortLabel(id) from @/lib/strategySpec
 
 function corrColor(v: number | null): string {
   if (v === null) return "#1a1f2e";
@@ -1431,15 +1403,16 @@ function CorrelationHeatmap() {
 
   const strats = data?.strategies ?? [];
   const matrix = data?.matrix ?? null;
+  const hasAnyPair = !!matrix && matrix.some((row, i) => row.some((v, j) => i !== j && v != null));
 
   return (
     <div style={{ background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, padding: "20px 24px", marginTop: 24 }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 16 }}>
         STRATEGY CORRELATION
       </div>
-      {(!matrix || data?.insufficient) ? (
+      {(!matrix || data?.insufficient || !hasAnyPair) ? (
         <div style={{ fontSize: 12, color: "#374151", textAlign: "center", padding: "24px 0" }}>
-          Insufficient data — needs at least 5 days of overlapping trade history
+          Correlation appears once strategies share at least 5 overlapping trading days
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
@@ -1449,7 +1422,7 @@ function CorrelationHeatmap() {
                 <td style={{ padding: "4px 8px", minWidth: 80 }} />
                 {strats.map(s => (
                   <th key={s} style={{ padding: "4px 6px", color: "#6b7280", fontWeight: 600, fontSize: 10, textAlign: "center", whiteSpace: "nowrap" }}>
-                    {STRATEGY_LABELS[s] ?? s}
+                    {shortLabel(s)}
                   </th>
                 ))}
               </tr>
@@ -1458,7 +1431,7 @@ function CorrelationHeatmap() {
               {strats.map((si, i) => (
                 <tr key={si}>
                   <td style={{ padding: "4px 8px", color: "#6b7280", fontWeight: 600, fontSize: 10, whiteSpace: "nowrap" }}>
-                    {STRATEGY_LABELS[si] ?? si}
+                    {shortLabel(si)}
                   </td>
                   {strats.map((_sj, j) => {
                     const v = matrix[i]?.[j] ?? null;
@@ -1494,7 +1467,7 @@ function CorrelationHeatmap() {
 
 // ── CombinedCapitalHistory ──────────────────────────────────────────────────
 
-function CombinedCapitalHistory({ startingCapital }: { startingCapital: number }) {
+function CombinedCapitalHistory({ startingCapital, closedCount }: { startingCapital: number; closedCount: number }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
   const seriesRef    = useRef<ISeriesApi<"Area"> | null>(null);
@@ -1502,6 +1475,7 @@ function CombinedCapitalHistory({ startingCapital }: { startingCapital: number }
   const [closeCount, setCloseCount] = useState(0);
 
   useEffect(() => {
+    if (closedCount < 5) return;
     if (!containerRef.current) return;
     const chart = createChart(containerRef.current, {
       autoSize: true,
@@ -1525,7 +1499,7 @@ function CombinedCapitalHistory({ startingCapital }: { startingCapital: number }
     seriesRef.current = series;
     series.createPriceLine({ price: 0, color: "#374151", lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
     return () => { chart.remove(); chartRef.current = seriesRef.current = null; };
-  }, []);
+  }, [closedCount]);
 
   useEffect(() => {
     fetch(`${BACKEND}/api/capital-history`)
@@ -1575,7 +1549,13 @@ function CombinedCapitalHistory({ startingCapital }: { startingCapital: number }
           </div>
         )}
       </div>
-      <div ref={containerRef} style={{ height: 220 }} />
+      {closedCount < 5 ? (
+        <div style={{ height: 220, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ color: "#6b7280", fontSize: 13 }}>{closedCount} closed trades so far — chart appears after 5</div>
+        </div>
+      ) : (
+        <div ref={containerRef} style={{ height: 220 }} />
+      )}
     </div>
   );
 }
@@ -1664,12 +1644,14 @@ export default function DashboardPage() {
         <CapitalSummaryBar capitals={capitals} openPositions={openPositions} positions={positions} />
 
         {/* Live Open Trades panel */}
-        <div style={{ height: 360 }}>
+        <div style={{ height: 248 }}>
           <OpenTradesPanel openPositions={openPositions} strategies={strategies} />
         </div>
 
         {/* Closed Today panel */}
-        <ClosedTodayPanel positions={positions} strategies={strategies} />
+        <div style={{ height: 248, marginTop: 10 }}>
+          <ClosedTodayPanel positions={positions} strategies={strategies} />
+        </div>
       </div>
 
       {/* Strategy Cards */}
@@ -1687,20 +1669,34 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {active.length > 0 && (
-          <div className="grid-eq">
-            {active.map(s => (
-              <StrategyCard
-                key={s.id}
-                strategy={s}
-                capital={capitals.find(c => c.strategy_id === s.id)}
-                liveCapital={computeLiveCapital(s.id)}
-                positions={positions}
-                onClick={() => router.push('/strategy/' + s.id)}
-              />
-            ))}
-          </div>
-        )}
+        {active.length > 0 && (() => {
+          const byId = new Map(active.map(s => [s.id, s]));
+          const grouped = STRATEGY_FAMILIES.map(f => ({ ...f, items: f.ids.map(id => byId.get(id)).filter(Boolean) as typeof active }));
+          const claimed = new Set(STRATEGY_FAMILIES.flatMap(f => f.ids));
+          const ungrouped = active.filter(s => !claimed.has(s.id));
+          if (ungrouped.length) grouped.push({ title: 'Other', subtitle: 'Not assigned to a family', ids: [], items: ungrouped });
+          return grouped.filter(g => g.items.length > 0).map(g => (
+            <div key={g.title} style={{ marginBottom: 28 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 12, padding: "0 2px 10px", borderBottom: "1px solid #1a1f2e", marginBottom: 14 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0", letterSpacing: "0.06em", textTransform: "uppercase" }}>{g.title}</span>
+                <span style={{ fontSize: 11, color: "#4b5563" }}>{g.subtitle}</span>
+                <span style={{ marginLeft: "auto", fontSize: 10, color: "#374151", fontFamily: "monospace" }}>{g.items.length} strateg{g.items.length === 1 ? "y" : "ies"}</span>
+              </div>
+              <div className="grid-eq">
+                {g.items.map(s => (
+                  <StrategyCard
+                    key={s.id}
+                    strategy={s}
+                    capital={capitals.find(c => c.strategy_id === s.id)}
+                    liveCapital={computeLiveCapital(s.id)}
+                    positions={positions}
+                    onClick={() => router.push('/strategy/' + s.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          ));
+        })()}
 
         {locked.length > 0 && (
           <div style={{
@@ -1722,7 +1718,10 @@ export default function DashboardPage() {
         )}
 
         {/* Combined Capital History */}
-        <CombinedCapitalHistory startingCapital={capitals.reduce((s, c) => s + (c.allocated_capital ?? 100_000), 0)} />
+        <CombinedCapitalHistory
+          startingCapital={capitals.reduce((s, c) => s + (c.allocated_capital ?? 100_000), 0)}
+          closedCount={positions.filter(p => p.status === "CLOSED").length}
+        />
 
         {/* Correlation Heatmap */}
         <CorrelationHeatmap />

@@ -222,3 +222,29 @@ export const STRATEGY_SPEC: Record<string, StrategySpec> = {
 
 // Accent lookup — replaces the duplicated ACCENT maps
 export const accentFor = (id: string) => STRATEGY_SPEC[id]?.accent ?? '#6b7280';
+
+// ── Short labels for compact displays (correlation matrix etc.) ──
+export const SHORT_LABEL: Record<string, string> = {
+  ema_crossover: 'EMA ×', ema_crossover_1m: 'EMA 1m',
+  ema_crossover_asym: 'Asym', ema_crossover_confirm: 'Confirm', ema_crossover_dualtf: 'Dual-TF',
+  ema_crossover_chop_lo: 'Chop .05', ema_crossover_chop_md: 'Chop .10', ema_crossover_chop_hi: 'Chop .15',
+  ema_crossover_1m_run: 'Run', ema_crossover_1m_runtrail: 'Run+Trail',
+  expiry_powerhour_dir: 'Exp Dir', expiry_powerhour_straddle: 'Exp Strad',
+  orion: 'Orion', ema_confluence: 'Confluence', supertrend: 'Supertrend',
+  pcr_reversal: 'PCR Rev', gap_orb: 'Gap+ORB', vwap_scalper: 'VWAP Scalp',
+};
+export const shortLabel = (id: string) => SHORT_LABEL[id] ?? id;
+
+// ── Experiment families for dashboard grouping ──
+export interface StrategyFamily { title: string; subtitle: string; ids: string[]; }
+export const STRATEGY_FAMILIES: StrategyFamily[] = [
+  { title: 'EMA 30s Family', subtitle: 'S1 control vs confirmation & chop-filter variants',
+    ids: ['ema_crossover', 'ema_crossover_asym', 'ema_crossover_confirm', 'ema_crossover_dualtf',
+          'ema_crossover_chop_lo', 'ema_crossover_chop_md', 'ema_crossover_chop_hi'] },
+  { title: 'EMA 1-minute Family', subtitle: 'S8 control vs no-target exit variants',
+    ids: ['ema_crossover_1m', 'ema_crossover_1m_run', 'ema_crossover_1m_runtrail'] },
+  { title: 'Expiry Day', subtitle: 'Power-hour trades — expiry Tuesdays only, one entry at 2:45 PM',
+    ids: ['expiry_powerhour_dir', 'expiry_powerhour_straddle'] },
+  { title: 'Standalone Strategies', subtitle: 'Independent signals — no variant race',
+    ids: ['orion', 'ema_confluence', 'supertrend', 'pcr_reversal', 'gap_orb', 'vwap_scalper'] },
+];
