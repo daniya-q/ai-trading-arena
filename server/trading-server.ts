@@ -761,7 +761,9 @@ async function pollOptionChain(): Promise<void> {
 // Only 30s is persisted: Upstox sells 1m+ history, but never sub-minute.
 // 1m/5m/15m are derivable from 30s anyway, so recording them would be waste.
 const RECORD_TIMEFRAME    = "30s";
-const CHAIN_STRIKE_WINDOW = 15;   // strikes either side of ATM to persist
+const CHAIN_STRIKE_WINDOW = 10;   // strikes either side of ATM — sized for Supabase free-tier 500MB limit
+const CHAIN_RECORD_EVERY  = 2;    // persist every Nth poll (poll is 60s → 2-minute snapshots)
+const chainPollCount: Record<string, number> = {};
 const CANDLE_BUFFER_MAX   = 5000; // hard cap if the DB is unreachable
 
 type CandleRow = {
@@ -805,6 +807,8 @@ async function flushCandleBuffer(): Promise<void> {
 // Option-chain snapshots — the real-premium archive. Expired weeklies are
 // purged by Upstox, so this is the only path to real historical premiums.
 async function recordOptionChain(index: string, chain: FullOptionChain): Promise<void> {
+  chainPollCount[index] = (chainPollCount[index] ?? 0) + 1;
+  if (chainPollCount[index] % CHAIN_RECORD_EVERY !== 0) return;
   const sorted = [...chain.rows].sort((a, b) => a.strike - b.strike);
   const atmIdx = sorted.findIndex(r => r.strike === chain.atmStrike);
   const from = atmIdx < 0 ? 0 : Math.max(0, atmIdx - CHAIN_STRIKE_WINDOW);
