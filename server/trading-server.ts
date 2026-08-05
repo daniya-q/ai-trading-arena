@@ -899,6 +899,12 @@ const NO_TARGET_STRATEGIES = new Set([
   "ema_crossover_1m_runtrail",
   "expiry_powerhour_dir",
   "expiry_powerhour_straddle",
+  "ema_confluence_run",
+]);
+
+const NO_TRAIL_STRATEGIES = new Set([
+  "ema_crossover_1m_run",
+  "ema_confluence_run",
 ]);
 
 function generateExitDetail(
@@ -910,9 +916,9 @@ function generateExitDetail(
   const ist   = getIST();
   const timeStr = `${String(ist.getUTCHours()).padStart(2,"0")}:${String(ist.getUTCMinutes()).padStart(2,"0")} IST`;
 
-  const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_crossover_asym:15, ema_crossover_confirm:15, ema_crossover_dualtf:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:15, gap_orb:20, vwap_scalper:20, ema_crossover_1m:15, ema_crossover_1m_run:15, ema_crossover_1m_runtrail:15, expiry_powerhour_dir:40, expiry_powerhour_straddle:40, ema_crossover_chop_lo:15, ema_crossover_chop_md:15, ema_crossover_chop_hi:15 };
+  const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_crossover_asym:15, ema_crossover_confirm:15, ema_crossover_dualtf:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:15, gap_orb:20, vwap_scalper:20, ema_crossover_1m:15, ema_crossover_1m_run:15, ema_crossover_1m_runtrail:15, expiry_powerhour_dir:40, expiry_powerhour_straddle:40, ema_crossover_chop_lo:15, ema_crossover_chop_md:15, ema_crossover_chop_hi:15, ema_confluence_run:15 };
   const TRAIL_PCT: Record<string, number> = { ema_crossover:10, ema_crossover_asym:10, ema_crossover_confirm:10, ema_crossover_dualtf:10, ema_confluence:10, orion:15, supertrend:12, pcr_reversal:12, gap_orb:12, vwap_scalper:12, ema_crossover_1m:10, ema_crossover_1m_runtrail:10, expiry_powerhour_dir:20, expiry_powerhour_straddle:20, ema_crossover_chop_lo:10, ema_crossover_chop_md:10, ema_crossover_chop_hi:10 };
-  const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:20 PM", ema_crossover_asym:"3:20 PM", ema_crossover_confirm:"3:20 PM", ema_crossover_dualtf:"3:20 PM", orion:"3:20 PM", ema_confluence:"3:20 PM", supertrend:"3:20 PM", pcr_reversal:"3:20 PM", gap_orb:"3:20 PM", vwap_scalper:"3:20 PM", ema_crossover_1m:"3:20 PM", ema_crossover_1m_run:"3:20 PM", ema_crossover_1m_runtrail:"3:20 PM", expiry_powerhour_dir:"3:18 PM", expiry_powerhour_straddle:"3:18 PM", ema_crossover_chop_lo:"3:20 PM", ema_crossover_chop_md:"3:20 PM", ema_crossover_chop_hi:"3:20 PM" };
+  const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:20 PM", ema_crossover_asym:"3:20 PM", ema_crossover_confirm:"3:20 PM", ema_crossover_dualtf:"3:20 PM", orion:"3:20 PM", ema_confluence:"3:20 PM", supertrend:"3:20 PM", pcr_reversal:"3:20 PM", gap_orb:"3:20 PM", vwap_scalper:"3:20 PM", ema_crossover_1m:"3:20 PM", ema_crossover_1m_run:"3:20 PM", ema_crossover_1m_runtrail:"3:20 PM", expiry_powerhour_dir:"3:18 PM", expiry_powerhour_straddle:"3:18 PM", ema_crossover_chop_lo:"3:20 PM", ema_crossover_chop_md:"3:20 PM", ema_crossover_chop_hi:"3:20 PM", ema_confluence_run:"3:20 PM" };
 
   switch (reason) {
     case "SL_HIT": {
@@ -1088,6 +1094,7 @@ async function monitorOpenPositions(): Promise<void> {
     ema_crossover_chop_lo:     920,  // 15:20 — same as S1
     ema_crossover_chop_md:     920,
     ema_crossover_chop_hi:     920,
+    ema_confluence_run:        920,  // 15:20
   };
 
   const currentMins = istMins();
@@ -1169,7 +1176,7 @@ async function monitorOpenPositions(): Promise<void> {
       trailPct           = 0.20;  // trail 20% below peak
     }
 
-    if (pos.strategy_id !== "ema_crossover_1m_run" && pnlPct >= trailActivationPct) {
+    if (!NO_TRAIL_STRATEGIES.has(pos.strategy_id) && pnlPct >= trailActivationPct) {
       const newTrail = peak * (1 - trailPct);
       if (!pos.trail_sl || newTrail > pos.trail_sl) {
         await supabase.from("strategy_positions").update({ trail_sl: roundUpToOneDecimal(newTrail) }).eq("id", pos.id);
@@ -2284,6 +2291,166 @@ async function runStrategy3(): Promise<void> {
 }
 
 // ══════════════════════════════════════════════════════════════
+// Strategy 19 — EMA Confluence Run (clone of S3, no target, no trail)
+// ══════════════════════════════════════════════════════════════
+
+let s19PrevFast = 0;
+let s19PrevSlow = 0;
+
+async function runStrategyConfluenceRun(): Promise<void> {
+  if (!isMarketOpen()) return;
+  const mins = istMins();
+  if (mins < 585 || mins >= 920) return; // 9:45–15:20
+
+  const candles = getCandles("NIFTY", "30s");
+  if (candles.length < 66) {
+    console.log(`[S19] Waiting for candles — have ${candles.length}/66`);
+    return;
+  }
+
+  const openPos = await getOpenStrategyPositions("ema_confluence_run");
+  if (openPos.length >= 1) {
+    console.log(`[S19] Position already open (${openPos[0].symbol}) — skipping`);
+    return;
+  }
+
+  const closes   = candles.map(c => c.close);
+  const fastArr  = emaValues(closes, 16);
+  const slowArr  = emaValues(closes, 64);
+  const fastCurr = fastArr[fastArr.length - 1];
+  const slowCurr = slowArr[slowArr.length - 1];
+  const fastPrev = s19PrevFast || fastArr[fastArr.length - 2];
+  const slowPrev = s19PrevSlow || slowArr[slowArr.length - 2];
+
+  const bullCross = fastPrev <= slowPrev && fastCurr > slowCurr;
+  const bearCross = fastPrev >= slowPrev && fastCurr < slowCurr;
+
+  s19PrevFast = fastCurr;
+  s19PrevSlow = slowCurr;
+
+  const rsi  = calcRSI(candles, 14);
+  const vwap = calcVWAP(candles);
+  const crossTag = bullCross ? "BULL-CROSS↑" : bearCross ? "BEAR-CROSS↓" : "no-cross";
+  console.log(`[S19] candles=${candles.length} EMA16=${fastCurr.toFixed(1)} EMA64=${slowCurr.toFixed(1)} RSI=${rsi.toFixed(1)} VWAP=${vwap.toFixed(0)} price=${lastNiftyPrice.toFixed(0)} | ${crossTag}`);
+
+  if (!bullCross && !bearCross) return;
+
+  const optType = bullCross ? "CE" : "PE";
+
+  // Filter 1: RSI
+  const rsiOk = optType === "CE" ? rsi < 65 : rsi > 35;
+  const rsiTag = rsiOk
+    ? `RSI=${rsi.toFixed(1)}✓`
+    : `RSI=${rsi.toFixed(1)}✗(CE need <65, PE need >35)`;
+
+  // Filter 2: VWAP
+  const price   = lastNiftyPrice;
+  const vwapOk  = optType === "CE" ? price > vwap : price < vwap;
+  const vwapTag = vwapOk
+    ? `VWAP=price ${optType === "CE" ? "above" : "below"}✓`
+    : `VWAP=price ${optType === "CE" ? "below" : "above"} vwap=${vwap.toFixed(0)}✗`;
+
+  // Filter 3: Fibonacci zone (38.2–50% support for CE, 50–78.6% resistance for PE)
+  // Using last 200 candles (100 min) for stable levels; ±0.5% tolerance
+  const recentHighs = candles.slice(-200).map(c => c.high);
+  const recentLows  = candles.slice(-200).map(c => c.low);
+  const fib         = calcFibLevels(Math.max(...recentHighs), Math.min(...recentLows));
+  let inFibZone: boolean;
+  let fibTag: string;
+  if (optType === "CE") {
+    const lo = fib["38.2"] * 0.995;
+    const hi = fib["50"]   * 1.005;
+    inFibZone = price >= lo && price <= hi;
+    fibTag = inFibZone
+      ? `Fib=in 38.2-50% zone (${fib["38.2"].toFixed(0)}-${fib["50"].toFixed(0)})✓`
+      : `Fib=NOT in 38.2-50% zone (${fib["38.2"].toFixed(0)}-${fib["50"].toFixed(0)}) price=${price.toFixed(0)}✗`;
+  } else {
+    const lo = fib["50"]   * 0.995;
+    const hi = fib["78.6"] * 1.005;
+    inFibZone = price >= lo && price <= hi;
+    fibTag = inFibZone
+      ? `Fib=in 50-78.6% zone (${fib["50"].toFixed(0)}-${fib["78.6"].toFixed(0)})✓`
+      : `Fib=NOT in 50-78.6% zone (${fib["50"].toFixed(0)}-${fib["78.6"].toFixed(0)}) price=${price.toFixed(0)}✗`;
+  }
+
+  // Filter 4: Volume — crossover candle ticks vs 20-candle avg; fallback to OI rising
+  const lastCandle  = candles[candles.length - 1];
+  const prev20      = candles.slice(-21, -1);
+  const avgTicks    = prev20.reduce((s, c) => s + (c.ticks ?? 1), 0) / (prev20.length || 1);
+  const ticksOk     = (lastCandle.ticks ?? 1) > avgTicks;
+  const oiRisingOk  = isOIRising("NIFTY");
+  const volOk       = ticksOk || oiRisingOk;
+  const volTag      = volOk
+    ? `OI/Vol=confirmed (ticks=${lastCandle.ticks ?? 0} avg=${avgTicks.toFixed(0)} oiRising=${oiRisingOk})✓`
+    : `OI/Vol=insufficient (ticks=${lastCandle.ticks ?? 0} avg=${avgTicks.toFixed(0)} oiRising=${oiRisingOk})✗`;
+
+  const allOk = rsiOk && vwapOk && inFibZone && volOk;
+
+  const fibLow  = optType === "CE" ? fib["38.2"] : fib["50"];
+  const fibHigh = optType === "CE" ? fib["50"]   : fib["78.6"];
+  const s19SignalRow = {
+    strategy_id: "ema_confluence_run",
+    index: "NIFTY",
+    direction: bullCross ? "bullish" : "bearish",
+    ema16: Number(fastCurr.toFixed(2)),
+    ema64: Number(slowCurr.toFixed(2)),
+    rsi: Number(rsi.toFixed(2)),
+    price: Number(price.toFixed(2)),
+    vwap: Number(vwap.toFixed(2)),
+    fib_low: Number(fibLow.toFixed(2)),
+    fib_high: Number(fibHigh.toFixed(2)),
+    in_fib_zone: inFibZone,
+    volume_ok: volOk,
+    oi_rising: oiRisingOk,
+    rsi_pass: rsiOk,
+    vwap_pass: vwapOk,
+    all_filters_passed: allOk,
+    trade_taken: false,
+  };
+
+  if (!allOk) {
+    console.log(`[S19] ${optType === "CE" ? "BULL-CROSS↑" : "BEAR-CROSS↓"} BLOCKED: ${rsiTag} | ${vwapTag} | ${fibTag} | ${volTag}`);
+    supabase.from("strategy_signals").insert(s19SignalRow).then(({ error }) => {
+      if (error) console.error("[S19] Signal log failed:", error.message);
+      else console.log(`[S19] Signal logged — blocked (rsi=${rsiOk} vwap=${vwapOk} fib=${inFibZone} vol=${volOk})`);
+    });
+    return;
+  }
+
+  const chain = getLatestChain("NIFTY");
+  if (!chain) { console.log(`[S19] No option chain`); return; }
+
+  const fld = optType === "CE" ? "cePremium" : "pePremium";
+  const allPrem = chain.rows.map(r => r[fld]).filter(p => p > 0).sort((a, b) => a - b);
+  const option  = getATMOption(chain, optType, 60, 70, lastNiftyPrice);
+  if (!option) {
+    console.log(`[S19] SIGNAL ${optType} — no ${optType} found in ₹60-70 (chain ₹${allPrem[0]?.toFixed(0) ?? "?"}-${allPrem[allPrem.length-1]?.toFixed(0) ?? "?"}, spot=${lastNiftyPrice.toFixed(0)})`);
+    return;
+  }
+
+  const s19Capital  = await getEquityCurrentValue("ema_confluence_run");
+  const s19Quantity = capQtyByMaxLoss(calcLots(s19Capital, 0.60, option.premium, 65), option.premium, 0.15, 65, "S19");
+  if (s19Quantity === 0) { console.log(`[S19] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s19Capital).toLocaleString("en-IN")} premium=₹${option.premium})`); return; }
+  console.log(`[S19] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s19Capital).toLocaleString("en-IN")} qty=${s19Quantity} — opening trade`);
+  await openStrategyPosition("ema_confluence_run", {
+    symbol:       option.symbol,
+    type:         optType,
+    side:         "LONG",
+    entry_price:  option.premium,
+    current_price: option.premium,
+    quantity:     s19Quantity,
+    stop_loss:    roundUpToOneDecimal(option.premium * 0.85),
+    trail_sl:     null,
+    pnl:          0,
+    status:       "OPEN",
+  });
+  supabase.from("strategy_signals").insert({ ...s19SignalRow, trade_taken: true }).then(({ error }) => {
+    if (error) console.error("[S19] Signal log (trade) failed:", error.message);
+    else console.log(`[S19] Signal logged — trade taken`);
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
 // Strategy 4 — Supertrend (5m candles, 9:45–14:30)
 // ══════════════════════════════════════════════════════════════
 
@@ -3241,6 +3408,7 @@ async function runEquityStrategies(): Promise<void> {
       runChopLo(),
       runChopMd(),
       runChopHi(),
+      runStrategyConfluenceRun(),
     ]);
     await Promise.allSettled([
       monitorOpenPositions(),

@@ -108,6 +108,14 @@ export const STRATEGY_VALIDATION: Record<string, StrategyValidation> = {
     chop_filter: { tier: 'testing', note: 'Live A/B; threshold 0.15%' },
     exits:       { tier: 'unvalidated', note: 'Inherited from S1' },
   },
+  ema_confluence_run: {
+    rsi:      { tier: 'validated', note: 'Signal-log analysis + sweep; 65/35 confirmed (shared with S3)' },
+    vwap:     { tier: 'unvalidated' },
+    fib:      { tier: 'unvalidated' },
+    sl:       { tier: 'unvalidated', note: 'Inherited from S3' },
+    no_target: { tier: 'validated', note: 'Expectancy sweep on 4.5yr real index data: no-target = 2.18 pts/trade vs 1.04 best fixed target' },
+    no_trail:  { tier: 'validated', note: 'All 16 trail configs underperformed no-trail in 4.5yr sweep' },
+  },
 
   // ─────────── BTC STRATEGIES ───────────
   // Aug 2026 finding: Kraken fees (0.52% round-trip on leveraged notional) exceed

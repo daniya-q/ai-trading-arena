@@ -221,6 +221,23 @@ export const STRATEGY_SPEC: Record<string, StrategySpec> = {
       { label: 'Chop filter', value: 'Blocks entry when |EMA16−EMA64| / spot < 0.15%', param: 'chop_filter' }],
     exit: EMA_EXIT, sizing: SIZING60,
   },
+  ema_confluence_run: {
+    accent: '#34D399', instrument: 'Nifty 50 options · weekly expiry',
+    timeframe: '30-second candles', window: '9:45 AM – 3:20 PM IST',
+    entry: [
+      { label: 'Filter 1', value: '16 EMA crosses 64 EMA', param: 'entry' },
+      { label: 'Filter 2 — RSI', value: 'CE requires RSI < 65 · PE requires RSI > 35', param: 'rsi' },
+      { label: 'Filter 3 — VWAP', value: 'CE above VWAP · PE below VWAP', param: 'vwap' },
+      { label: 'Filter 4 — Volume', value: 'Candle ticks > 20-candle avg OR OI rising' },
+      { label: 'Filter 5 — Fib', value: 'CE in 38.2–50% zone · PE in 50–78.6% zone', param: 'fib' },
+      { label: 'Note', value: 'All five must align simultaneously' },
+    ],
+    exit: [SL('15% of premium'),
+      { label: 'Target', value: 'NONE — expectancy sweep: no-target = 2.18 pts/trade vs 1.04 best fixed', param: 'no_target' },
+      { label: 'Trail SL', value: 'NONE — all 16 trail configs lost to no-trail in 4.5yr sweep', param: 'no_trail' },
+      { label: 'Signal exit', value: 'Opposite EMA crossover' }, CLOSE('3:20 PM IST')],
+    sizing: SIZING60,
+  },
 
   // ─────────── BTC STRATEGIES ───────────
   // Shared: BTC/USD via Kraken, LONG+SHORT, 24/7, no hard close.
@@ -348,7 +365,7 @@ export const SHORT_LABEL: Record<string, string> = {
   ema_crossover_chop_lo: 'Chop .05', ema_crossover_chop_md: 'Chop .10', ema_crossover_chop_hi: 'Chop .15',
   ema_crossover_1m_run: 'Run', ema_crossover_1m_runtrail: 'Run+Trail',
   expiry_powerhour_dir: 'Exp Dir', expiry_powerhour_straddle: 'Exp Strad',
-  orion: 'Orion', ema_confluence: 'Confluence', supertrend: 'Supertrend',
+  orion: 'Orion', ema_confluence: 'Confluence', ema_confluence_run: 'Confluence Run', supertrend: 'Supertrend',
   pcr_reversal: 'PCR Rev', gap_orb: 'Gap+ORB', vwap_scalper: 'VWAP Scalp',
   btc_ema_crossover: 'BTC EMA ×', btc_orion: 'BTC Orion', btc_ema_confluence: 'BTC Confluence',
   btc_supertrend: 'BTC Supertrend', btc_vwap_scalper: 'BTC VWAP',
@@ -366,7 +383,7 @@ export const STRATEGY_FAMILIES: StrategyFamily[] = [
   { title: 'Expiry Day', subtitle: 'Power-hour trades — expiry Tuesdays only, one entry at 2:45 PM',
     ids: ['expiry_powerhour_dir', 'expiry_powerhour_straddle'] },
   { title: 'Standalone Strategies', subtitle: 'Independent signals — no variant race',
-    ids: ['orion', 'ema_confluence', 'supertrend', 'pcr_reversal', 'gap_orb', 'vwap_scalper'] },
+    ids: ['orion', 'ema_confluence', 'ema_confluence_run', 'supertrend', 'pcr_reversal', 'gap_orb', 'vwap_scalper'] },
 ];
 
 export const BTC_FAMILIES: StrategyFamily[] = [
