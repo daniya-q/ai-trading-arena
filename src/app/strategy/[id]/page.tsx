@@ -11,6 +11,8 @@ import type {
   ISeriesMarkersPluginApi, SeriesMarker, Time,
 } from "lightweight-charts";
 import { supabase } from "@/lib/supabase/client";
+import { accentFor } from "@/lib/strategySpec";
+import StrategySpecCard from "@/components/StrategySpecCard";
 
 const BACKEND = "https://ai-trading-arena-backend-production.up.railway.app";
 
@@ -58,145 +60,7 @@ type CapitalPoint = { date: string; capital: number };
 
 // ── Strategy Config ──────────────────────────────────────────────
 
-const ACCENT: Record<string, string> = {
-  ema_crossover: "#F59E0B", orion: "#6366F1", ema_confluence: "#10B981",
-  supertrend: "#EF4444", pcr_reversal: "#8B5CF6", gap_orb: "#06B6D4", vwap_scalper: "#F97316",
-  ema_crossover_1m: "#EC4899",
-  ema_crossover_asym:    "#34D399",
-  ema_crossover_confirm: "#60A5FA",
-  ema_crossover_dualtf:  "#A78BFA",
-};
 
-const RULES: Record<string, string[]> = {
-  ema_crossover: [
-    "Instrument: Nifty 50 options · weekly expiry",
-    "Timeframe: 30-second candles, forming from 9:15 AM",
-    "Trading window: 10:30 AM – 3:00 PM",
-    "Entry CE: 16 EMA crosses above 64 EMA → buy CE (₹60–70 premium range)",
-    "Entry PE: 16 EMA crosses below 64 EMA → buy PE (₹60–70 premium range)",
-    "Fibonacci 50–61.8% zone used as advisory entry confluence · Max 1 open trade",
-    "Stop Loss: 15% of premium paid (e.g. entry ₹65 → SL ₹55.25)",
-    "Trail SL: activates when premium up 20% → trails at 10% below peak (ratchet, only tightens)",
-    "Exit Priority: 1) Hard SL hit  2) Opposite EMA crossover (flip)  3) Trail SL hit  4) 3:00 PM hard close",
-  ],
-  orion: [
-    "Instruments: Nifty 50, BankNifty, Sensex options · weekly expiry",
-    "ORB: High and Low of 9:15–9:30 AM first 15-min candle",
-    "Entry CE: price breaks + closes above ORB High AND above VWAP AND CE OI rising (long buildup)",
-    "Entry PE: price breaks + closes below ORB Low AND below VWAP AND PE OI rising (short buildup)",
-    "VIX filter: skip all trades for the day if India VIX < 13",
-    "Max 1 trade per instrument simultaneously (can hold Nifty + BankNifty + Sensex at same time)",
-    "Stop Loss: 30% of premium paid",
-    "Trail SL: at 20% gain → move SL to entry (breakeven) · at 35% gain → trail at 15% below peak (ratchet)",
-    "Exit Priority: 1) Hard SL hit  2) Trail SL hit  3) 2:00 PM hard close",
-  ],
-  ema_confluence: [
-    "Instrument: Nifty 50 options · weekly expiry",
-    "Timeframe: 30-second candles, forming from 9:15 AM",
-    "Trading window: 10:30 AM – 3:00 PM",
-    "All 5 filters must align simultaneously for entry:",
-    "  1. EMA crossover — 16 EMA crosses above/below 64 EMA",
-    "  2. RSI(14) — CE entry requires RSI < 45 · PE entry requires RSI > 55",
-    "  3. VWAP — CE: price must be above VWAP · PE: price must be below VWAP",
-    "  4. Volume — crossover candle volume must exceed 20-candle average",
-    "  5. Fibonacci — price must be near 50–61.8% retracement zone",
-    "Stop Loss: 15% of premium paid",
-    "Trail SL: activates when premium up 20% → trails at 10% below peak (ratchet, only tightens)",
-    "Exit Priority: 1) Hard SL hit  2) Opposite EMA crossover (flip)  3) Trail SL hit  4) 3:00 PM hard close",
-    "Max 1 open trade at a time",
-  ],
-  supertrend: [
-    "Instruments: Nifty 50 + BankNifty options · weekly expiry",
-    "Timeframe: 5-minute candles",
-    "Indicator: Supertrend with period=7, multiplier=3",
-    "Entry CE: Supertrend flips green → price crosses above Supertrend line (bullish flip)",
-    "Entry PE: Supertrend flips red → price crosses below Supertrend line (bearish flip)",
-    "Trading window: 9:45 AM – 2:30 PM · Max 2 trades per instrument per day",
-    "Stop Loss: 20% of premium paid",
-    "Trail SL: activates when premium up 35% → trails at 12% below peak (ratchet, only tightens)",
-    "Exit Priority: 1) Hard SL hit  2) Supertrend opposite flip  3) Trail SL hit  4) 3:00 PM hard close",
-  ],
-  pcr_reversal: [
-    "Instrument: Nifty 50 options · weekly expiry",
-    "No candles — checks option chain data every 5 minutes",
-    "Entry CE: PCR > 1.3 (market oversold) AND PE OI at ATM fell 10%+ in last 30 min (unwinding)",
-    "Entry PE: PCR < 0.7 (market overbought) AND CE OI at ATM fell 10%+ in last 30 min (unwinding)",
-    "Trading window: 10:00 AM – 2:30 PM · Max 3 trades per day",
-    "Stop Loss: 25% of premium paid",
-    "Trail SL: activates when premium up 35% → trails at 12% below peak (ratchet, only tightens)",
-    "Exit Priority: 1) Hard SL hit  2) PCR returns to neutral (0.9–1.1)  3) Opposite OI buildup  4) Trail SL hit  5) 3:00 PM hard close",
-  ],
-  gap_orb: [
-    "Instrument: Nifty 50 options · weekly expiry",
-    "Gap = (Today's Open − Yesterday's Close) / Yesterday's Close × 100, calculated at 9:15 AM",
-    "Gap > 0.3% up → FADE: buy PE (expect price to reverse and fill the gap)",
-    "Gap > 0.3% down → FADE: buy CE (expect price to reverse and fill the gap)",
-    "Gap < 0.3% → ORB BREAKOUT: trade direction of 9:15–9:30 AM range break",
-    "Fade target: price returns to previous day's close level (gap filled)",
-    "Stop Loss: 20% of premium paid",
-    "Trail SL: activates when premium up 35% → trails at 12% below peak (ratchet, only tightens)",
-    "Exit Priority: 1) Hard SL hit  2) Fade — gap fills (price reaches prev close)  3) Trail SL hit  4) No new entries after 11:30 AM",
-    "Max 2 trades per day",
-  ],
-  vwap_scalper: [
-    "VWAP + RSI Momentum Scalper — Nifty, BankNifty, Sensex options",
-    "Timeframe: 1-minute candles | Window: 10:30 AM – 3:00 PM IST",
-    "",
-    "Entry — Buy CE (bullish bounce):",
-    "  Price pulls back to VWAP then closes above it",
-    "  RSI between 40–60 (neutral momentum)",
-    "  OI rising on latest chain snapshot · Previous candle made a higher low",
-    "  Option premium in ₹50–80 range",
-    "",
-    "Entry — Buy PE (bearish rejection):",
-    "  Price pulls back to VWAP then closes below it",
-    "  RSI between 40–60 · OI rising · Previous candle made a lower high",
-    "  Option premium in ₹50–80 range",
-    "",
-    "Stop Loss: 20% of premium paid",
-    "Trail SL: at 25% gain → move SL to breakeven · at 35% gain → trail at 12% below peak (ratchet)",
-    "Exit Priority: 1) Hard SL hit  2) Opposite VWAP cross  3) Trail SL hit  4) 3:00 PM hard close",
-  ],
-  ema_crossover_asym: [
-    "Control clone of S1 — instant entry, 2-bar exit/flip confirmation",
-    "Timeframe: 30s candles | Window: 9:45 AM – 3:20 PM",
-    "Entry: immediate on 16/64 cross (same as S1)",
-    "Exit/flip: opposite cross must hold for 2 consecutive 30s bars before acting",
-    "SL: 15% | Target: 30% | Trail: +20% → 10% below peak | Hard close 3:20 PM",
-  ],
-  ema_crossover_confirm: [
-    "Control clone of S1 — 2-bar confirmation on BOTH entry and exit",
-    "Timeframe: 30s candles | Window: 9:45 AM – 3:20 PM",
-    "Entry: cross detected → wait 2nd bar confirming direction → enter",
-    "Exit/flip: opposite cross → wait 2nd bar confirming → close + flip",
-    "SL: 15% | Target: 30% | Trail: +20% → 10% below peak | Hard close 3:20 PM",
-  ],
-  ema_crossover_dualtf: [
-    "Control clone of S1 — requires 30s AND 1m EMA 16/64 agreement",
-    "Timeframe: 30s + 1m candles | Window: 9:45 AM – 3:20 PM",
-    "Entry CE: 30s bull cross AND 1m EMA16 > EMA64",
-    "Entry PE: 30s bear cross AND 1m EMA16 < EMA64",
-    "Exit/flip blocked if 1m EMA disagrees with intended new direction",
-    "SL: 15% | Target: 30% | Trail: +20% → 10% below peak | Hard close 3:20 PM",
-  ],
-};
-
-// Per-strategy rules font size — calculated so rules fill the right column height.
-// Formula: available_for_rules = (800px − 160px) − 30px_heading = 610px
-//          fontSize = available / (N_lines × lineHeight_2.0)
-// vwap_scalper subtracts 15px for its 3 empty-line spacers before dividing.
-const RULES_FONT: Record<string, number> = {
-  ema_crossover:  27,  // 9 lines → 610/(9×2) × 0.8 = 27
-  orion:          27,  // 9 lines → 27
-  ema_confluence: 19,  // 13 lines (5 indented) → 610/(13×2) × 0.8 = 19
-  supertrend:     27,  // 9 lines → 27
-  pcr_reversal:   30,  // 8 lines → 610/(8×2) × 0.8 = 30
-  gap_orb:        24,  // 10 lines → 610/(10×2) × 0.8 = 24
-  vwap_scalper:        16,  // 17 lines (3 empty) → (610-45)/(14×2) × 0.8 = 16
-  ema_crossover_asym:    27,  // 5 lines
-  ema_crossover_confirm: 27,  // 5 lines
-  ema_crossover_dualtf:  24,  // 6 lines
-};
 
 const STRATEGY_CHARTS: Record<string, Array<{ index: string; interval: string }>> = {
   ema_crossover:  [{ index: "NIFTY", interval: "30s" }],
@@ -284,7 +148,7 @@ function IndicatorChart({
   fullscreen?: boolean;
   onPriceUpdate?: (price: number, prevClose: number) => void;
 }) {
-  const accent = ACCENT[strategyId] ?? "#6b7280";
+  const accent = accentFor(strategyId);
 
   const allIntervals = ["30s", "1m", "5m", "15m"] as const;
   type TF = typeof allIntervals[number];
@@ -720,8 +584,7 @@ function ScrollHint() {
 export default function StrategyDetailPage() {
   const params = useParams();
   const id     = (params.id as string) ?? "";
-  const accent = ACCENT[id] ?? "#6b7280";
-  const rules  = RULES[id] ?? [];
+  const accent = accentFor(id);
   const charts = STRATEGY_CHARTS[id] ?? [{ index: "NIFTY", interval: "30s" }];
 
   // Data
@@ -860,7 +723,6 @@ export default function StrategyDetailPage() {
     .sort((a, b) => new Date(b.closed_at ?? 0).getTime() - new Date(a.closed_at ?? 0).getTime());
   const allPositions = [...openTrades, ...closedTrades];
 
-  const rulesFontSize = RULES_FONT[id] ?? 24;
   const chartConfig  = charts[activeChartIdx] ?? charts[0];
   const priceChange  = currentPrice - prevClose;
   const changePct    = prevClose > 0 ? (priceChange / prevClose) * 100 : 0;
@@ -878,16 +740,18 @@ export default function StrategyDetailPage() {
   const pfNum = parseFloat(metrics?.profit_factor ?? "0");
   const pfColor = metrics?.profit_factor === "∞" ? "#4ade80" : pfNum >= 1.5 ? "#4ade80" : pfNum >= 1 ? "#f5d547" : "#f87171";
 
+  // Hero 4 first (top 2×2), then remaining 10 (compact 2×5)
   const stats = [
-    { label: "INITIAL CAPITAL",    value: `₹${fmtINR(allocated)}`,                              color: "#9ca3af" },
     { label: "TOTAL PnL",          value: pnlStr(livePnl),                                        color: pnlColor(livePnl) },
-    { label: "CURRENT CAPITAL",    value: `₹${fmtINR(liveCapital)}`,                             color: "#ffffff" },
     { label: "RETURN %",           value: fmtPct(retPct),                                         color: pnlColor(retPct) },
+    { label: "WIN RATE",           value: `${(winRate * 100).toFixed(1)}%`,                       color: winRate * 100 >= 50 ? "#4ade80" : "#f87171" },
+    { label: "PROFIT FACTOR",      value: metrics?.profit_factor ?? "—",                          color: pfColor },
+    // compact rows below
+    { label: "INITIAL CAPITAL",    value: `₹${fmtINR(allocated)}`,                              color: "#9ca3af" },
+    { label: "CURRENT CAPITAL",    value: `₹${fmtINR(liveCapital)}`,                             color: "#ffffff" },
     { label: "SHARPE",             value: sharpe.toFixed(2),                                      color: "#ffffff" },
     { label: "TOTAL TRADES",       value: String(lifetime),                                       color: "#ffffff" },
     { label: "TODAY",              value: String(today),                                           color: "#ffffff" },
-    { label: "WIN RATE",           value: `${winRate.toFixed(1)}%`,                               color: winRate >= 50 ? "#4ade80" : "#f87171" },
-    { label: "PROFIT FACTOR",      value: metrics?.profit_factor ?? "—",                          color: pfColor },
     { label: "AVG WIN/LOSS",       value: metrics ? `${metrics.avg_win_avg_loss}×` : "—",        color: "#ffffff" },
     { label: "MAX DRAWDOWN",       value: metrics ? `-₹${fmtINR(metrics.max_drawdown_inr)} (-${metrics.max_drawdown_pct.toFixed(1)}%)` : "—", color: metrics && metrics.max_drawdown_inr > 0 ? "#f87171" : "#9ca3af" },
     { label: "EXPECTANCY",         value: metrics ? pnlStr(metrics.expectancy) : "—",            color: metrics ? pnlColor(metrics.expectancy) : "#9ca3af" },
@@ -1006,12 +870,29 @@ export default function StrategyDetailPage() {
             </div>
 
             {/* ── KPI grid — auto-placed row 2 col 1 ── */}
-            <div style={{ padding: "0 40px clamp(8px,1vh,14px)", overflow: "hidden" }}>
+            <div style={{ padding: "0 40px clamp(8px,1vh,14px)", overflow: "hidden", display: "flex", flexDirection: "column", gap: 6 }}>
+              {/* Hero 2×2 — top ~35% */}
               <div style={{
-                display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "repeat(7, 1fr)",
-                gap: 6, height: "100%",
+                display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr",
+                gap: 6, flex: "0 0 35%",
               }}>
-                {stats.map(s => (
+                {stats.slice(0, 4).map(s => (
+                  <div key={s.label} style={{
+                    background: "rgba(255,255,255,0.05)", border: `1px solid ${accent}33`,
+                    borderRadius: 8, padding: "6px 12px",
+                    display: "flex", flexDirection: "column", justifyContent: "space-between",
+                  }}>
+                    <div style={{ fontSize: "clamp(10px, 1.1vh, 12px)", fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase", paddingTop: 4 }}>{s.label}</div>
+                    <div style={{ fontSize: "clamp(18px, 2.1vh, 24px)", fontWeight: 700, color: s.color, fontFamily: "monospace", paddingBottom: 4 }}>{s.value}</div>
+                  </div>
+                ))}
+              </div>
+              {/* Compact 2×5 — remaining 10 */}
+              <div style={{
+                display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "repeat(5, 1fr)",
+                gap: 6, flex: 1,
+              }}>
+                {stats.slice(4).map(s => (
                   <div key={s.label} style={{
                     background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
                     borderRadius: 8, padding: "4px 10px",
@@ -1024,37 +905,9 @@ export default function StrategyDetailPage() {
               </div>
             </div>
 
-            {/* ── Strategy Logic + rules — auto-placed row 2 col 2 ── */}
-            <div style={{
-              borderLeft: "1px solid rgba(255,255,255,0.08)",
-              padding: "0 48px clamp(8px,1vh,14px) 40px",
-              overflow: "hidden",
-            }}>
-              <div style={{ fontSize: "clamp(22px, 2.8vh, 28px)", fontWeight: 700, color: accent, letterSpacing: "0.01em", marginBottom: "clamp(6px,0.8vh,12px)" }}>
-                Strategy Logic
-              </div>
-              <div style={{ display: "flex", flexDirection: "column" }}>
-                {rules.map((line, i) => {
-                  if (line === "") return <div key={i} style={{ height: 5 }} />;
-                  const isIndented = line.startsWith("  ");
-                  if (isIndented) {
-                    return (
-                      <div key={i} style={{ fontSize: rulesFontSize, lineHeight: 2.0, letterSpacing: "0.01em", color: "#9ca3af", paddingLeft: 20 }}>
-                        · {line.trim()}
-                      </div>
-                    );
-                  }
-                  const colonIdx = line.indexOf(":");
-                  return (
-                    <div key={i} style={{ fontSize: rulesFontSize, lineHeight: 2.0, letterSpacing: "0.01em", color: "#e2e8f0" }}>
-                      {colonIdx > 0
-                        ? <>• <strong style={{ color: "#ffffff" }}>{line.slice(0, colonIdx)}</strong>{line.slice(colonIdx)}</>
-                        : <>• {line}</>
-                      }
-                    </div>
-                  );
-                })}
-              </div>
+            {/* ── Strategy Spec Card — auto-placed row 2 col 2 ── */}
+            <div style={{ borderLeft: "1px solid rgba(255,255,255,0.08)", padding: "0 48px clamp(8px,1vh,14px) 40px", overflow: "hidden" }}>
+              <StrategySpecCard strategyId={id} />
             </div>
           </div>
 
@@ -1253,7 +1106,15 @@ export default function StrategyDetailPage() {
 
           {/* Capital history chart */}
           <div style={{ flex: 1, minHeight: 0 }}>
-            <CapitalHistoryChart strategyId={id} accent={accent} />
+            {closedTrades.length < 5 ? (
+              <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ color: "#6b7280", fontSize: 14, letterSpacing: "0.04em" }}>
+                  {closedTrades.length} closed trade{closedTrades.length !== 1 ? "s" : ""} so far — chart appears after 5
+                </div>
+              </div>
+            ) : (
+              <CapitalHistoryChart strategyId={id} accent={accent} />
+            )}
           </div>
 
           {/* NEXT ↓ pill */}

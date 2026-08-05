@@ -1,0 +1,124 @@
+// Single source of truth for strategy parameter validation status.
+// Tiers: 'validated' (green) | 'testing' (yellow, live A/B) | 'unvalidated' (grey)
+// Update a parameter's tier here as validation work is completed.
+
+export type ValidationTier = 'validated' | 'testing' | 'unvalidated';
+
+export interface ParamStatus {
+  tier: ValidationTier;
+  note?: string;
+}
+
+export interface StrategyValidation {
+  [param: string]: ParamStatus;
+}
+
+export const STRATEGY_VALIDATION: Record<string, StrategyValidation> = {
+  ema_crossover: {
+    entry:  { tier: 'unvalidated', note: 'Signal tested as non-predictive; never optimized' },
+    strike: { tier: 'unvalidated' },
+    sl:     { tier: 'unvalidated' },
+    target: { tier: 'unvalidated' },
+    trail:  { tier: 'unvalidated' },
+  },
+  orion: {
+    entry:  { tier: 'unvalidated' },
+    sl:     { tier: 'unvalidated' },
+    target: { tier: 'unvalidated' },
+    trail:  { tier: 'unvalidated' },
+  },
+  ema_confluence: {
+    rsi:    { tier: 'validated', note: 'Signal-log analysis + sweep; 65/35 confirmed' },
+    vwap:   { tier: 'unvalidated' },
+    fib:    { tier: 'unvalidated' },
+    sl:     { tier: 'unvalidated', note: '≈ backtest optimum by coincidence, not confirmed' },
+    target: { tier: 'validated', note: 'Tested — HARMFUL; fixed target caps winners, should be removed' },
+    trail:  { tier: 'validated', note: 'Tested — HARMFUL; trail clips tail-runners, should be removed' },
+  },
+  supertrend: {
+    entry:  { tier: 'unvalidated' },
+    sl:     { tier: 'unvalidated' },
+    target: { tier: 'unvalidated' },
+    trail:  { tier: 'unvalidated' },
+  },
+  pcr_reversal: {
+    thresholds: { tier: 'validated', note: 'Reverted to strict 1.3/0.7 on evidence' },
+    sl:         { tier: 'validated', note: 'Tightened 25%→15% from real overshoot data' },
+    target:     { tier: 'unvalidated' },
+    trail:      { tier: 'unvalidated' },
+  },
+  gap_orb: {
+    entry:  { tier: 'unvalidated' },
+    sl:     { tier: 'unvalidated' },
+    target: { tier: 'unvalidated' },
+    trail:  { tier: 'unvalidated' },
+  },
+  vwap_scalper: {
+    entry:  { tier: 'unvalidated' },
+    sl:     { tier: 'unvalidated' },
+    target: { tier: 'unvalidated' },
+    trail:  { tier: 'unvalidated' },
+  },
+  ema_crossover_1m: {
+    entry:  { tier: 'unvalidated' },
+    sl:     { tier: 'unvalidated' },
+    target: { tier: 'unvalidated' },
+    trail:  { tier: 'unvalidated' },
+  },
+  ema_crossover_asym: {
+    confirmation: { tier: 'testing', note: 'Live A/B vs S1; backtest said inert' },
+    exits:        { tier: 'unvalidated', note: 'Inherited from S1' },
+  },
+  ema_crossover_confirm: {
+    confirmation: { tier: 'testing', note: 'Live A/B vs S1; backtest said inert' },
+    exits:        { tier: 'unvalidated', note: 'Inherited from S1' },
+  },
+  ema_crossover_dualtf: {
+    dual_tf: { tier: 'testing', note: 'Live A/B vs S1' },
+    exits:   { tier: 'unvalidated', note: 'Inherited from S1' },
+  },
+  ema_crossover_1m_run: {
+    no_target: { tier: 'testing', note: 'Live A/B vs S8' },
+    sl:        { tier: 'unvalidated' },
+  },
+  ema_crossover_1m_runtrail: {
+    no_target: { tier: 'testing', note: 'Backtest-supported, live-leading pre-reset' },
+    trail:     { tier: 'testing', note: 'Live A/B vs S8' },
+    sl:        { tier: 'unvalidated' },
+  },
+  expiry_powerhour_dir: {
+    entry: { tier: 'testing', note: 'Real-index wave analysis supported; live confirming' },
+    sl:    { tier: 'unvalidated' },
+    trail: { tier: 'unvalidated' },
+  },
+  expiry_powerhour_straddle: {
+    entry: { tier: 'testing', note: 'Real-index wave analysis; live confirming' },
+    sl:    { tier: 'unvalidated' },
+    trail: { tier: 'unvalidated' },
+  },
+  ema_crossover_chop_lo: {
+    chop_filter: { tier: 'testing', note: 'Live A/B; threshold 0.05%' },
+    exits:       { tier: 'unvalidated', note: 'Inherited from S1' },
+  },
+  ema_crossover_chop_md: {
+    chop_filter: { tier: 'testing', note: 'Live A/B; threshold 0.10% (backtest pick)' },
+    exits:       { tier: 'unvalidated', note: 'Inherited from S1' },
+  },
+  ema_crossover_chop_hi: {
+    chop_filter: { tier: 'testing', note: 'Live A/B; threshold 0.15%' },
+    exits:       { tier: 'unvalidated', note: 'Inherited from S1' },
+  },
+};
+
+// Helper: overall validation summary for a strategy (for badges/rollups)
+export function validationSummary(strategyId: string): { validated: number; testing: number; unvalidated: number; total: number } {
+  const s = STRATEGY_VALIDATION[strategyId];
+  if (!s) return { validated: 0, testing: 0, unvalidated: 0, total: 0 };
+  const vals = Object.values(s);
+  return {
+    validated:   vals.filter(v => v.tier === 'validated').length,
+    testing:     vals.filter(v => v.tier === 'testing').length,
+    unvalidated: vals.filter(v => v.tier === 'unvalidated').length,
+    total:       vals.length,
+  };
+}
