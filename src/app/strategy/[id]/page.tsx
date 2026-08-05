@@ -211,16 +211,8 @@ export default function StrategyDetailPage() {
   const [loading,   setLoading]   = useState(true);
 
   // UI state
-  const [activeSection,  setActiveSection]  = useState(0);
   const [expandedTrade,  setExpandedTrade]  = useState<string | null>(null);
   const [metrics, setMetrics] = useState<StrategyMetrics | null>(null);
-
-  // Refs
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const sec0Ref   = useRef<HTMLElement>(null);
-  const sec1Ref   = useRef<HTMLElement>(null);
-  const sec3Ref   = useRef<HTMLElement>(null);
-  const sectionRefs = [sec0Ref, sec1Ref, sec3Ref];
 
   // ── Data fetching (unchanged logic) ──
 
@@ -275,48 +267,6 @@ export default function StrategyDetailPage() {
     }, 60_000);
     return () => clearInterval(iv);
   }, [id]);
-
-  // ── Scroll & keyboard navigation ──
-
-  const scrollToSection = useCallback((idx: number) => {
-    sectionRefs[idx].current?.scrollIntoView({ behavior: "smooth" });
-    setActiveSection(idx);
-  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
-
-  // IntersectionObserver to track active section
-  useEffect(() => {
-    const container = scrollRef.current;
-    if (!container) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach(e => {
-          if (e.isIntersecting && e.intersectionRatio >= 0.5) {
-            const idx = sectionRefs.findIndex(r => r.current === e.target);
-            if (idx !== -1) setActiveSection(idx);
-          }
-        });
-      },
-      { root: container, threshold: 0.5 }
-    );
-    sectionRefs.forEach(r => r.current && observer.observe(r.current));
-    return () => observer.disconnect();
-  }, [loading]);  // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Keyboard navigation
-  useEffect(() => {
-    const handle = (e: KeyboardEvent) => {
-      if (e.key === "ArrowDown" || e.key === "PageDown") {
-        e.preventDefault();
-        scrollToSection(Math.min(activeSection + 1, 2));
-      }
-      if (e.key === "ArrowUp" || e.key === "PageUp") {
-        e.preventDefault();
-        scrollToSection(Math.max(activeSection - 1, 0));
-      }
-    };
-    window.addEventListener("keydown", handle);
-    return () => window.removeEventListener("keydown", handle);
-  }, [activeSection, scrollToSection]);
 
   // ── Derived values ──
   const allocated   = capital?.allocated_capital ?? 100_000;
@@ -415,90 +365,66 @@ export default function StrategyDetailPage() {
         Indian Strategies Dashboard
       </Link>
 
-      {/* Scroll container */}
-      <div
-        ref={scrollRef}
-        style={{
-          height: "100vh", overflowY: "auto",
-          scrollSnapType: "y mandatory", scrollBehavior: "smooth",
-          background: "#0A0D14",
-        }}
-      >
+      <div style={{ minHeight: "100vh", background: "#0A0D14", paddingTop: 52 }}>
 
         {/* ═══════════════════════════════════════
             SECTION 1 — STRATEGY OVERVIEW
         ═══════════════════════════════════════ */}
-        <section
-          ref={sec0Ref}
-          style={{
-            height: "100vh", scrollSnapAlign: "start",
-            display: "flex", flexDirection: "column",
-            position: "relative", overflow: "hidden",
-          }}
-        >
-          {/* Grid: name spans full width (row 1); KPIs + Logic side by side (row 2) */}
+        <section style={{ display: "flex", flexDirection: "column", position: "relative" }}>
           <div style={{
-            flex: 1,
             display: "grid",
             gridTemplateColumns: "40% 60%",
-            gridTemplateRows: "auto 1fr",
-            overflow: "hidden",
+            gridTemplateRows: "auto auto",
+            alignItems: "start",
           }}>
 
             {/* ── Name + description — spans both columns ── */}
-            <div style={{ gridColumn: "1 / -1", padding: "clamp(40px,5vh,64px) 80px clamp(12px,1.5vh,20px)", textAlign: "center" }}>
+            <div style={{ gridColumn: "1 / -1", padding: "12px 80px 20px", textAlign: "center" }}>
               <h1 style={{
-                fontSize: "clamp(28px, 3.5vh, 36px)", fontWeight: 700, color: "#ffffff",
+                fontSize: 32, fontWeight: 700, color: "#ffffff",
                 margin: "0 0 8px", lineHeight: 1.1, letterSpacing: "-0.02em",
               }}>
                 {strategy?.name ?? id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
               </h1>
               {strategy?.description && (
-                <p style={{ fontSize: "clamp(13px, 1.6vh, 16px)", color: "#6b7280", margin: 0, lineHeight: 1.5 }}>
+                <p style={{ fontSize: 14, color: "#6b7280", margin: 0, lineHeight: 1.5 }}>
                   {strategy.description}
                 </p>
               )}
             </div>
 
             {/* ── KPI grid — auto-placed row 2 col 1 ── */}
-            <div style={{ padding: "0 40px clamp(8px,1vh,14px)", overflow: "hidden", display: "flex", flexDirection: "column", gap: 6 }}>
-              {/* Hero 2×2 — top ~35% */}
-              <div style={{
-                display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr",
-                gap: 6, flex: "0 0 35%",
-              }}>
+            <div style={{ padding: "0 40px 24px", display: "flex", flexDirection: "column", gap: 8 }}>
+              {/* Hero 2×2 */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 {stats.slice(0, 4).map(s => (
                   <div key={s.label} style={{
-                    background: "rgba(255,255,255,0.05)", border: `1px solid ${accent}33`,
-                    borderRadius: 8, padding: "6px 12px",
-                    display: "flex", flexDirection: "column", justifyContent: "space-between",
+                    background: "rgba(255,255,255,0.05)", border: `1px solid ${accent}40`,
+                    borderRadius: 8, padding: "10px 14px", minWidth: 0, minHeight: 62,
+                    display: "flex", flexDirection: "column", justifyContent: "center", gap: 3,
                   }}>
-                    <div style={{ fontSize: "clamp(10px, 1.1vh, 12px)", fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase", paddingTop: 4 }}>{s.label}</div>
-                    <div style={{ fontSize: "clamp(18px, 2.1vh, 24px)", fontWeight: 700, color: s.color, fontFamily: "monospace", paddingBottom: 4 }}>{s.value}</div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase" }}>{s.label}</div>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
                   </div>
                 ))}
               </div>
               {/* Compact 2×5 — remaining 10 */}
-              <div style={{
-                display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "repeat(5, 1fr)",
-                gap: 6, flex: 1,
-              }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 {stats.slice(4).map(s => (
                   <div key={s.label} style={{
                     background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
-                    borderRadius: 8, padding: "4px 10px",
-                    display: "flex", flexDirection: "column", justifyContent: "space-between",
+                    borderRadius: 8, padding: "8px 12px", minWidth: 0, minHeight: 46,
+                    display: "flex", flexDirection: "column", justifyContent: "center", gap: 2,
                   }}>
-                    <div style={{ fontSize: "clamp(8px, 0.9vh, 10px)", fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase", paddingTop: 4 }}>{s.label}</div>
-                    <div style={{ fontSize: "clamp(11px, 1.3vh, 15px)", fontWeight: 700, color: s.color, fontFamily: "monospace", paddingBottom: 4 }}>{s.value}</div>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase" }}>{s.label}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* ── Strategy Spec Card — auto-placed row 2 col 2 ── */}
-            <div style={{ borderLeft: "1px solid rgba(255,255,255,0.08)", padding: "0 48px clamp(8px,1vh,14px) 40px", overflow: "hidden" }}>
-              <StrategySpecCard strategyId={id} />
+            <div style={{ borderLeft: "1px solid rgba(255,255,255,0.08)", padding: "0 48px 24px 40px" }}>
+              <StrategySpecCard strategyId={id} flow />
             </div>
           </div>
 
@@ -507,16 +433,8 @@ export default function StrategyDetailPage() {
         {/* ═══════════════════════════════════════
             SECTION 2 — TODAY'S TRADES + CUMULATIVE PNL
         ═══════════════════════════════════════ */}
-        <section
-          ref={sec1Ref}
-          style={{
-            height: "100vh", scrollSnapAlign: "start",
-            display: "flex", flexDirection: "column",
-            position: "relative",
-          }}
-        >
-          {/* Split: Today's Trades (left) | Cumulative PnL (right) */}
-          <div style={{ flex: 1, minHeight: 0, display: "flex", borderTop: "1px solid #1a1f2e" }}>
+        <section style={{ display: "flex", flexDirection: "column", position: "relative", marginTop: 8 }}>
+          <div style={{ height: 400, display: "flex", borderTop: "1px solid #1a1f2e", borderBottom: "1px solid #1a1f2e" }}>
 
             {/* ── Left 60%: Today's Trades ── */}
             <div style={{ flex: "0 0 60%", minWidth: 0, display: "flex", flexDirection: "column", background: "#0A0D14", borderRight: "1px solid #1a1f2e" }}>
@@ -609,16 +527,9 @@ export default function StrategyDetailPage() {
         {/* ═══════════════════════════════════════
             SECTION 3 — TRADES
         ═══════════════════════════════════════ */}
-        <section
-          ref={sec3Ref}
-          style={{
-            height: "100vh", scrollSnapAlign: "start",
-            display: "flex", flexDirection: "column",
-            padding: "32px 40px 80px",
-          }}
-        >
+        <section style={{ display: "flex", flexDirection: "column", padding: "32px 40px 80px" }}>
           {openTrades.length === 0 && closedTrades.length === 0 ? (
-            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ minHeight: 280, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <div style={{ textAlign: "center" }}>
                 <div style={{ fontSize: 40, marginBottom: 20 }}>📊</div>
                 <div style={{ fontSize: 20, color: "#374151", fontWeight: 600 }}>No trades taken yet</div>
