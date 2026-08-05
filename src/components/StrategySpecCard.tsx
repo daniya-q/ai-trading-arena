@@ -42,7 +42,7 @@ function GroupHeading({ text, accent }: { text: string; accent: string }) {
   );
 }
 
-export default function StrategySpecCard({ strategyId }: { strategyId: string }) {
+export default function StrategySpecCard({ strategyId, flow = false }: { strategyId: string; flow?: boolean }) {
   const spec = STRATEGY_SPEC[strategyId];
   if (!spec) return <div style={{ color: '#6b7280', fontSize: 13 }}>No specification recorded for this strategy.</div>;
 
@@ -51,7 +51,7 @@ export default function StrategySpecCard({ strategyId }: { strategyId: string })
     { validated: 0, testing: 0, unvalidated: 0 } as Record<ValidationTier, number>);
 
   return (
-    <div style={{ height: '100%', overflowY: 'auto', paddingRight: 6 }}>
+    <div style={flow ? { height: 'auto', paddingRight: 6 } : { height: '100%', overflowY: 'auto', paddingRight: 6 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
         <div style={{ fontSize: 'clamp(18px,2.3vh,24px)', fontWeight: 700, color: spec.accent, letterSpacing: '0.01em' }}>
           Specification
