@@ -4,11 +4,10 @@ import { Fragment, useEffect, useRef, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
-  createChart, CandlestickSeries, LineSeries, AreaSeries, HistogramSeries, ColorType, createSeriesMarkers,
+  createChart, AreaSeries, ColorType, createSeriesMarkers,
 } from "lightweight-charts";
 import type {
-  IChartApi, ISeriesApi, IPriceLine, UTCTimestamp,
-  ISeriesMarkersPluginApi, SeriesMarker, Time,
+  IChartApi, ISeriesApi, Time,
 } from "lightweight-charts";
 import { supabase } from "@/lib/supabase/client";
 import { accentFor } from "@/lib/strategySpec";
@@ -35,17 +34,6 @@ type Position = {
   opened_at: string; closed_at: string | null;
   exit_reason: string | null; exit_reason_detail: string | null;
 };
-type OhlcCandle = { time: number; open: number; high: number; low: number; close: number };
-type IndicatorData = {
-  ema16?: Array<{ time: number; value: number }>;
-  ema64?: Array<{ time: number; value: number }>;
-  crossovers?: Array<{ time: number; type: "bullish" | "bearish" }>;
-  vwap?: Array<{ time: number; value: number }>;
-  supertrendUp?: Array<{ time: number; value: number | null }>;
-  supertrendDown?: Array<{ time: number; value: number | null }>;
-  orbHigh?: number; orbLow?: number; prevDayClose?: number;
-  pcr?: Array<{ time: number; value: number }>;
-};
 
 type StrategyMetrics = {
   profit_factor: string;
@@ -62,18 +50,6 @@ type CapitalPoint = { date: string; capital: number };
 
 
 
-const STRATEGY_CHARTS: Record<string, Array<{ index: string; interval: string }>> = {
-  ema_crossover:  [{ index: "NIFTY", interval: "30s" }],
-  orion:          [{ index: "NIFTY", interval: "15m" }, { index: "SENSEX", interval: "15m" }, { index: "BANKNIFTY", interval: "15m" }],
-  ema_confluence: [{ index: "NIFTY", interval: "30s" }],
-  supertrend:     [{ index: "NIFTY", interval: "5m" }, { index: "BANKNIFTY", interval: "5m" }],
-  pcr_reversal:   [{ index: "NIFTY", interval: "30s" }],
-  gap_orb:        [{ index: "NIFTY", interval: "15m" }],
-  vwap_scalper:          [{ index: "NIFTY", interval: "1m" }, { index: "SENSEX", interval: "1m" }, { index: "BANKNIFTY", interval: "1m" }],
-  ema_crossover_asym:    [{ index: "NIFTY", interval: "30s" }],
-  ema_crossover_confirm: [{ index: "NIFTY", interval: "30s" }],
-  ema_crossover_dualtf:  [{ index: "NIFTY", interval: "30s" }],
-};
 
 // ── Formatters ───────────────────────────────────────────────────
 
@@ -123,356 +99,8 @@ function fallbackExitText(pos: Position): string {
   }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────
-
-function snapToCandle(tradeSec: number, sortedCandleTimes: number[]): UTCTimestamp {
-  let best = sortedCandleTimes[0] ?? tradeSec;
-  for (const ct of sortedCandleTimes) {
-    if (ct <= tradeSec) best = ct;
-    else break;
-  }
-  return best as UTCTimestamp;
-}
-
-// ── IndicatorChart ───────────────────────────────────────────────
-
-function IndicatorChart({
-  strategyId, index, defaultInterval, positions,
-  fullscreen = false,
-  onPriceUpdate,
-}: {
-  strategyId: string;
-  index: string;
-  defaultInterval: string;
-  positions: Position[];
-  fullscreen?: boolean;
-  onPriceUpdate?: (price: number, prevClose: number) => void;
-}) {
-  const accent = accentFor(strategyId);
-
-  const allIntervals = ["30s", "1m", "5m", "15m"] as const;
-  type TF = typeof allIntervals[number];
-  const [timeframe, setTimeframe] = useState<TF>(defaultInterval as TF);
-  const [lastPcr, setLastPcr]     = useState<number | null>(null);
-
-  const mainContainerRef = useRef<HTMLDivElement>(null);
-  const chartRef         = useRef<IChartApi | null>(null);
-  const candleSeriesRef  = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const ema16Ref         = useRef<ISeriesApi<"Line"> | null>(null);
-  const ema64Ref         = useRef<ISeriesApi<"Line"> | null>(null);
-  const vwapRef          = useRef<ISeriesApi<"Line"> | null>(null);
-  const stUpRef          = useRef<ISeriesApi<"Line"> | null>(null);
-  const stDownRef        = useRef<ISeriesApi<"Line"> | null>(null);
-  const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
-  const orbHighLineRef   = useRef<IPriceLine | null>(null);
-  const orbLowLineRef    = useRef<IPriceLine | null>(null);
-  const pdcLineRef       = useRef<IPriceLine | null>(null);
-  const pcrContainerRef  = useRef<HTMLDivElement>(null);
-  const pcrChartRef      = useRef<IChartApi | null>(null);
-  const pcrSeriesRef     = useRef<ISeriesApi<"Line"> | null>(null);
-  const lastCandleTimeRef = useRef<number>(0);
-
-  const needsEMA  = ["ema_crossover", "ema_confluence"].includes(strategyId);
-  const needsVWAP = ["ema_confluence", "orion", "vwap_scalper"].includes(strategyId);
-  const needsST   = strategyId === "supertrend";
-  const needsPCR  = strategyId === "pcr_reversal";
-  const needsORB  = ["orion", "gap_orb", "vwap_scalper"].includes(strategyId);
-  const needsPDC  = ["gap_orb", "orion"].includes(strategyId);
-
-  const [isMarketOpen, setIsMarketOpen] = useState(false);
-  useEffect(() => {
-    const check = () => {
-      const ist = new Date(Date.now() + (5 * 60 + 30) * 60_000);
-      const dow = ist.getUTCDay();
-      if (dow === 0 || dow === 6) { setIsMarketOpen(false); return; }
-      const m = ist.getUTCHours() * 60 + ist.getUTCMinutes();
-      setIsMarketOpen(m >= 555 && m <= 930);
-    };
-    check();
-    const iv = setInterval(check, 60_000);
-    return () => clearInterval(iv);
-  }, []);
-
-  // Init main chart
-  useEffect(() => {
-    if (!mainContainerRef.current) return;
-    const chart = createChart(mainContainerRef.current, {
-      autoSize: true,
-      layout: {
-        background: { type: ColorType.Solid, color: "#0A0D14" },
-        textColor: "#6b7280",
-        fontSize: fullscreen ? 11 : 10,
-      },
-      grid: { vertLines: { color: "#1a1f2e" }, horzLines: { color: "#1a1f2e" } },
-      rightPriceScale: { borderColor: "#1a1f2e", autoScale: true, scaleMargins: { top: 0.1, bottom: 0.1 } },
-      timeScale: {
-        borderColor: "#1a1f2e", timeVisible: true,
-        secondsVisible: defaultInterval === "30s" || defaultInterval === "1m",
-        fixLeftEdge: false, rightOffset: 5,
-      },
-      crosshair: { mode: 1 },
-      handleScroll: true, handleScale: true,
-    });
-    chartRef.current = chart;
-
-    const ro = new ResizeObserver(() => {
-      if (chartRef.current && mainContainerRef.current)
-        chartRef.current.applyOptions({ width: mainContainerRef.current.clientWidth });
-    });
-    ro.observe(mainContainerRef.current);
-    (chart as unknown as { _ro: ResizeObserver })._ro = ro;
-
-    candleSeriesRef.current = chart.addSeries(CandlestickSeries, {
-      upColor: "#22c55e", downColor: "#ef4444",
-      borderUpColor: "#22c55e", borderDownColor: "#ef4444",
-      wickUpColor: "#22c55e", wickDownColor: "#ef4444",
-      lastValueVisible: true, priceLineVisible: true,
-    });
-    if (needsEMA) {
-      ema16Ref.current = chart.addSeries(LineSeries, { color: "#3B82F6", lineWidth: 1, lastValueVisible: false, priceLineVisible: false, title: "EMA16" });
-      ema64Ref.current = chart.addSeries(LineSeries, { color: "#F97316", lineWidth: 1, lastValueVisible: false, priceLineVisible: false, title: "EMA64" });
-    }
-    if (needsVWAP) {
-      vwapRef.current = chart.addSeries(LineSeries, { color: "#A855F7", lineWidth: 1, lineStyle: 1, lastValueVisible: false, priceLineVisible: false, title: "VWAP" });
-    }
-    if (needsST) {
-      stUpRef.current   = chart.addSeries(LineSeries, { color: "#22c55e", lineWidth: 2, lastValueVisible: false, priceLineVisible: false, title: "ST Up" });
-      stDownRef.current = chart.addSeries(LineSeries, { color: "#ef4444", lineWidth: 2, lastValueVisible: false, priceLineVisible: false, title: "ST Down" });
-    }
-    return () => {
-      (chart as unknown as { _ro?: ResizeObserver })._ro?.disconnect();
-      chart.remove();
-      chartRef.current = candleSeriesRef.current = ema16Ref.current = ema64Ref.current
-        = vwapRef.current = stUpRef.current = stDownRef.current
-        = orbHighLineRef.current = orbLowLineRef.current = pdcLineRef.current
-        = markersPluginRef.current = null;
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Init PCR chart
-  useEffect(() => {
-    if (!needsPCR || !pcrContainerRef.current) return;
-    const chart = createChart(pcrContainerRef.current, {
-      autoSize: true, layout: { background: { type: ColorType.Solid, color: "#0A0D14" }, textColor: "#6b7280", fontSize: 9 },
-      grid: { vertLines: { color: "#1a1f2e" }, horzLines: { color: "#1a1f2e" } },
-      rightPriceScale: { borderColor: "#1a1f2e" },
-      timeScale: { borderColor: "#1a1f2e", timeVisible: false },
-      crosshair: { mode: 1 },
-    });
-    pcrChartRef.current = chart;
-    pcrSeriesRef.current = chart.addSeries(LineSeries, { color: "#8B5CF6", lineWidth: 1, lastValueVisible: true, priceLineVisible: false });
-    return () => { chart.remove(); pcrChartRef.current = pcrSeriesRef.current = null; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Clear on timeframe change
-  useEffect(() => {
-    candleSeriesRef.current?.setData([]);
-    ema16Ref.current?.setData([]);
-    ema64Ref.current?.setData([]);
-    vwapRef.current?.setData([]);
-    stUpRef.current?.setData([]);
-    stDownRef.current?.setData([]);
-    lastCandleTimeRef.current = 0;
-    chartRef.current?.timeScale().applyOptions({ secondsVisible: timeframe === "30s" || timeframe === "1m" });
-  }, [timeframe]);
-
-  // Poll
-  useEffect(() => {
-    let cancelled = false;
-    const fetchAll = async () => {
-      try {
-        const [cr, ir] = await Promise.all([
-          fetch(`${BACKEND}/api/candles?index=${index}&interval=${timeframe}`),
-          fetch(`${BACKEND}/api/indicators?strategy=${strategyId}&index=${index}`),
-        ]);
-        if (!cr.ok || !ir.ok) return;
-        const rawCandles: OhlcCandle[] = await cr.json();
-        const ind: IndicatorData = await ir.json();
-        if (cancelled || !candleSeriesRef.current) return;
-
-        const candles = rawCandles
-          .filter(c => c.open > 0 && c.high >= c.low && c.close > 0)
-          .map(c => ({
-            time: (c.time > 1e10 ? Math.floor(c.time / 1000) : c.time) as UTCTimestamp,
-            open: c.open, high: c.high, low: c.low, close: c.close,
-          }));
-
-        if (candles.length > 0) {
-          const newest = candles[candles.length - 1].time as number;
-          if (newest !== lastCandleTimeRef.current) {
-            lastCandleTimeRef.current = newest;
-            candleSeriesRef.current.setData(candles);
-            chartRef.current?.priceScale("right").applyOptions({ autoScale: true });
-            chartRef.current?.timeScale().scrollToRealTime();
-            // surface price to parent
-            if (onPriceUpdate) {
-              const last = candles[candles.length - 1].close;
-              const prev = candles.length > 1 ? candles[candles.length - 2].close : last;
-              onPriceUpdate(last, prev);
-            }
-          }
-
-          const toTS = (t: number) => (t > 1e10 ? Math.floor(t / 1000) : t) as UTCTimestamp;
-          const sortedCandleTimes = candles.map(c => c.time as number);
-          const chartStart = sortedCandleTimes[0] ?? 0;
-          const chartEnd   = sortedCandleTimes[sortedCandleTimes.length - 1] ?? 0;
-
-          const filteredPos = positions.filter(pos => {
-            if (!pos.symbol.startsWith(index)) return false;
-            const tradeSec = new Date(pos.opened_at).getTime() / 1000;
-            return tradeSec >= chartStart && tradeSec <= chartEnd + 3600;
-          });
-
-          const markers: SeriesMarker<UTCTimestamp>[] = filteredPos.map(pos => {
-            const tradeSec = new Date(pos.opened_at).getTime() / 1000;
-            return {
-              time:     snapToCandle(tradeSec, sortedCandleTimes),
-              position: pos.type === "CE" ? "belowBar" : "aboveBar" as const,
-              color:    pos.type === "CE" ? "#22c55e" : "#ef4444",
-              shape:    pos.type === "CE" ? "arrowUp" : "arrowDown" as const,
-              text:     `${pos.type} ${pos.entry_price.toFixed(0)}`,
-            };
-          });
-          markers.sort((a, b) => (a.time as number) - (b.time as number));
-          if (!markersPluginRef.current)
-            markersPluginRef.current = createSeriesMarkers(candleSeriesRef.current, markers);
-          else
-            markersPluginRef.current.setMarkers(markers);
-
-          if (ema16Ref.current && ind.ema16?.length)
-            ema16Ref.current.setData(ind.ema16.map(p => ({ time: toTS(p.time), value: p.value })));
-          if (ema64Ref.current && ind.ema64?.length)
-            ema64Ref.current.setData(ind.ema64.map(p => ({ time: toTS(p.time), value: p.value })));
-          if (vwapRef.current && ind.vwap?.length)
-            vwapRef.current.setData(ind.vwap.map(p => ({ time: toTS(p.time), value: p.value })));
-
-          if (stUpRef.current && stDownRef.current && ind.supertrendUp && ind.supertrendDown) {
-            const up   = ind.supertrendUp.filter((p): p is { time: number; value: number } => p.value !== null).map(p => ({ time: toTS(p.time), value: p.value }));
-            const down = ind.supertrendDown.filter((p): p is { time: number; value: number } => p.value !== null).map(p => ({ time: toTS(p.time), value: p.value }));
-            if (up.length)   stUpRef.current.setData(up);
-            if (down.length) stDownRef.current.setData(down);
-          }
-
-          if (needsORB && candleSeriesRef.current) {
-            const orbH = ind.orbHigh ?? 0, orbL = ind.orbLow ?? 0;
-            if (orbH > 0) {
-              if (!orbHighLineRef.current) orbHighLineRef.current = candleSeriesRef.current.createPriceLine({ price: orbH, color: "#22c55e", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "ORB H" });
-              else orbHighLineRef.current.applyOptions({ price: orbH });
-            }
-            if (orbL > 0) {
-              if (!orbLowLineRef.current) orbLowLineRef.current = candleSeriesRef.current.createPriceLine({ price: orbL, color: "#ef4444", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "ORB L" });
-              else orbLowLineRef.current.applyOptions({ price: orbL });
-            }
-          }
-          if (needsPDC && candleSeriesRef.current) {
-            const pdc = ind.prevDayClose ?? 0;
-            if (pdc > 0) {
-              if (!pdcLineRef.current) pdcLineRef.current = candleSeriesRef.current.createPriceLine({ price: pdc, color: "#6b7280", lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: "PDC" });
-              else pdcLineRef.current.applyOptions({ price: pdc });
-            }
-          }
-          if (pcrSeriesRef.current && ind.pcr?.length) {
-            const pcrData = ind.pcr.map(p => ({ time: toTS(p.time), value: p.value })).sort((a, b) => (a.time as number) - (b.time as number));
-            pcrSeriesRef.current.setData(pcrData);
-            if (pcrData.length) setLastPcr(pcrData[pcrData.length - 1].value);
-          }
-        }
-      } catch (err) { console.warn(`[chart:${index}:${strategyId}]`, err); }
-    };
-    fetchAll();
-    const iv = setInterval(fetchAll, isMarketOpen ? 1_000 : 60_000);
-    return () => { cancelled = true; clearInterval(iv); };
-  }, [index, timeframe, strategyId, positions, needsORB, needsPDC, isMarketOpen, onPriceUpdate]);
-
-  const tfBtns = allIntervals.filter(tf => {
-    if (strategyId === "vwap_scalper") return ["1m", "5m"].includes(tf);
-    if (strategyId === "supertrend")   return ["1m", "5m", "15m"].includes(tf);
-    if (["orion", "gap_orb"].includes(strategyId)) return ["5m", "15m"].includes(tf);
-    return true;
-  });
-
-  if (fullscreen) {
-    // Fullscreen mode — fills parent flex container
-    return (
-      <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "#0A0D14" }}>
-        {/* Compact header: legend left, TF right */}
-        <div style={{
-          flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "0 20px", height: 48, borderBottom: "1px solid #1a1f2e", background: "#0B0E17",
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 12, color: "#6b7280" }}>
-            {needsEMA && <><span style={{ color: "#3B82F6" }}>▬</span><span>EMA16</span><span style={{ color: "#F97316" }}>▬</span><span>EMA64</span></>}
-            {needsVWAP && <><span style={{ color: "#A855F7" }}>⋯</span><span>VWAP</span></>}
-            {needsST && <><span style={{ color: "#22c55e" }}>▬</span><span>ST Up</span><span style={{ color: "#ef4444" }}>▬</span><span>ST Down</span></>}
-            {needsORB && <><span style={{ color: "#22c55e" }}>╌</span><span>ORB H</span><span style={{ color: "#ef4444" }}>╌</span><span>ORB L</span></>}
-            {needsPDC && <><span style={{ color: "#6b7280" }}>┄</span><span>PDC</span></>}
-          </div>
-          <div style={{ display: "flex", gap: 4 }}>
-            {tfBtns.map(tf => (
-              <button key={tf} onClick={() => setTimeframe(tf)} style={{
-                padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", letterSpacing: "0.05em", transition: "all 0.15s",
-                border: `1px solid ${timeframe === tf ? accent : "#1f2937"}`,
-                background: timeframe === tf ? accent : "transparent",
-                color: timeframe === tf ? "#000" : "#6b7280",
-              }}>{tf}</button>
-            ))}
-          </div>
-        </div>
-
-        {/* Chart fills remaining space */}
-        <div ref={mainContainerRef} style={{ flex: 1, minHeight: 0 }} />
-
-        {/* PCR panel */}
-        {needsPCR && (
-          <>
-            <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: "4px 20px", borderTop: "1px solid #1a1f2e", background: "#080B12" }}>
-              <span style={{ fontSize: 10, fontWeight: 700, color: "#374151", letterSpacing: "0.1em" }}>PCR</span>
-              {lastPcr !== null && (
-                <span style={{ fontSize: 14, fontFamily: "monospace", fontWeight: 700, color: lastPcr > 1.3 ? "#22c55e" : lastPcr < 0.7 ? "#ef4444" : "#9ca3af" }}>
-                  {lastPcr.toFixed(2)}
-                </span>
-              )}
-            </div>
-            <div ref={pcrContainerRef} style={{ flexShrink: 0, height: 80 }} />
-          </>
-        )}
-      </div>
-    );
-  }
-
-  // Card mode (not used in this page, kept for compatibility)
-  return (
-    <div style={{ background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, overflow: "hidden", marginBottom: 12 }}>
-      <div style={{ padding: "8px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #1a1f2e" }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.1em" }}>{index}</span>
-        <div style={{ display: "flex", gap: 4 }}>
-          {tfBtns.map(tf => (
-            <button key={tf} onClick={() => setTimeframe(tf)} style={{
-              padding: "2px 8px", borderRadius: 20, fontSize: 10, fontWeight: 600, cursor: "pointer",
-              border: `1px solid ${timeframe === tf ? accent : "#1f2937"}`,
-              background: timeframe === tf ? accent : "transparent",
-              color: timeframe === tf ? "#000" : "#6b7280",
-            }}>{tf}</button>
-          ))}
-        </div>
-      </div>
-      <div ref={mainContainerRef} style={{ width: "100%", height: 400 }} />
-      {needsPCR && (
-        <>
-          <div style={{ padding: "4px 14px", display: "flex", gap: 8, alignItems: "center", borderTop: "1px solid #1a1f2e", background: "#080B12" }}>
-            <span style={{ fontSize: 9, fontWeight: 700, color: "#374151" }}>PCR</span>
-            {lastPcr !== null && <span style={{ fontSize: 12, fontFamily: "monospace", fontWeight: 600, color: lastPcr > 1.3 ? "#22c55e" : lastPcr < 0.7 ? "#ef4444" : "#9ca3af" }}>{lastPcr.toFixed(2)}</span>}
-          </div>
-          <div ref={pcrContainerRef} style={{ width: "100%", height: 80 }} />
-        </>
-      )}
-    </div>
-  );
-}
-
 // ── CapitalHistoryChart ──────────────────────────────────────────────────────
+
 
 function CapitalHistoryChart({ strategyId, accent, isBtc = false }: { strategyId: string; accent: string; isBtc?: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -563,21 +191,6 @@ function CapitalHistoryChart({ strategyId, accent, isBtc = false }: { strategyId
   );
 }
 
-// ── ScrollHint ───────────────────────────────────────────────────
-
-function ScrollHint() {
-  return (
-    <div style={{
-      position: "absolute", bottom: 32, left: "50%", transform: "translateX(-50%)",
-      display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
-      color: "#374151", fontSize: 11, letterSpacing: "0.1em", userSelect: "none",
-      animation: "scrollBounce 2s ease-in-out infinite",
-    }}>
-      <span>SCROLL</span>
-      <span style={{ fontSize: 16 }}>↓</span>
-    </div>
-  );
-}
 
 // ── Strategy Detail Page (3-section fullscreen) ──────────────────
 
@@ -585,7 +198,6 @@ export default function StrategyDetailPage() {
   const params = useParams();
   const id     = (params.id as string) ?? "";
   const accent = accentFor(id);
-  const charts = STRATEGY_CHARTS[id] ?? [{ index: "NIFTY", interval: "30s" }];
 
   // Data
   const [strategy,  setStrategy]  = useState<Strategy | null>(null);
@@ -596,9 +208,6 @@ export default function StrategyDetailPage() {
 
   // UI state
   const [activeSection,  setActiveSection]  = useState(0);
-  const [activeChartIdx, setActiveChartIdx] = useState(0);
-  const [currentPrice,   setCurrentPrice]   = useState(0);
-  const [prevClose,      setPrevClose]      = useState(0);
   const [expandedTrade,  setExpandedTrade]  = useState<string | null>(null);
   const [metrics, setMetrics] = useState<StrategyMetrics | null>(null);
 
@@ -606,9 +215,8 @@ export default function StrategyDetailPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const sec0Ref   = useRef<HTMLElement>(null);
   const sec1Ref   = useRef<HTMLElement>(null);
-  const sec2Ref   = useRef<HTMLElement>(null);
   const sec3Ref   = useRef<HTMLElement>(null);
-  const sectionRefs = [sec0Ref, sec1Ref, sec2Ref, sec3Ref];
+  const sectionRefs = [sec0Ref, sec1Ref, sec3Ref];
 
   // ── Data fetching (unchanged logic) ──
 
@@ -695,7 +303,7 @@ export default function StrategyDetailPage() {
     const handle = (e: KeyboardEvent) => {
       if (e.key === "ArrowDown" || e.key === "PageDown") {
         e.preventDefault();
-        scrollToSection(Math.min(activeSection + 1, 3));
+        scrollToSection(Math.min(activeSection + 1, 2));
       }
       if (e.key === "ArrowUp" || e.key === "PageUp") {
         e.preventDefault();
@@ -723,10 +331,6 @@ export default function StrategyDetailPage() {
     .sort((a, b) => new Date(b.closed_at ?? 0).getTime() - new Date(a.closed_at ?? 0).getTime());
   const allPositions = [...openTrades, ...closedTrades];
 
-  const chartConfig  = charts[activeChartIdx] ?? charts[0];
-  const priceChange  = currentPrice - prevClose;
-  const changePct    = prevClose > 0 ? (priceChange / prevClose) * 100 : 0;
-  const priceColor   = priceChange > 0 ? "#4ade80" : priceChange < 0 ? "#f87171" : "#9ca3af";
 
   // ── Stats bar data ──
   // Exit breakdown: top 2 reasons
@@ -812,8 +416,8 @@ export default function StrategyDetailPage() {
         position: "fixed", right: 24, top: "50%", transform: "translateY(-50%)",
         zIndex: 200, display: "flex", flexDirection: "column", gap: 14,
       }}>
-        {[0, 1, 2, 3].map(i => (
-          <button key={i} onClick={() => scrollToSection(i)} title={["Overview", "Chart", "Capital History", "Trades"][i]} style={{
+        {[0, 1, 2].map(i => (
+          <button key={i} onClick={() => scrollToSection(i)} title={["Overview", "Today", "All Trades"][i]} style={{
             width: activeSection === i ? 10 : 6,
             height: activeSection === i ? 10 : 6,
             borderRadius: "50%",
@@ -927,7 +531,7 @@ export default function StrategyDetailPage() {
         </section>
 
         {/* ═══════════════════════════════════════
-            SECTION 2 — LIVE CHART
+            SECTION 2 — TODAY'S TRADES + CUMULATIVE PNL
         ═══════════════════════════════════════ */}
         <section
           ref={sec1Ref}
@@ -937,7 +541,7 @@ export default function StrategyDetailPage() {
             position: "relative",
           }}
         >
-          {/* ↑ PREV pill strip */}
+          {/* ↑ PREV pill */}
           <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0" }}>
             <button
               onClick={() => scrollToSection(0)}
@@ -951,66 +555,22 @@ export default function StrategyDetailPage() {
             >↑ PREV</button>
           </div>
 
-          {/* Chart top bar */}
-          <div style={{
-            flexShrink: 0, display: "flex", alignItems: "center",
-            justifyContent: "space-between", padding: "0 24px",
-            height: 60, background: "#0B0E17", borderBottom: "1px solid #1a1f2e",
-            borderTop: "1px solid #1a1f2e", gap: 16,
-          }}>
-            {/* Index tabs */}
-            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-              {charts.map((cfg, i) => (
-                <button key={cfg.index} onClick={() => { setActiveChartIdx(i); setCurrentPrice(0); setPrevClose(0); }} style={{
-                  padding: "6px 16px", borderRadius: 20, fontSize: 12, fontWeight: 700,
-                  cursor: "pointer", letterSpacing: "0.08em", transition: "all 0.15s",
-                  border: `1px solid ${activeChartIdx === i ? accent : "#1f2937"}`,
-                  background: activeChartIdx === i ? `${accent}18` : "transparent",
-                  color: activeChartIdx === i ? accent : "#4b5563",
-                }}>{cfg.index}</button>
-              ))}
-            </div>
+          {/* Split: Today's Trades (left) | Cumulative PnL (right) */}
+          <div style={{ flex: 1, minHeight: 0, display: "flex", borderTop: "1px solid #1a1f2e" }}>
 
-            {/* Current price */}
-            {currentPrice > 0 && (
-              <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-                <span style={{ fontSize: 22, fontWeight: 700, color: "#ffffff", fontFamily: "monospace" }}>
-                  {currentPrice.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
-                </span>
-                <span style={{ fontSize: 13, fontFamily: "monospace", color: priceColor, fontWeight: 600 }}>
-                  {priceChange >= 0 ? "+" : ""}{priceChange.toFixed(2)} ({changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%)
-                </span>
-              </div>
-            )}
-
-            {/* Spacer */}
-            <div />
-          </div>
-
-          {/* Chart + Trade Log split */}
-          <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-            {/* Left 60%: Chart */}
-            <div style={{ flex: "0 0 60%", minWidth: 0, borderRight: "1px solid #1a1f2e" }}>
-              <IndicatorChart
-                key={chartConfig.index}
-                strategyId={id}
-                index={chartConfig.index}
-                defaultInterval={chartConfig.interval}
-                positions={allPositions}
-                fullscreen
-                onPriceUpdate={(price, prev) => { setCurrentPrice(price); setPrevClose(prev); }}
-              />
-            </div>
-            {/* Right 40%: Today's Trade Log */}
-            <div style={{ flex: "0 0 40%", minWidth: 0, display: "flex", flexDirection: "column", background: "#0A0D14" }}>
-              <div style={{ padding: "10px 16px", borderBottom: "1px solid #1a1f2e", background: "#0B0E17", flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 10, fontWeight: 700, color: accent, letterSpacing: "0.1em" }}>TODAY'S TRADES</span>
-                <span style={{ fontSize: 9, color: "#374151", marginLeft: "auto" }}>
-                  {(() => {
-                    const t = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-                    return allPositions.filter(p => p.opened_at.startsWith(t) || p.closed_at?.startsWith(t)).length;
-                  })()} trades
-                </span>
+            {/* ── Left 60%: Today's Trades ── */}
+            <div style={{ flex: "0 0 60%", minWidth: 0, display: "flex", flexDirection: "column", background: "#0A0D14", borderRight: "1px solid #1a1f2e" }}>
+              <div style={{ padding: "0 20px", height: 48, borderBottom: "1px solid #1a1f2e", background: "#0B0E17", flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: accent, letterSpacing: "0.1em" }}>TODAY&apos;S TRADES</div>
+                  <div style={{ fontSize: 9, color: "#374151", marginTop: 1 }}>
+                    {(() => {
+                      const t = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+                      const n = allPositions.filter(p => p.opened_at.startsWith(t) || p.closed_at?.startsWith(t)).length;
+                      return `${n} trade${n !== 1 ? "s" : ""} today`;
+                    })()}
+                  </div>
+                </div>
               </div>
               <div style={{ flex: 1, overflowY: "auto", overflowX: "auto" }}>
                 {(() => {
@@ -1041,8 +601,8 @@ export default function StrategyDetailPage() {
                       </thead>
                       <tbody>
                         {todayTrades.map(p => {
-                          const pnlColor = (p.pnl ?? 0) > 0 ? "#4ade80" : (p.pnl ?? 0) < 0 ? "#f87171" : "#9ca3af";
-                          const retPct   = p.entry_price > 0 && p.quantity > 0 ? (p.pnl ?? 0) / (p.entry_price * p.quantity) * 100 : 0;
+                          const pnlCol = (p.pnl ?? 0) > 0 ? "#4ade80" : (p.pnl ?? 0) < 0 ? "#f87171" : "#9ca3af";
+                          const retPct = p.entry_price > 0 && p.quantity > 0 ? (p.pnl ?? 0) / (p.entry_price * p.quantity) * 100 : 0;
                           return (
                             <tr key={p.id}>
                               <td style={tdSt}>{fmtTime(p.opened_at)}</td>
@@ -1050,8 +610,8 @@ export default function StrategyDetailPage() {
                               <td style={tdSt}>{p.entry_price.toFixed(2)}</td>
                               <td style={tdSt}>{p.exit_price != null ? p.exit_price.toFixed(2) : "—"}</td>
                               <td style={tdSt}>{p.quantity}</td>
-                              <td style={{ ...tdSt, color: pnlColor }}>{(p.pnl ?? 0) >= 0 ? "+" : ""}₹{Math.abs(p.pnl ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
-                              <td style={{ ...tdSt, color: pnlColor }}>{retPct >= 0 ? "+" : ""}{retPct.toFixed(1)}%</td>
+                              <td style={{ ...tdSt, color: pnlCol }}>{(p.pnl ?? 0) >= 0 ? "+" : ""}₹{Math.abs(p.pnl ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+                              <td style={{ ...tdSt, color: pnlCol }}>{retPct >= 0 ? "+" : ""}{retPct.toFixed(1)}%</td>
                               <td style={{ ...tdSt, color: "#6b7280" }}>{p.status === "OPEN" ? "OPEN" : (p.exit_reason ?? "—")}</td>
                             </tr>
                           );
@@ -1062,65 +622,32 @@ export default function StrategyDetailPage() {
                 })()}
               </div>
             </div>
+
+            {/* ── Right 40%: All-time Cumulative PnL ── */}
+            <div style={{ flex: "0 0 40%", minWidth: 0, display: "flex", flexDirection: "column", background: "#0A0D14" }}>
+              {closedTrades.length < 5 ? (
+                <>
+                  <div style={{ padding: "0 20px", height: 48, borderBottom: "1px solid #1a1f2e", background: "#0B0E17", flexShrink: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: accent, letterSpacing: "0.1em" }}>CUMULATIVE PNL</div>
+                    <div style={{ fontSize: 9, color: "#374151", marginTop: 1 }}>All-time · profit since start</div>
+                  </div>
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>
+                    <div style={{ color: "#6b7280", fontSize: 12, lineHeight: 1.6 }}>
+                      {closedTrades.length} closed trade{closedTrades.length !== 1 ? "s" : ""} so far<br />
+                      <span style={{ color: "#4b5563" }}>chart appears after 5</span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <CapitalHistoryChart strategyId={id} accent={accent} />
+              )}
+            </div>
           </div>
 
           {/* NEXT ↓ pill */}
           <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0", borderTop: "1px solid #1a1f2e" }}>
             <button
               onClick={() => scrollToSection(2)}
-              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
-              onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-              style={{
-                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
-                borderRadius: 999, padding: "10px 28px", color: "#ffffff",
-                fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer",
-              }}
-            >NEXT ↓</button>
-          </div>
-        </section>
-
-        {/* ═══════════════════════════════════════
-            SECTION 2.5 — CAPITAL HISTORY
-        ═══════════════════════════════════════ */}
-        <section
-          ref={sec2Ref}
-          style={{
-            height: "100vh", scrollSnapAlign: "start",
-            display: "flex", flexDirection: "column",
-            position: "relative",
-          }}
-        >
-          {/* ↑ PREV pill */}
-          <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0" }}>
-            <button
-              onClick={() => scrollToSection(1)}
-              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
-              onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-              style={{
-                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
-                borderRadius: 999, padding: "10px 28px", color: "#ffffff",
-                fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer",
-              }}
-            >↑ PREV</button>
-          </div>
-
-          {/* Capital history chart */}
-          <div style={{ flex: 1, minHeight: 0 }}>
-            {closedTrades.length < 5 ? (
-              <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <div style={{ color: "#6b7280", fontSize: 14, letterSpacing: "0.04em" }}>
-                  {closedTrades.length} closed trade{closedTrades.length !== 1 ? "s" : ""} so far — chart appears after 5
-                </div>
-              </div>
-            ) : (
-              <CapitalHistoryChart strategyId={id} accent={accent} />
-            )}
-          </div>
-
-          {/* NEXT ↓ pill */}
-          <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0", borderTop: "1px solid #1a1f2e" }}>
-            <button
-              onClick={() => scrollToSection(3)}
               onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
               onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
               style={{
@@ -1146,7 +673,7 @@ export default function StrategyDetailPage() {
           {/* ↑ PREV pill */}
           <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "12px 0", marginBottom: 32 }}>
             <button
-              onClick={() => scrollToSection(2)}
+              onClick={() => scrollToSection(1)}
               onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
               onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
               style={{
