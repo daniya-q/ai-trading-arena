@@ -4,13 +4,14 @@ import { Fragment, useEffect, useRef, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
-  createChart, CandlestickSeries, LineSeries, AreaSeries, HistogramSeries, ColorType, createSeriesMarkers,
+  createChart, AreaSeries, ColorType, createSeriesMarkers,
 } from "lightweight-charts";
 import type {
-  IChartApi, ISeriesApi, IPriceLine, UTCTimestamp,
-  ISeriesMarkersPluginApi, SeriesMarker, Time,
+  IChartApi, ISeriesApi, Time,
 } from "lightweight-charts";
 import { supabase } from "@/lib/supabase/client";
+import { accentFor } from '@/lib/strategySpec';
+import StrategySpecCard from '@/components/StrategySpecCard';
 
 const BACKEND = "https://ai-trading-arena-backend-production.up.railway.app";
 
@@ -38,18 +39,6 @@ type BtcPosition = {
   current_tier: number | null;
   realized_pnl: number | null;
 };
-type OhlcCandle = { time: number; open: number; high: number; low: number; close: number };
-type BtcIndicatorData = {
-  ema9?:  Array<{ time: number; value: number }>;
-  ema21?: Array<{ time: number; value: number }>;
-  ema20?: Array<{ time: number; value: number }>;
-  ema50?: Array<{ time: number; value: number }>;
-  vwap?:  Array<{ time: number; value: number }>;
-  supertrendUp?:   Array<{ time: number; value: number | null }>;
-  supertrendDown?: Array<{ time: number; value: number | null }>;
-  orbHigh?: number; orbLow?: number;
-  crossovers?: Array<{ time: number; type: "bullish" | "bearish" }>;
-};
 
 type StrategyMetrics = {
   profit_factor: string;
@@ -62,110 +51,7 @@ type StrategyMetrics = {
 };
 type CapitalPoint = { date: string; capital: number };
 
-// ── Strategy Config ────────────────────────────────────────────────
-
-const ACCENT: Record<string, string> = {
-  btc_ema_crossover:  "#F59E0B",
-  btc_orion:          "#6366F1",
-  btc_ema_confluence: "#10B981",
-  btc_supertrend:     "#EF4444",
-  btc_vwap_scalper:   "#F97316",
-};
-
-const RULES: Record<string, string[]> = {
-  btc_ema_crossover: [
-    "Instrument: BTC/USD · 24/7 perpetual",
-    "Timeframe: 30-second candles",
-    "Entry LONG: EMA9 crosses above EMA21 (golden cross)",
-    "Entry SHORT: EMA9 crosses below EMA21 (death cross)",
-    "On opposite cross — existing position closed, new one opens in next cycle",
-    "Stop Loss: ~20% of entry price (based on 1.5× ATR from entry)",
-    "Partial Booking: when price moves 1× SL distance → book 30% of position, SL moves to breakeven",
-    "Tiered Trailing: T1 (1× SL dist) → lock 70% of peak gain · T2 (2×) → lock 80% · T3 (4×) → lock 90%",
-    "Exit Priority: 1) Hard SL hit  2) Tiered trail SL  3) Opposite EMA cross (reversal)",
-    "Max 1 trade per direction per day · ₹5,000 INR allocation per trade (paper trading)",
-  ],
-  btc_orion: [
-    "Instrument: BTC/USD · 24/7 perpetual",
-    "Opening Range: built from 00:00–00:30 UTC candles each day",
-    "Entry LONG: price breaks above ORB High (after 00:30 UTC)",
-    "Entry SHORT: price breaks below ORB Low (after 00:30 UTC)",
-    "Stop Loss: ORB opposite side (LONG SL = ORB Low · SHORT SL = ORB High)",
-    "Partial Booking: when price moves 1× SL distance → book 30% of position, SL moves to breakeven",
-    "Tiered Trailing: T1 (1× SL dist) → lock 75% of peak gain · T2 (2×) → lock 85% · T3 (4×) → lock 92%",
-    "Exit Priority: 1) Hard SL hit  2) Tiered trail SL  3) Daily limit reached (max 2 trades)",
-    "Max 2 trades per day (1 long + 1 short) · ₹5,000 INR allocation per trade (paper trading)",
-  ],
-  btc_ema_confluence: [
-    "Instrument: BTC/USD · 24/7 perpetual",
-    "Timeframe: 30-second candles",
-    "All 5 filters must align simultaneously:",
-    "  1. EMA20 vs EMA50 — trend direction (bullish > / bearish <)",
-    "  2. RSI(14) — must be 40–60 (trending, not extreme)",
-    "  3. VWAP (UTC day) — price above for long, below for short",
-    "  4. ATR volatility — ATR must exceed 0.5% of price",
-    "  5. EMA9 slope — positive for long, negative for short",
-    "Stop Loss: 2× ATR(14) from entry (approx 20% of entry)",
-    "Partial Booking: when price moves 1× SL distance → book 35% of position, SL moves to breakeven",
-    "Tiered Trailing: T1 (1× SL dist) → lock 70% of peak gain · T2 (2×) → lock 82% · T3 (3×) → lock 92%",
-    "Exit Priority: 1) Hard SL hit  2) Tiered trail SL  3) Any of 5 filters invalidated",
-    "Max 1 trade per direction per day · ₹5,000 INR allocation per trade (paper trading)",
-  ],
-  btc_supertrend: [
-    "Instrument: BTC/USD · 24/7 perpetual",
-    "Timeframe: 5-minute candles",
-    "Indicator: Supertrend(period=7, multiplier=3)",
-    "Entry LONG: Supertrend flips bullish (down→up direction change)",
-    "Entry SHORT: Supertrend flips bearish (up→down direction change)",
-    "On opposite flip — existing position closed, new one opens next cycle",
-    "Stop Loss: ~20% of entry (Supertrend line distance at entry)",
-    "Partial Booking: when price moves 1× SL distance → book 30% of position, SL moves to breakeven",
-    "Tiered Trailing: T1 (1× SL dist) → lock 72% of peak gain · T2 (2×) → lock 84% · T3 (4×) → lock 92%",
-    "Exit Priority: 1) Hard SL hit  2) Tiered trail SL  3) Supertrend opposite flip",
-    "Max 2 trades per day · ₹5,000 INR allocation per trade (paper trading)",
-  ],
-  btc_vwap_scalper: [
-    "BTC VWAP Momentum Scalper — Runs 24/7",
-    "Timeframe: 1-minute candles | Same VWAP + RSI + volume logic as equity",
-    "",
-    "Entry — LONG (bullish bounce):",
-    "  BTC price closes above VWAP after touching it",
-    "  RSI between 40–60 | Tick volume above 20-candle average",
-    "  Previous candle made a higher low",
-    "",
-    "Entry — SHORT (bearish rejection):",
-    "  BTC price closes below VWAP after touching it",
-    "  RSI between 40–60 | Tick volume above 20-candle average",
-    "  Previous candle made a lower high",
-    "",
-    "Stop Loss: ~20% of entry (2× ATR at entry)",
-    "Partial Booking: at 0.5× SL distance → book 40% of position, SL moves to breakeven",
-    "Tiered Trailing: T1 (0.5× dist) → lock 80% · T2 (1×) → lock 88% · T3 (2×) → lock 95%",
-    "Exit Priority: 1) Hard SL hit  2) Tiered trail SL  3) Opposite VWAP cross",
-    "Max: 1 LONG + 1 SHORT per day",
-  ],
-};
-
-// Per-strategy rules font size (fit content in ~610px available height)
-// Formula: 610 / (N_lines × 2.0) × 0.8; vwap_scalper subtracts 15px per empty-line spacer
-const RULES_FONT: Record<string, number> = {
-  btc_ema_crossover:  24,  // 10 lines → 610/(10×2) × 0.8 = 24
-  btc_orion:          27,  // 9 lines → 610/(9×2) × 0.8 = 27
-  btc_ema_confluence: 18,  // 13 lines (5 indented) → 610/(13×2) × 0.8 = 18
-  btc_supertrend:     22,  // 11 lines → 610/(11×2) × 0.8 = 22
-  btc_vwap_scalper:   15,  // 18 lines (3 empty) → (610-45)/(15×2) × 0.8 = 15
-};
-
-// Per-strategy default chart interval
-const CHART_INTERVAL: Record<string, string> = {
-  btc_ema_crossover:  "30s",
-  btc_orion:          "15m",
-  btc_ema_confluence: "30s",
-  btc_supertrend:     "5m",
-  btc_vwap_scalper:   "1m",
-};
-
-// ── Formatters ─────────────────────────────────────────────────────
+// ── Formatters ────────────────────────────────────────────────────
 
 function fmtINR(n: number) { return Math.abs(n).toLocaleString("en-IN", { maximumFractionDigits: 2 }); }
 function pnlStr(n: number) { return `${n >= 0 ? "+" : "-"}₹${fmtINR(n)}`; }
@@ -181,7 +67,7 @@ function formatDuration(openedAt: string, closedAt: string | null) {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-// ── CapitalHistoryChart ──────────────────────────────────────────────────────
+// ── CapitalHistoryChart ───────────────────────────────────────────────────────
 
 function CapitalHistoryChart({ strategyId, accent }: { strategyId: string; accent: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -246,7 +132,7 @@ function CapitalHistoryChart({ strategyId, accent }: { strategyId: string; accen
       .catch(() => {});
   }, [strategyId]);
 
-  const pnlColor = livePnl >= 0 ? "#4ade80" : "#f87171";
+  const pnlColorVal = livePnl >= 0 ? "#4ade80" : "#f87171";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -258,8 +144,8 @@ function CapitalHistoryChart({ strategyId, accent }: { strategyId: string; accen
         {livePnl !== 0 && (
           <div style={{ marginLeft: "auto", textAlign: "right" }}>
             <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.08em", marginBottom: 1 }}>LIVE PNL</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: pnlColor, fontFamily: "monospace" }}>
-              {livePnl >= 0 ? "+" : ""}₹{Math.abs(livePnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+            <div style={{ fontSize: 18, fontWeight: 700, color: pnlColorVal, fontFamily: "monospace" }}>
+              {livePnl >= 0 ? "+" : "-"}₹{Math.abs(livePnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
             </div>
           </div>
         )}
@@ -269,313 +155,12 @@ function CapitalHistoryChart({ strategyId, accent }: { strategyId: string; accen
   );
 }
 
-// ── Helpers ────────────────────────────────────────────────────────
-
-function snapToCandle(tradeSec: number, sortedCandleTimes: number[]): UTCTimestamp {
-  let best = sortedCandleTimes[0] ?? tradeSec;
-  for (const ct of sortedCandleTimes) {
-    if (ct <= tradeSec) best = ct;
-    else break;
-  }
-  return best as UTCTimestamp;
-}
-
-// ── BtcIndicatorChart ──────────────────────────────────────────────
-
-function BtcIndicatorChart({
-  strategyId,
-  defaultInterval,
-  positions,
-  fullscreen = false,
-  onPriceUpdate,
-}: {
-  strategyId: string;
-  defaultInterval: string;
-  positions: BtcPosition[];
-  fullscreen?: boolean;
-  onPriceUpdate?: (price: number, prev: number) => void;
-}) {
-  const accent = ACCENT[strategyId] ?? "#6b7280";
-
-  const allIntervals = ["30s", "1m", "5m", "15m"] as const;
-  type TF = typeof allIntervals[number];
-  const [timeframe, setTimeframe] = useState<TF>(defaultInterval as TF);
-
-  const mainContainerRef = useRef<HTMLDivElement>(null);
-  const chartRef         = useRef<IChartApi | null>(null);
-  const candleSeriesRef  = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const ema9Ref          = useRef<ISeriesApi<"Line"> | null>(null);
-  const ema21Ref         = useRef<ISeriesApi<"Line"> | null>(null);
-  const ema20Ref         = useRef<ISeriesApi<"Line"> | null>(null);
-  const ema50Ref         = useRef<ISeriesApi<"Line"> | null>(null);
-  const vwapRef          = useRef<ISeriesApi<"Line"> | null>(null);
-  const stUpRef          = useRef<ISeriesApi<"Line"> | null>(null);
-  const stDownRef        = useRef<ISeriesApi<"Line"> | null>(null);
-  const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
-  const orbHighLineRef   = useRef<IPriceLine | null>(null);
-  const orbLowLineRef    = useRef<IPriceLine | null>(null);
-  const lastCandleTimeRef = useRef<number>(0);
-
-  const needsEMAcross  = strategyId === "btc_ema_crossover";
-  const needsEMAconf   = strategyId === "btc_ema_confluence";
-  const needsVWAP      = ["btc_orion", "btc_ema_confluence", "btc_vwap_scalper"].includes(strategyId);
-  const needsST        = strategyId === "btc_supertrend";
-  const needsORB       = strategyId === "btc_orion";
-
-  // Init main chart
-  useEffect(() => {
-    if (!mainContainerRef.current) return;
-    const chart = createChart(mainContainerRef.current, {
-      autoSize: true,
-      layout: {
-        background: { type: ColorType.Solid, color: "#0A0D14" },
-        textColor: "#6b7280",
-        fontSize: fullscreen ? 11 : 10,
-      },
-      grid: { vertLines: { color: "#1a1f2e" }, horzLines: { color: "#1a1f2e" } },
-      rightPriceScale: { borderColor: "#1a1f2e", autoScale: true, scaleMargins: { top: 0.1, bottom: 0.1 } },
-      timeScale: {
-        borderColor: "#1a1f2e", timeVisible: true,
-        secondsVisible: defaultInterval === "30s" || defaultInterval === "1m",
-        fixLeftEdge: false, rightOffset: 5,
-      },
-      crosshair: { mode: 1 },
-      handleScroll: true, handleScale: true,
-    });
-    chartRef.current = chart;
-
-    const ro = new ResizeObserver(() => {
-      if (chartRef.current && mainContainerRef.current)
-        chartRef.current.applyOptions({ width: mainContainerRef.current.clientWidth });
-    });
-    ro.observe(mainContainerRef.current);
-    (chart as unknown as { _ro: ResizeObserver })._ro = ro;
-
-    candleSeriesRef.current = chart.addSeries(CandlestickSeries, {
-      upColor: "#22c55e", downColor: "#ef4444",
-      borderUpColor: "#22c55e", borderDownColor: "#ef4444",
-      wickUpColor: "#22c55e", wickDownColor: "#ef4444",
-      lastValueVisible: true, priceLineVisible: true,
-    });
-    if (needsEMAcross) {
-      ema9Ref.current  = chart.addSeries(LineSeries, { color: "#3B82F6", lineWidth: 1, lastValueVisible: false, priceLineVisible: false, title: "EMA9" });
-      ema21Ref.current = chart.addSeries(LineSeries, { color: "#F97316", lineWidth: 1, lastValueVisible: false, priceLineVisible: false, title: "EMA21" });
-    }
-    if (needsEMAconf) {
-      ema20Ref.current = chart.addSeries(LineSeries, { color: "#3B82F6", lineWidth: 1, lastValueVisible: false, priceLineVisible: false, title: "EMA20" });
-      ema50Ref.current = chart.addSeries(LineSeries, { color: "#F97316", lineWidth: 1, lastValueVisible: false, priceLineVisible: false, title: "EMA50" });
-    }
-    if (needsVWAP) {
-      vwapRef.current = chart.addSeries(LineSeries, { color: "#A855F7", lineWidth: 1, lineStyle: 1, lastValueVisible: false, priceLineVisible: false, title: "VWAP" });
-    }
-    if (needsST) {
-      stUpRef.current   = chart.addSeries(LineSeries, { color: "#22c55e", lineWidth: 2, lastValueVisible: false, priceLineVisible: false, title: "ST Up" });
-      stDownRef.current = chart.addSeries(LineSeries, { color: "#ef4444", lineWidth: 2, lastValueVisible: false, priceLineVisible: false, title: "ST Down" });
-    }
-
-    return () => {
-      (chart as unknown as { _ro?: ResizeObserver })._ro?.disconnect();
-      chart.remove();
-      chartRef.current = candleSeriesRef.current = ema9Ref.current = ema21Ref.current
-        = ema20Ref.current = ema50Ref.current = vwapRef.current
-        = stUpRef.current = stDownRef.current
-        = orbHighLineRef.current = orbLowLineRef.current
-        = markersPluginRef.current = null;
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Clear on timeframe change
-  useEffect(() => {
-    candleSeriesRef.current?.setData([]);
-    ema9Ref.current?.setData([]);
-    ema21Ref.current?.setData([]);
-    ema20Ref.current?.setData([]);
-    ema50Ref.current?.setData([]);
-    vwapRef.current?.setData([]);
-    stUpRef.current?.setData([]);
-    stDownRef.current?.setData([]);
-    lastCandleTimeRef.current = 0;
-    chartRef.current?.timeScale().applyOptions({ secondsVisible: timeframe === "30s" || timeframe === "1m" });
-  }, [timeframe]);
-
-  // Poll candles + indicators
-  useEffect(() => {
-    let cancelled = false;
-    const fetchAll = async () => {
-      try {
-        const [cr, ir] = await Promise.all([
-          fetch(`${BACKEND}/api/btc/candles?interval=${timeframe}`),
-          fetch(`${BACKEND}/api/btc/indicators?strategy=${strategyId}`),
-        ]);
-        if (!cr.ok || !ir.ok) return;
-        const rawCandles: OhlcCandle[] = await cr.json();
-        const ind: BtcIndicatorData   = await ir.json();
-        if (cancelled || !candleSeriesRef.current) return;
-
-        const candles = rawCandles
-          .filter(c => c.open > 0 && c.high >= c.low && c.close > 0)
-          .map(c => ({
-            time: (c.time > 1e10 ? Math.floor(c.time / 1000) : c.time) as UTCTimestamp,
-            open: c.open, high: c.high, low: c.low, close: c.close,
-          }));
-
-        if (candles.length > 0) {
-          const newest = candles[candles.length - 1].time as number;
-          const isNewCandle = newest !== lastCandleTimeRef.current;
-          if (isNewCandle) {
-            lastCandleTimeRef.current = newest;
-            candleSeriesRef.current.setData(candles);
-            chartRef.current?.priceScale("right").applyOptions({ autoScale: true });
-            chartRef.current?.timeScale().scrollToRealTime();
-          } else {
-            // Update in-progress candle tick-by-tick
-            candleSeriesRef.current.update(candles[candles.length - 1]);
-          }
-          if (onPriceUpdate) {
-            const last = candles[candles.length - 1].close;
-            const prev = candles.length > 1 ? candles[candles.length - 2].close : last;
-            onPriceUpdate(last, prev);
-          }
-
-          const toTS = (t: number) => (t > 1e10 ? Math.floor(t / 1000) : t) as UTCTimestamp;
-          const sortedCandleTimes = candles.map(c => c.time as number);
-          const chartStart = sortedCandleTimes[0] ?? 0;
-          const chartEnd   = sortedCandleTimes[sortedCandleTimes.length - 1] ?? 0;
-
-          // Trade markers — entry + exit per closed trade, entry only for open
-          const markers: SeriesMarker<UTCTimestamp>[] = [];
-          for (const pos of positions) {
-            const entrySec = new Date(pos.opened_at).getTime() / 1000;
-            if (entrySec < chartStart || entrySec > chartEnd + 3600) continue;
-            markers.push({
-              time:     snapToCandle(entrySec, sortedCandleTimes),
-              position: pos.side === "LONG" ? "belowBar" : "aboveBar" as const,
-              color:    pos.side === "LONG" ? "#22c55e" : "#ef4444",
-              shape:    pos.side === "LONG" ? "arrowUp" : "arrowDown" as const,
-              text:     `${pos.side} $${pos.entry_price_usd.toFixed(0)}`,
-            });
-            if (pos.status === "CLOSED" && pos.closed_at && pos.exit_price_usd != null) {
-              const exitSec = new Date(pos.closed_at).getTime() / 1000;
-              markers.push({
-                time:     snapToCandle(exitSec, sortedCandleTimes),
-                position: pos.side === "LONG" ? "aboveBar" : "belowBar" as const,
-                color:    pos.side === "LONG" ? "#22c55e" : "#ef4444",
-                shape:    pos.side === "LONG" ? "arrowDown" : "arrowUp" as const,
-                text:     `EXIT $${pos.exit_price_usd.toFixed(0)}`,
-              });
-            }
-          }
-          markers.sort((a, b) => (a.time as number) - (b.time as number));
-          if (!markersPluginRef.current)
-            markersPluginRef.current = createSeriesMarkers(candleSeriesRef.current, markers);
-          else
-            markersPluginRef.current.setMarkers(markers);
-
-          if (ema9Ref.current && ind.ema9?.length)
-            ema9Ref.current.setData(ind.ema9.map(p => ({ time: toTS(p.time), value: p.value })));
-          if (ema21Ref.current && ind.ema21?.length)
-            ema21Ref.current.setData(ind.ema21.map(p => ({ time: toTS(p.time), value: p.value })));
-          if (ema20Ref.current && ind.ema20?.length)
-            ema20Ref.current.setData(ind.ema20.map(p => ({ time: toTS(p.time), value: p.value })));
-          if (ema50Ref.current && ind.ema50?.length)
-            ema50Ref.current.setData(ind.ema50.map(p => ({ time: toTS(p.time), value: p.value })));
-          if (vwapRef.current && ind.vwap?.length)
-            vwapRef.current.setData(ind.vwap.map(p => ({ time: toTS(p.time), value: p.value })));
-
-          if (stUpRef.current && stDownRef.current && ind.supertrendUp && ind.supertrendDown) {
-            const up   = ind.supertrendUp.filter((p): p is { time: number; value: number } => p.value !== null).map(p => ({ time: toTS(p.time), value: p.value }));
-            const down = ind.supertrendDown.filter((p): p is { time: number; value: number } => p.value !== null).map(p => ({ time: toTS(p.time), value: p.value }));
-            if (up.length)   stUpRef.current.setData(up);
-            if (down.length) stDownRef.current.setData(down);
-          }
-
-          if (needsORB && candleSeriesRef.current) {
-            const orbH = ind.orbHigh ?? 0, orbL = ind.orbLow ?? 0;
-            if (orbH > 0) {
-              if (!orbHighLineRef.current) orbHighLineRef.current = candleSeriesRef.current.createPriceLine({ price: orbH, color: "#22c55e", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "ORB H" });
-              else orbHighLineRef.current.applyOptions({ price: orbH });
-            }
-            if (orbL > 0) {
-              if (!orbLowLineRef.current) orbLowLineRef.current = candleSeriesRef.current.createPriceLine({ price: orbL, color: "#ef4444", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "ORB L" });
-              else orbLowLineRef.current.applyOptions({ price: orbL });
-            }
-          }
-        }
-      } catch (err) { console.warn(`[btc-chart:${strategyId}]`, err); }
-    };
-    fetchAll();
-    const iv = setInterval(fetchAll, 1_000); // BTC is 24/7
-    return () => { cancelled = true; clearInterval(iv); };
-  }, [strategyId, timeframe, positions, needsORB, onPriceUpdate]);
-
-  const tfBtns = allIntervals.filter(tf => {
-    if (strategyId === "btc_vwap_scalper") return ["1m", "5m"].includes(tf);
-    if (strategyId === "btc_supertrend")   return ["1m", "5m", "15m"].includes(tf);
-    if (strategyId === "btc_orion")        return ["5m", "15m"].includes(tf);
-    return true;
-  });
-
-  if (fullscreen) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "#0A0D14" }}>
-        {/* Header: legend + TF */}
-        <div style={{
-          flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "0 20px", height: 48, borderBottom: "1px solid #1a1f2e", background: "#0B0E17",
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 12, color: "#6b7280" }}>
-            {needsEMAcross && <><span style={{ color: "#3B82F6" }}>▬</span><span>EMA9</span><span style={{ color: "#F97316" }}>▬</span><span>EMA21</span></>}
-            {needsEMAconf  && <><span style={{ color: "#3B82F6" }}>▬</span><span>EMA20</span><span style={{ color: "#F97316" }}>▬</span><span>EMA50</span></>}
-            {needsVWAP     && <><span style={{ color: "#A855F7" }}>⋯</span><span>VWAP</span></>}
-            {needsST       && <><span style={{ color: "#22c55e" }}>▬</span><span>ST Up</span><span style={{ color: "#ef4444" }}>▬</span><span>ST Down</span></>}
-            {needsORB      && <><span style={{ color: "#22c55e" }}>╌</span><span>ORB H</span><span style={{ color: "#ef4444" }}>╌</span><span>ORB L</span></>}
-          </div>
-          <div style={{ display: "flex", gap: 4 }}>
-            {tfBtns.map(tf => (
-              <button key={tf} onClick={() => setTimeframe(tf)} style={{
-                padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer",
-                letterSpacing: "0.05em", transition: "all 0.15s",
-                border: `1px solid ${timeframe === tf ? accent : "#1f2937"}`,
-                background: timeframe === tf ? accent : "transparent",
-                color: timeframe === tf ? "#000" : "#6b7280",
-              }}>{tf}</button>
-            ))}
-          </div>
-        </div>
-        <div ref={mainContainerRef} style={{ flex: 1, minHeight: 0 }} />
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, overflow: "hidden", marginBottom: 12 }}>
-      <div style={{ padding: "8px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #1a1f2e" }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.1em" }}>BTC/USD</span>
-        <div style={{ display: "flex", gap: 4 }}>
-          {tfBtns.map(tf => (
-            <button key={tf} onClick={() => setTimeframe(tf)} style={{
-              padding: "2px 8px", borderRadius: 20, fontSize: 10, fontWeight: 600, cursor: "pointer",
-              border: `1px solid ${timeframe === tf ? accent : "#1f2937"}`,
-              background: timeframe === tf ? accent : "transparent",
-              color: timeframe === tf ? "#000" : "#6b7280",
-            }}>{tf}</button>
-          ))}
-        </div>
-      </div>
-      <div ref={mainContainerRef} style={{ width: "100%", height: 400 }} />
-    </div>
-  );
-}
-
-// ── BTC Strategy Detail Page ────────────────────────────────────────
+// ── BTC Strategy Detail Page ─────────────────────────────────────────────────
 
 export default function BtcStrategyDetailPage() {
   const params = useParams();
   const id     = (params.id as string) ?? "";
-  const accent = ACCENT[id] ?? "#6b7280";
-  const rules  = RULES[id] ?? [];
-  const defaultInterval = CHART_INTERVAL[id] ?? "30s";
+  const accent = accentFor(id);
 
   // Data
   const [strategy,  setStrategy]  = useState<BtcStrategy | null>(null);
@@ -586,8 +171,6 @@ export default function BtcStrategyDetailPage() {
 
   // UI state
   const [activeSection, setActiveSection] = useState(0);
-  const [currentPrice,  setCurrentPrice]  = useState(0);
-  const [prevClose,     setPrevClose]     = useState(0);
   const [expandedTrade, setExpandedTrade] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<StrategyMetrics | null>(null);
 
@@ -595,9 +178,8 @@ export default function BtcStrategyDetailPage() {
   const scrollRef   = useRef<HTMLDivElement>(null);
   const sec0Ref     = useRef<HTMLElement>(null);
   const sec1Ref     = useRef<HTMLElement>(null);
-  const sec2Ref     = useRef<HTMLElement>(null);
   const sec3Ref     = useRef<HTMLElement>(null);
-  const sectionRefs = [sec0Ref, sec1Ref, sec2Ref, sec3Ref];
+  const sectionRefs = [sec0Ref, sec1Ref, sec3Ref];
 
   // ── Data fetching ──
 
@@ -680,7 +262,7 @@ export default function BtcStrategyDetailPage() {
 
   useEffect(() => {
     const handle = (e: KeyboardEvent) => {
-      if (e.key === "ArrowDown" || e.key === "PageDown") { e.preventDefault(); scrollToSection(Math.min(activeSection + 1, 3)); }
+      if (e.key === "ArrowDown" || e.key === "PageDown") { e.preventDefault(); scrollToSection(Math.min(activeSection + 1, 2)); }
       if (e.key === "ArrowUp"   || e.key === "PageUp")   { e.preventDefault(); scrollToSection(Math.max(activeSection - 1, 0)); }
     };
     window.addEventListener("keydown", handle);
@@ -689,9 +271,9 @@ export default function BtcStrategyDetailPage() {
 
   // ── Derived values ──
 
-  const alloc      = capital?.allocated_inr ?? 100_000;
-  const closedPnl  = capital?.total_pnl_inr ?? 0;
-  const openPnl    = openPos.reduce((s, p) => s + (p.pnl_inr ?? 0), 0);
+  const alloc       = capital?.allocated_inr ?? 100_000;
+  const closedPnl   = capital?.total_pnl_inr ?? 0;
+  const openPnl     = openPos.reduce((s, p) => s + (p.pnl_inr ?? 0), 0);
   const liveCapital = alloc + closedPnl + openPnl;
   const livePnl     = liveCapital - alloc;
   const retPct      = (livePnl / alloc) * 100;
@@ -705,37 +287,33 @@ export default function BtcStrategyDetailPage() {
     .sort((a, b) => new Date(b.closed_at ?? 0).getTime() - new Date(a.closed_at ?? 0).getTime());
   const allPositions = [...openTrades, ...closedTrades];
 
-  const rulesFontSize = RULES_FONT[id] ?? 20;
-  const priceChange   = currentPrice - prevClose;
-  const changePct     = prevClose > 0 ? (priceChange / prevClose) * 100 : 0;
-  const priceColor    = priceChange > 0 ? "#4ade80" : priceChange < 0 ? "#f87171" : "#9ca3af";
-
   // Exit breakdown: top 2 reasons
   const exitBreakdown = metrics?.exit_reason_breakdown ?? {};
-  const exitEntries = Object.entries(exitBreakdown).sort((a, b) => b[1] - a[1]).slice(0, 2);
-  const exitText = exitEntries.length > 0
+  const exitEntries   = Object.entries(exitBreakdown).sort((a, b) => b[1] - a[1]).slice(0, 2);
+  const exitText      = exitEntries.length > 0
     ? exitEntries.map(([k, v]) => `${k.replace(/_/g, " ")} ${v}%`).join(" · ")
     : "—";
 
   // Profit factor color
-  const pfNum = parseFloat(metrics?.profit_factor ?? "0");
+  const pfNum   = parseFloat(metrics?.profit_factor ?? "0");
   const pfColor = metrics?.profit_factor === "∞" ? "#4ade80" : pfNum >= 1.5 ? "#4ade80" : pfNum >= 1 ? "#f5d547" : "#f87171";
 
+  // Stats — HERO 4 first, COMPACT 10 after
   const stats = [
-    { label: "INITIAL CAPITAL",    value: `₹${(alloc).toLocaleString("en-IN")}`,                 color: "#9ca3af" },
-    { label: "TOTAL PnL",          value: pnlStr(livePnl),                                         color: pnlColor(livePnl) },
-    { label: "CURRENT CAPITAL",    value: `₹${(liveCapital).toLocaleString("en-IN")}`,            color: "#ffffff" },
-    { label: "RETURN %",           value: fmtPct(retPct),                                          color: pnlColor(retPct) },
-    { label: "SHARPE",             value: sharpe.toFixed(2),                                       color: "#ffffff" },
-    { label: "TOTAL TRADES",       value: String(lifetime),                                        color: "#ffffff" },
-    { label: "OPEN NOW",           value: String(openPos.length),                                  color: openPos.length > 0 ? "#f5d547" : "#ffffff" },
-    { label: "WIN RATE",           value: `${winRate.toFixed(1)}%`,                                color: winRate >= 50 ? "#4ade80" : "#f87171" },
-    { label: "PROFIT FACTOR",      value: metrics?.profit_factor ?? "—",                           color: pfColor },
-    { label: "AVG WIN/LOSS",       value: metrics ? `${metrics.avg_win_avg_loss}×` : "—",         color: "#ffffff" },
-    { label: "MAX DRAWDOWN",       value: metrics ? `-₹${Math.abs(metrics.max_drawdown_inr).toLocaleString("en-IN", { maximumFractionDigits: 0 })} (-${metrics.max_drawdown_pct.toFixed(1)}%)` : "—", color: metrics && metrics.max_drawdown_inr > 0 ? "#f87171" : "#9ca3af" },
-    { label: "EXPECTANCY",         value: metrics ? pnlStr(metrics.expectancy) : "—",             color: metrics ? pnlColor(metrics.expectancy) : "#9ca3af" },
-    { label: "MAX CONSEC LOSSES",  value: metrics ? String(metrics.max_consecutive_losses) : "—", color: metrics && metrics.max_consecutive_losses > 3 ? "#f87171" : "#ffffff" },
-    { label: "EXIT BREAKDOWN",     value: exitText,                                                color: "#9ca3af" },
+    { label: "TOTAL PnL",         value: pnlStr(livePnl),                                          color: pnlColor(livePnl) },
+    { label: "RETURN %",          value: fmtPct(retPct),                                           color: pnlColor(retPct) },
+    { label: "WIN RATE",          value: `${winRate.toFixed(1)}%`,                                 color: winRate >= 50 ? "#4ade80" : "#f87171" },
+    { label: "PROFIT FACTOR",     value: metrics?.profit_factor ?? "—",                            color: pfColor },
+    { label: "INITIAL CAPITAL",   value: `₹${(alloc).toLocaleString("en-IN")}`,                   color: "#9ca3af" },
+    { label: "CURRENT CAPITAL",   value: `₹${(liveCapital).toLocaleString("en-IN")}`,             color: "#ffffff" },
+    { label: "SHARPE",            value: sharpe.toFixed(2),                                        color: "#ffffff" },
+    { label: "TOTAL TRADES",      value: String(lifetime),                                         color: "#ffffff" },
+    { label: "OPEN NOW",          value: String(openPos.length),                                   color: openPos.length > 0 ? "#f5d547" : "#ffffff" },
+    { label: "AVG WIN/LOSS",      value: metrics ? `${metrics.avg_win_avg_loss}×` : "—",          color: "#ffffff" },
+    { label: "MAX DRAWDOWN",      value: metrics ? `-₹${Math.abs(metrics.max_drawdown_inr).toLocaleString("en-IN", { maximumFractionDigits: 0 })} (-${metrics.max_drawdown_pct.toFixed(1)}%)` : "—", color: metrics && metrics.max_drawdown_inr > 0 ? "#f87171" : "#9ca3af" },
+    { label: "EXPECTANCY",        value: metrics ? pnlStr(metrics.expectancy) : "—",              color: metrics ? pnlColor(metrics.expectancy) : "#9ca3af" },
+    { label: "MAX CONSEC LOSSES", value: metrics ? String(metrics.max_consecutive_losses) : "—",  color: metrics && metrics.max_consecutive_losses > 3 ? "#f87171" : "#ffffff" },
+    { label: "EXIT BREAKDOWN",    value: exitText,                                                 color: "#9ca3af" },
   ];
 
   if (loading) {
@@ -761,7 +339,7 @@ export default function BtcStrategyDetailPage() {
         }
       `}</style>
 
-      {/* Fixed strategy name — visible across all 3 sections */}
+      {/* Fixed strategy name — visible across all sections */}
       <div style={{
         position: "fixed", top: 14, left: "50%", transform: "translateX(-50%)",
         fontSize: 14, fontWeight: 600, color: "#ffffff88", letterSpacing: "0.08em",
@@ -785,13 +363,13 @@ export default function BtcStrategyDetailPage() {
         BTC Arena
       </Link>
 
-      {/* Dot navigation */}
+      {/* Dot navigation — 3 dots */}
       <div style={{
         position: "fixed", right: 24, top: "50%", transform: "translateY(-50%)",
         zIndex: 200, display: "flex", flexDirection: "column", gap: 14,
       }}>
-        {[0, 1, 2, 3].map(i => (
-          <button key={i} onClick={() => scrollToSection(i)} title={["Overview", "Chart", "Capital History", "Trades"][i]} style={{
+        {[0, 1, 2].map(i => (
+          <button key={i} onClick={() => scrollToSection(i)} title={["Overview", "Today", "All Trades"][i]} style={{
             width: activeSection === i ? 10 : 6,
             height: activeSection === i ? 10 : 6,
             borderRadius: "50%",
@@ -843,56 +421,43 @@ export default function BtcStrategyDetailPage() {
               )}
             </div>
 
-            {/* KPI grid */}
-            <div style={{ padding: "0 40px clamp(8px,1vh,14px)", overflow: "hidden" }}>
-              <div style={{
-                display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "repeat(7, 1fr)",
-                gap: 6, height: "100%",
-              }}>
-                {stats.map(s => (
+            {/* LEFT — KPI grid: HERO 2×2 + COMPACT 2×5 */}
+            <div style={{ padding: "0 40px clamp(8px,1vh,14px)", overflow: "hidden", display: "flex", flexDirection: "column", gap: 6 }}>
+              {/* HERO 2×2 */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr", gap: 6, flex: "0 0 34%" }}>
+                {stats.slice(0, 4).map(s => (
+                  <div key={s.label} style={{
+                    background: "rgba(255,255,255,0.05)", border: `1px solid ${accent}40`,
+                    borderRadius: 8, padding: "6px 12px", minWidth: 0,
+                    display: "flex", flexDirection: "column", justifyContent: "center", gap: 2,
+                  }}>
+                    <div style={{ fontSize: "clamp(8px,0.9vh,10px)", fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase" }}>{s.label}</div>
+                    <div style={{ fontSize: "clamp(15px,2.1vh,24px)", fontWeight: 700, color: s.color, fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.value}</div>
+                  </div>
+                ))}
+              </div>
+              {/* COMPACT — remaining 10 */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "repeat(5, 1fr)", gap: 6, flex: 1, minHeight: 0 }}>
+                {stats.slice(4).map(s => (
                   <div key={s.label} style={{
                     background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
-                    borderRadius: 8, padding: "4px 10px",
+                    borderRadius: 8, padding: "4px 10px", minWidth: 0,
                     display: "flex", flexDirection: "column", justifyContent: "space-between",
                   }}>
-                    <div style={{ fontSize: "clamp(8px, 0.9vh, 10px)", fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase", paddingTop: 4 }}>{s.label}</div>
-                    <div style={{ fontSize: "clamp(11px, 1.3vh, 15px)", fontWeight: 700, color: s.color, fontFamily: "monospace", paddingBottom: 4 }}>{s.value}</div>
+                    <div style={{ fontSize: "clamp(8px,0.85vh,10px)", fontWeight: 700, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase", paddingTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.label}</div>
+                    <div style={{ fontSize: "clamp(10px,1.2vh,14px)", fontWeight: 700, color: s.color, fontFamily: "monospace", paddingBottom: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.value}</div>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* Strategy Logic */}
+            {/* RIGHT — Spec Card */}
             <div style={{
               borderLeft: "1px solid rgba(255,255,255,0.08)",
               padding: "0 48px clamp(8px,1vh,14px) 40px",
               overflow: "hidden",
             }}>
-              <div style={{ fontSize: "clamp(22px, 2.8vh, 28px)", fontWeight: 700, color: accent, letterSpacing: "0.01em", marginBottom: "clamp(6px,0.8vh,12px)" }}>
-                Strategy Logic
-              </div>
-              <div style={{ display: "flex", flexDirection: "column" }}>
-                {rules.map((line, i) => {
-                  if (line === "") return <div key={i} style={{ height: 5 }} />;
-                  const isIndented = line.startsWith("  ");
-                  if (isIndented) {
-                    return (
-                      <div key={i} style={{ fontSize: rulesFontSize, lineHeight: 2.0, letterSpacing: "0.01em", color: "#9ca3af", paddingLeft: 20 }}>
-                        · {line.trim()}
-                      </div>
-                    );
-                  }
-                  const colonIdx = line.indexOf(":");
-                  return (
-                    <div key={i} style={{ fontSize: rulesFontSize, lineHeight: 2.0, letterSpacing: "0.01em", color: "#e2e8f0" }}>
-                      {colonIdx > 0
-                        ? <>• <strong style={{ color: "#ffffff" }}>{line.slice(0, colonIdx)}</strong>{line.slice(colonIdx)}</>
-                        : <>• {line}</>
-                      }
-                    </div>
-                  );
-                })}
-              </div>
+              <StrategySpecCard strategyId={id} />
             </div>
           </div>
 
@@ -906,67 +471,39 @@ export default function BtcStrategyDetailPage() {
           </div>
         </section>
 
-        {/* ═══════ SECTION 2 — LIVE CHART ═══════ */}
+        {/* ═══════ SECTION 2 — TODAY'S TRADES + CUMULATIVE PNL ═══════ */}
         <section
           ref={sec1Ref}
           style={{
             height: "100vh", scrollSnapAlign: "start",
-            display: "flex", flexDirection: "column",
-            position: "relative",
+            display: "flex", flexDirection: "column", position: "relative",
           }}
         >
-          {/* PREV pill */}
           <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0" }}>
-            <button onClick={() => scrollToSection(0)}
+            <button
+              onClick={() => scrollToSection(0)}
               onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
               onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-              style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 999, padding: "10px 28px", color: "#ffffff", fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer" }}
+              style={{
+                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+                borderRadius: 999, padding: "10px 28px", color: "#ffffff",
+                fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer",
+              }}
             >↑ PREV</button>
           </div>
 
-          {/* Chart top bar */}
-          <div style={{
-            flexShrink: 0, display: "flex", alignItems: "center",
-            justifyContent: "space-between", padding: "0 24px",
-            height: 60, background: "#0B0E17",
-            borderBottom: "1px solid #1a1f2e", borderTop: "1px solid #1a1f2e", gap: 16,
-          }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "#F59E0B", letterSpacing: "0.08em" }}>BTC / USD</div>
-            {currentPrice > 0 && (
-              <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-                <span style={{ fontSize: 22, fontWeight: 700, color: "#ffffff", fontFamily: "monospace" }}>
-                  ${currentPrice.toLocaleString("en-US", { maximumFractionDigits: 2 })}
-                </span>
-                <span style={{ fontSize: 13, fontFamily: "monospace", color: priceColor, fontWeight: 600 }}>
-                  {priceChange >= 0 ? "+" : ""}{priceChange.toFixed(2)} ({changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}%)
-                </span>
-              </div>
-            )}
-            <div />
-          </div>
-
-          {/* Chart + Trade Log split */}
-          <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-            {/* Left 60%: Chart */}
-            <div style={{ flex: "0 0 60%", minWidth: 0, borderRight: "1px solid #1a1f2e" }}>
-              <BtcIndicatorChart
-                strategyId={id}
-                defaultInterval={defaultInterval}
-                positions={allPositions}
-                fullscreen
-                onPriceUpdate={(price, prev) => { setCurrentPrice(price); setPrevClose(prev); }}
-              />
-            </div>
-            {/* Right 40%: Today's Trade Log */}
-            <div style={{ flex: "0 0 40%", minWidth: 0, display: "flex", flexDirection: "column", background: "#0A0D14" }}>
-              <div style={{ padding: "10px 16px", borderBottom: "1px solid #1a1f2e", background: "#0B0E17", flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 10, fontWeight: 700, color: accent, letterSpacing: "0.1em" }}>TODAY'S TRADES</span>
-                <span style={{ fontSize: 9, color: "#374151", marginLeft: "auto" }}>
+          <div style={{ flex: 1, minHeight: 0, display: "flex", borderTop: "1px solid #1a1f2e" }}>
+            {/* Left 60% — Today's Trades */}
+            <div style={{ flex: "0 0 60%", minWidth: 0, display: "flex", flexDirection: "column", background: "#0A0D14", borderRight: "1px solid #1a1f2e" }}>
+              <div style={{ padding: "0 20px", height: 48, borderBottom: "1px solid #1a1f2e", background: "#0B0E17", flexShrink: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: accent, letterSpacing: "0.1em" }}>TODAY&apos;S TRADES</div>
+                <div style={{ fontSize: 9, color: "#374151", marginTop: 1 }}>
                   {(() => {
                     const t = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-                    return allPositions.filter(p => p.opened_at.startsWith(t) || p.closed_at?.startsWith(t)).length;
-                  })()} trades
-                </span>
+                    const n = allPositions.filter(p => p.opened_at.startsWith(t) || p.closed_at?.startsWith(t)).length;
+                    return `${n} trade${n !== 1 ? "s" : ""} today`;
+                  })()}
+                </div>
               </div>
               <div style={{ flex: 1, overflowY: "auto", overflowX: "auto" }}>
                 {(() => {
@@ -975,41 +512,27 @@ export default function BtcStrategyDetailPage() {
                   const thSt: React.CSSProperties = { padding: "6px 10px", fontSize: 9, fontWeight: 700, color: "#4b5563", letterSpacing: "0.08em", textAlign: "left", whiteSpace: "nowrap", borderBottom: "1px solid #1a1f2e", background: "#070A11", position: "sticky", top: 0 };
                   const tdSt: React.CSSProperties = { padding: "6px 10px", fontSize: 10, fontFamily: "monospace", whiteSpace: "nowrap", borderBottom: "1px solid #111827" };
                   if (todayTrades.length === 0) {
-                    return (
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#374151", fontSize: 12 }}>
-                        No trades today
-                      </div>
-                    );
+                    return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#374151", fontSize: 12 }}>No trades today</div>;
                   }
                   return (
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                       <thead>
-                        <tr>
-                          <th style={thSt}>ENTRY</th>
-                          <th style={thSt}>EXIT</th>
-                          <th style={thSt}>SIDE</th>
-                          <th style={thSt}>E.$</th>
-                          <th style={thSt}>X.$</th>
-                          <th style={thSt}>PnL</th>
-                          <th style={thSt}>RET%</th>
-                          <th style={thSt}>REASON</th>
-                        </tr>
+                        <tr>{["ENTRY","EXIT","SIDE","E.$","X.$","PnL","RET%","REASON"].map(h => <th key={h} style={thSt}>{h}</th>)}</tr>
                       </thead>
                       <tbody>
                         {todayTrades.map(p => {
-                          const livePnlInr = p.status === "OPEN" ? (p.pnl_inr ?? 0) : 0;
-                          const pnl = p.status === "CLOSED" ? (p.pnl_inr ?? 0) : livePnlInr;
-                          const retPct = p.qty_inr > 0 ? pnl / p.qty_inr * 100 : 0;
-                          const pc = pnl > 0 ? "#4ade80" : pnl < 0 ? "#f87171" : "#9ca3af";
+                          const net = (p.pnl_inr ?? 0) - (p.charges_inr ?? 0);
+                          const c = net > 0 ? "#4ade80" : net < 0 ? "#f87171" : "#9ca3af";
+                          const ret = p.qty_inr > 0 ? net / p.qty_inr * 100 : 0;
                           return (
                             <tr key={p.id}>
                               <td style={tdSt}>{fmtTime(p.opened_at)}</td>
                               <td style={tdSt}>{fmtTime(p.closed_at)}</td>
-                              <td style={{ ...tdSt, color: p.side === "LONG" ? "#4ade80" : "#f87171" }}>{p.side}</td>
-                              <td style={tdSt}>${p.entry_price_usd.toFixed(0)}</td>
-                              <td style={tdSt}>{p.exit_price_usd != null ? `$${p.exit_price_usd.toFixed(0)}` : "—"}</td>
-                              <td style={{ ...tdSt, color: pc }}>{pnl >= 0 ? "+" : ""}₹{Math.abs(pnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
-                              <td style={{ ...tdSt, color: pc }}>{retPct >= 0 ? "+" : ""}{retPct.toFixed(1)}%</td>
+                              <td style={{ ...tdSt, color: p.side === "LONG" ? "#22c55e" : "#ef4444", fontWeight: 700 }}>{p.side}</td>
+                              <td style={tdSt}>${p.entry_price_usd.toFixed(1)}</td>
+                              <td style={tdSt}>{p.exit_price_usd != null ? `${p.exit_price_usd.toFixed(1)}` : "—"}</td>
+                              <td style={{ ...tdSt, color: c }}>{net >= 0 ? "+" : "-"}₹{Math.abs(net).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+                              <td style={{ ...tdSt, color: c }}>{ret >= 0 ? "+" : ""}{ret.toFixed(1)}%</td>
                               <td style={{ ...tdSt, color: "#6b7280" }}>{p.status === "OPEN" ? "OPEN" : (p.exit_reason ?? "—")}</td>
                             </tr>
                           );
@@ -1020,47 +543,38 @@ export default function BtcStrategyDetailPage() {
                 })()}
               </div>
             </div>
+
+            {/* Right 40% — all-time cumulative PnL */}
+            <div style={{ flex: "0 0 40%", minWidth: 0, display: "flex", flexDirection: "column", background: "#0A0D14" }}>
+              {closedTrades.length < 5 ? (
+                <>
+                  <div style={{ padding: "0 20px", height: 48, borderBottom: "1px solid #1a1f2e", background: "#0B0E17", flexShrink: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: accent, letterSpacing: "0.1em" }}>CUMULATIVE PNL</div>
+                    <div style={{ fontSize: 9, color: "#374151", marginTop: 1 }}>All-time · profit since start</div>
+                  </div>
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>
+                    <div style={{ color: "#6b7280", fontSize: 12, lineHeight: 1.6 }}>
+                      {closedTrades.length} closed trade{closedTrades.length !== 1 ? "s" : ""} so far<br />
+                      <span style={{ color: "#4b5563" }}>chart appears after 5</span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <CapitalHistoryChart strategyId={id} accent={accent} />
+              )}
+            </div>
           </div>
 
-          {/* NEXT pill */}
           <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0", borderTop: "1px solid #1a1f2e" }}>
-            <button onClick={() => scrollToSection(2)}
+            <button
+              onClick={() => scrollToSection(2)}
               onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
               onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-              style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 999, padding: "10px 28px", color: "#ffffff", fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer" }}
-            >NEXT ↓</button>
-          </div>
-        </section>
-
-        {/* ═══════ SECTION 2.5 — CAPITAL HISTORY ═══════ */}
-        <section
-          ref={sec2Ref}
-          style={{
-            height: "100vh", scrollSnapAlign: "start",
-            display: "flex", flexDirection: "column",
-            position: "relative",
-          }}
-        >
-          {/* PREV pill */}
-          <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0" }}>
-            <button onClick={() => scrollToSection(1)}
-              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
-              onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-              style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 999, padding: "10px 28px", color: "#ffffff", fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer" }}
-            >↑ PREV</button>
-          </div>
-
-          {/* Capital history chart */}
-          <div style={{ flex: 1, minHeight: 0 }}>
-            <CapitalHistoryChart strategyId={id} accent={accent} />
-          </div>
-
-          {/* NEXT pill */}
-          <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0", borderTop: "1px solid #1a1f2e" }}>
-            <button onClick={() => scrollToSection(3)}
-              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
-              onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-              style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 999, padding: "10px 28px", color: "#ffffff", fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer" }}
+              style={{
+                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+                borderRadius: 999, padding: "10px 28px", color: "#ffffff",
+                fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer",
+              }}
             >NEXT ↓</button>
           </div>
         </section>
@@ -1076,7 +590,7 @@ export default function BtcStrategyDetailPage() {
         >
           {/* PREV pill */}
           <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "12px 0", marginBottom: 32 }}>
-            <button onClick={() => scrollToSection(2)}
+            <button onClick={() => scrollToSection(1)}
               onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
               onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
               style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 999, padding: "10px 28px", color: "#ffffff", fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer" }}

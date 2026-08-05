@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { createChart, HistogramSeries, AreaSeries, ColorType, createSeriesMarkers } from "lightweight-charts";
+import { createChart, AreaSeries, ColorType, createSeriesMarkers } from "lightweight-charts";
 import type { IChartApi, ISeriesApi, Time } from "lightweight-charts";
+import { accentFor, shortLabel, BTC_FAMILIES } from '@/lib/strategySpec';
+import ValidationDots from '@/components/ValidationDots';
 
 const BACKEND = "https://ai-trading-arena-backend-production.up.railway.app";
 
@@ -54,7 +56,6 @@ type BtcPosition = {
   realized_pnl: number | null;
 };
 
-type OhlcCandle = { time: number; open: number; high: number; low: number; close: number };
 type CapitalPoint = { date: string; capital: number };
 type CorrelationData = {
   strategies: string[];
@@ -62,16 +63,6 @@ type CorrelationData = {
   insufficient?: boolean;
 };
 type CardMetrics = { profit_factor: string; max_drawdown_inr: number };
-
-// ── BTC Strategy Config ────────────────────────────────────────
-
-const ACCENT: Record<string, string> = {
-  btc_ema_crossover:  "#F59E0B",
-  btc_orion:          "#6366F1",
-  btc_ema_confluence: "#10B981",
-  btc_supertrend:     "#EF4444",
-  btc_vwap_scalper:   "#F97316",
-};
 
 // ── Formatters ─────────────────────────────────────────────────
 
@@ -198,7 +189,7 @@ function BtcTopBar() {
   );
 }
 
-// ── BtcCapitalSummaryBar ────────────────────────────────────────
+// ── BtcCapitalSummaryBar ────────────────────────────────────────────────────
 
 function BtcCapitalSummaryBar({
   capitals,
@@ -259,11 +250,11 @@ function BtcCapitalSummaryBar({
   const stats = [
     { label: "STARTING CAPITAL",    value: `₹${STARTING.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`,    color: "#9ca3af" },
     { label: "TOTAL CAPITAL",       value: `₹${totalCurrent.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: "#ffffff" },
-    { label: "TOTAL PnL",           value: `${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: pColor },
+    { label: "TOTAL PnL",           value: pnlStr(totalPnl),                                                          color: pColor },
     { label: "TOTAL RETURN",        value: `${returnPct >= 0 ? "+" : ""}${returnPct.toFixed(2)}%`,                    color: rColor },
-    { label: "DAY'S PnL",           value: `${daysPnl >= 0 ? "+" : ""}₹${Math.abs(daysPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`, color: dpColor },
+    { label: "DAY'S PnL",           value: pnlStr(daysPnl),                                                           color: dpColor },
     { label: "DAY'S RETURN",        value: `${daysReturn >= 0 ? "+" : ""}${daysReturn.toFixed(2)}%`,                  color: drColor },
-    { label: "AVG PNL/TRADE TODAY", value: avgPnlToday != null ? `${avgPnlToday >= 0 ? "+" : ""}₹${Math.abs(avgPnlToday).toLocaleString("en-IN", { maximumFractionDigits: 0 })}` : "—", color: apColor },
+    { label: "AVG PNL/TRADE TODAY", value: avgPnlToday != null ? pnlStr(avgPnlToday) : "—",                          color: apColor },
   ];
 
   return (
@@ -277,12 +268,12 @@ function BtcCapitalSummaryBar({
     }}>
       {stats.map((s, i) => (
         <div key={s.label} style={{
-          flex: 1,
+          flex: 1, minWidth: 0,
           padding: "12px 20px",
           borderLeft: i > 0 ? "1px solid #1a1f2e" : undefined,
         }}>
           <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 5, fontWeight: 600 }}>{s.label}</div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
+          <div style={{ fontSize: "clamp(13px, 1.35vw, 19px)", fontWeight: 700, color: s.color, fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.value}</div>
         </div>
       ))}
     </div>
@@ -472,7 +463,7 @@ function BtcOpenTradesPanel({
 
                 return (
                   <tr key={pos.id} style={{ borderTop: "1px solid #0f1520" }}>
-                    <td style={{ padding: "8px 10px", fontSize: 12, color: ACCENT[pos.strategy_id] ?? "#9ca3af", fontWeight: 600, whiteSpace: "nowrap" }}>{stratName}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 12, color: accentFor(pos.strategy_id), fontWeight: 600, whiteSpace: "nowrap" }}>{stratName}</td>
                     <td style={{ padding: "8px 10px", fontSize: 12, fontWeight: 700, color: pos.side === "LONG" ? "#22c55e" : "#ef4444" }}>{pos.side}</td>
                     <td style={{ padding: "8px 10px", fontSize: 12, fontFamily: "monospace", color: "#9ca3af" }}>${pos.entry_price_usd.toLocaleString("en-US", { maximumFractionDigits: 2 })}</td>
                     <td style={{ padding: "8px 10px", fontSize: 11, fontFamily: "monospace", color: "#94a3b8" }}>{btcQty > 0 ? `${btcQty.toFixed(4)} BTC` : "—"}</td>
@@ -516,17 +507,17 @@ function BtcClosedTodayPanel({
     padding: "7px 10px", fontSize: 10, fontWeight: 700, color: "#4b5563",
     textAlign: "left" as const, letterSpacing: "0.08em",
     whiteSpace: "nowrap" as const, borderBottom: "1px solid #1a1f2e",
-    background: "#070A11",
+    background: "#070A11", position: "sticky", top: 0,
   };
 
   return (
     <div style={{
       background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12,
-      overflow: "hidden", marginTop: 10,
+      overflow: "hidden", display: "flex", flexDirection: "column", height: "100%",
     }}>
       {/* Header */}
       <div style={{
-        display: "flex", alignItems: "center", gap: 8,
+        flexShrink: 0, display: "flex", alignItems: "center", gap: 8,
         padding: "9px 16px", borderBottom: "1px solid #1a1f2e",
       }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.1em" }}>
@@ -543,11 +534,11 @@ function BtcClosedTodayPanel({
       </div>
 
       {rows.length === 0 ? (
-        <div style={{ padding: "16px 16px", fontSize: 12, color: "#374151" }}>
-          No trades closed today yet
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ fontSize: 12, color: "#374151" }}>No trades closed today yet</div>
         </div>
       ) : (
-        <div style={{ overflowX: "auto" }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
             <thead>
               <tr>
@@ -563,7 +554,7 @@ function BtcClosedTodayPanel({
                 return (
                   <tr key={pos.id} style={{ borderTop: "1px solid #0f1520" }}>
                     <td style={{ padding: "7px 10px", fontSize: 11, color: "#374151", fontFamily: "monospace", textAlign: "right" as const }}>{idx + 1}</td>
-                    <td style={{ padding: "7px 10px", fontSize: 12, color: ACCENT[pos.strategy_id] ?? "#9ca3af", fontWeight: 600, whiteSpace: "nowrap" }}>{stratName}</td>
+                    <td style={{ padding: "7px 10px", fontSize: 12, color: accentFor(pos.strategy_id), fontWeight: 600, whiteSpace: "nowrap" }}>{stratName}</td>
                     <td style={{ padding: "7px 10px", fontSize: 12, fontWeight: 700, color: pos.side === "LONG" ? "#22c55e" : "#ef4444" }}>{pos.side}</td>
                     <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", color: "#6b7280" }}>${pos.entry_price_usd.toLocaleString("en-US", { maximumFractionDigits: 2 })}</td>
                     <td style={{ padding: "7px 10px", fontSize: 12, fontFamily: "monospace", color: "#9ca3af" }}>${(pos.exit_price_usd ?? 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}</td>
@@ -600,13 +591,13 @@ function BtcStrategyCard({
   liveCapital: number;
   onClick: () => void;
 }) {
-  const accent  = ACCENT[strategy.id] ?? "#6b7280";
+  const accent  = accentFor(strategy.id);
   const alloc   = capital?.allocated_inr ?? 10000;
   const livePnl = liveCapital - alloc;
   const retPct  = (livePnl / alloc) * 100;
   const trades  = capital?.total_trades ?? 0;
 
-  // Today's KPIs — filter by opened_at IST date (matches server dailyTradeCounts logic)
+  // Today's KPIs — filter by opened_at IST date
   const todayIST = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
   const todayClosed = positions.filter(p =>
     p.strategy_id === strategy.id &&
@@ -620,10 +611,6 @@ function BtcStrategyCard({
   const lifeCount   = capital?.total_trades ?? 0;
   const avgPnlLife  = lifeCount > 0 ? lifetimePnl / lifeCount : null;
   const btcSharpe   = capital?.sharpe_ratio ?? 0;
-  const todayAll    = positions.filter(p =>
-    p.strategy_id === strategy.id &&
-    new Date(p.opened_at).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) === todayIST
-  ).length;
 
   const [metrics, setMetrics] = useState<CardMetrics | null>(null);
   useEffect(() => {
@@ -638,7 +625,7 @@ function BtcStrategyCard({
     return () => clearInterval(iv);
   }, [strategy.id]);
 
-  const pfVal  = metrics?.profit_factor ?? "N/A";
+  const pfVal   = metrics?.profit_factor ?? "N/A";
   const hasData = pfVal !== "N/A";
 
   return (
@@ -681,72 +668,64 @@ function BtcStrategyCard({
             ))}
           </div>
         )}
+        <div style={{ marginTop: 8 }}><ValidationDots strategyId={strategy.id} /></div>
       </div>
 
-      {/* Stats grid — row 1: Capital/PnL/Return, row 2: WinRate/Trades/Open */}
-      <div className="grid-stats" style={{ borderTop: `1px solid ${accent}30` }}>
+      {/* HERO */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", borderTop: `1px solid ${accent}30`, height: 74 }}>
+        <div style={{ padding: "10px 14px", borderRight: `1px solid ${accent}25`, minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>TOTAL PnL</div>
+          <div style={{ fontSize: "clamp(15px, 1.5vw, 22px)", fontWeight: 700, color: pnlColor(livePnl), fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{pnlStr(livePnl)}</div>
+        </div>
+        <div style={{ padding: "10px 14px", minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>RETURN</div>
+          <div style={{ fontSize: "clamp(15px, 1.5vw, 22px)", fontWeight: 700, color: pnlColor(retPct), fontFamily: "monospace", whiteSpace: "nowrap" }}>{fmtPct(retPct)}</div>
+        </div>
+      </div>
+
+      {/* COMPACT 3×2 */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderTop: `1px solid ${accent}25` }}>
         {[
-          { label: "CAPITAL",   value: `₹${fmtINR(liveCapital)}`,                             color: "#ffffff",                                              weight: 600 },
-          { label: "TOTAL PnL", value: pnlStr(livePnl),                                       color: pnlColor(livePnl),                                     weight: 700 },
-          { label: "RETURN",    value: fmtPct(retPct),                                        color: pnlColor(retPct),                                      weight: 600 },
-          { label: "SHARPE",    value: btcSharpe.toFixed(2),                                  color: "#ffffff",                                             weight: 600 },
-          { label: "WIN RATE",  value: winRate(capital),                                      color: "#ffffff",                                             weight: 600 },
-          { label: "TODAY",     value: String(todayAll),                                      color: "#ffffff",                                             weight: 600 },
-          { label: "TRADES",    value: String(trades),                                        color: "#ffffff",                                             weight: 600 },
-          { label: "OPEN",      value: String(openPositions.length),                          color: openPositions.length > 0 ? "#f5d547" : "#4b5563",     weight: 600 },
+          { label: "CAPITAL",       value: `₹${fmtINR(liveCapital)}`,      color: "#ffffff" },
+          { label: "WIN RATE",      value: winRate(capital),               color: "#ffffff" },
+          { label: "PROFIT FACTOR", value: hasData ? pfVal : "—",          color: hasData ? pfColor(pfVal) : "#4b5563" },
+          { label: "SHARPE",        value: btcSharpe.toFixed(2),           color: "#ffffff" },
+          { label: "TRADES",        value: String(trades),                 color: "#ffffff" },
+          { label: "OPEN",          value: String(openPositions.length),   color: openPositions.length > 0 ? "#f5d547" : "#4b5563" },
         ].map((s, i) => (
           <div key={s.label} style={{
-            padding: "12px 14px",
+            padding: "8px 14px", minWidth: 0, height: 52,
+            display: "flex", flexDirection: "column", justifyContent: "center",
             borderRight: i % 3 < 2 ? `1px solid ${accent}25` : undefined,
             borderTop:   i >= 3    ? `1px solid ${accent}25` : undefined,
           }}>
-            <div style={{ fontSize: 11, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 5, textTransform: "uppercase" as const }}>{s.label}</div>
-            <div className="stat-value" style={{ fontSize: 16, fontWeight: s.weight, color: s.color, fontFamily: "monospace" }}>{s.value}</div>
+            <div style={{ fontSize: 9, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 3, textTransform: "uppercase" as const, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.label}</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: s.color, fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.value}</div>
           </div>
         ))}
       </div>
 
-      {/* Row 3: Profit Factor */}
-      <div style={{ borderTop: `1px solid ${accent}25`, padding: "10px 14px" }}>
-        <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>PROFIT FACTOR</div>
-        <div style={{ fontSize: 14, fontWeight: 600, color: hasData ? pfColor(pfVal) : "#4b5563", fontFamily: "monospace" }}>
-          {hasData ? pfVal : "—"}
-        </div>
-      </div>
-
-      {/* Row 4: Today PnL | Avg Today | Avg Overall */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", borderTop: `1px solid ${accent}25` }}>
-        <div style={{ padding: "10px 14px", borderRight: `1px solid ${accent}25` }}>
-          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>TODAY PnL</div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: todayCount > 0 ? pnlColor(todayPnl) : "#374151", fontFamily: "monospace" }}>
-            {todayCount > 0 ? pnlStr(todayPnl) : "—"}
+      {/* FOOTER */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", borderTop: `1px solid ${accent}25`, height: 48 }}>
+        {[
+          { label: "TODAY PnL",       value: todayCount > 0 ? pnlStr(todayPnl) : "—", color: todayCount > 0 ? pnlColor(todayPnl) : "#374151" },
+          { label: "AVG/TRADE TODAY", value: avgPnlToday != null ? pnlStr(avgPnlToday) : "—", color: avgPnlToday != null ? pnlColor(avgPnlToday) : "#374151" },
+          { label: "AVG/TRADE LIFE",  value: avgPnlLife  != null ? pnlStr(avgPnlLife)  : "—", color: avgPnlLife  != null ? pnlColor(avgPnlLife)  : "#374151" },
+        ].map((s, i) => (
+          <div key={s.label} style={{
+            padding: "7px 14px", minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center",
+            borderRight: i < 2 ? `1px solid ${accent}25` : undefined,
+          }}>
+            <div style={{ fontSize: 9, color: "#6b7280", letterSpacing: "0.06em", marginBottom: 2, textTransform: "uppercase" as const, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.label}</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: s.color, fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.value}</div>
           </div>
-        </div>
-        <div style={{ padding: "10px 14px", borderRight: `1px solid ${accent}25` }}>
-          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>AVG PNL/TRADE TODAY</div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: avgPnlToday != null ? pnlColor(avgPnlToday) : "#374151", fontFamily: "monospace" }}>
-            {avgPnlToday != null ? pnlStr(avgPnlToday) : "—"}
-          </div>
-        </div>
-        <div style={{ padding: "10px 14px" }}>
-          <div style={{ fontSize: 10, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4, textTransform: "uppercase" as const }}>AVG PNL/TRADE LIFE</div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: avgPnlLife != null ? pnlColor(avgPnlLife) : "#374151", fontFamily: "monospace" }}>
-            {avgPnlLife != null ? pnlStr(avgPnlLife) : "—"}
-          </div>
-        </div>
+        ))}
       </div>
     </div>
   );
 }
 
 // ── BtcCorrelationHeatmap ───────────────────────────────────────────────────
-
-const BTC_STRATEGY_LABELS: Record<string, string> = {
-  btc_ema_crossover: "EMA ×",
-  btc_orion: "ORION",
-  btc_ema_confluence: "EMA Conf",
-  btc_supertrend: "Supertrend",
-};
 
 function corrColor(v: number | null): string {
   if (v === null) return "#1a1f2e";
@@ -783,15 +762,16 @@ function BtcCorrelationHeatmap() {
 
   const strats = data?.strategies ?? [];
   const matrix = data?.matrix ?? null;
+  const hasAnyPair = !!matrix && matrix.some((row, i) => row.some((v, j) => i !== j && v != null));
 
   return (
     <div style={{ background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, padding: "20px 24px", marginTop: 24 }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 16 }}>
         BTC STRATEGY CORRELATION
       </div>
-      {(!matrix || data?.insufficient) ? (
+      {(!matrix || data?.insufficient || !hasAnyPair) ? (
         <div style={{ fontSize: 12, color: "#374151", textAlign: "center", padding: "24px 0" }}>
-          Insufficient data — needs at least 5 days of overlapping trade history
+          Correlation appears once strategies share at least 5 overlapping trading days
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
@@ -801,7 +781,7 @@ function BtcCorrelationHeatmap() {
                 <td style={{ padding: "4px 8px", minWidth: 80 }} />
                 {strats.map(s => (
                   <th key={s} style={{ padding: "4px 6px", color: "#6b7280", fontWeight: 600, fontSize: 10, textAlign: "center", whiteSpace: "nowrap" }}>
-                    {BTC_STRATEGY_LABELS[s] ?? s}
+                    {shortLabel(s)}
                   </th>
                 ))}
               </tr>
@@ -810,7 +790,7 @@ function BtcCorrelationHeatmap() {
               {strats.map((si, i) => (
                 <tr key={si}>
                   <td style={{ padding: "4px 8px", color: "#6b7280", fontWeight: 600, fontSize: 10, whiteSpace: "nowrap" }}>
-                    {BTC_STRATEGY_LABELS[si] ?? si}
+                    {shortLabel(si)}
                   </td>
                   {strats.map((_sj, j) => {
                     const v = matrix[i]?.[j] ?? null;
@@ -846,7 +826,7 @@ function BtcCorrelationHeatmap() {
 
 // ── BtcCombinedCapitalHistory ───────────────────────────────────────────────
 
-function BtcCombinedCapitalHistory({ startingCapital }: { startingCapital: number }) {
+function BtcCombinedCapitalHistory({ startingCapital, closedCount }: { startingCapital: number; closedCount: number }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
   const seriesRef    = useRef<ISeriesApi<"Area"> | null>(null);
@@ -854,6 +834,7 @@ function BtcCombinedCapitalHistory({ startingCapital }: { startingCapital: numbe
   const [closeCount,  setCloseCount]  = useState(0);
 
   useEffect(() => {
+    if (closedCount < 5) return;
     if (!containerRef.current) return;
     const chart = createChart(containerRef.current, {
       autoSize: true,
@@ -877,7 +858,7 @@ function BtcCombinedCapitalHistory({ startingCapital }: { startingCapital: numbe
     seriesRef.current = series;
     series.createPriceLine({ price: 0, color: "#374151", lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
     return () => { chart.remove(); chartRef.current = seriesRef.current = null; };
-  }, []);
+  }, [closedCount]);
 
   useEffect(() => {
     fetch(`${BACKEND}/api/btc-capital-history`)
@@ -909,7 +890,7 @@ function BtcCombinedCapitalHistory({ startingCapital }: { startingCapital: numbe
       .catch(() => {});
   }, [startingCapital]);
 
-  const pnlColor = livePnl >= 0 ? "#4ade80" : "#f87171";
+  const pnlColorVal = livePnl >= 0 ? "#4ade80" : "#f87171";
 
   return (
     <div style={{ background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, overflow: "hidden", marginTop: 24 }}>
@@ -921,13 +902,21 @@ function BtcCombinedCapitalHistory({ startingCapital }: { startingCapital: numbe
         {livePnl !== 0 && (
           <div style={{ marginLeft: "auto", textAlign: "right" }}>
             <div style={{ fontSize: 9, color: "#4b5563", letterSpacing: "0.08em", marginBottom: 2 }}>LIVE PNL</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: pnlColor, fontFamily: "monospace" }}>
-              {livePnl >= 0 ? "+" : ""}₹{Math.abs(livePnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+            <div style={{ fontSize: 18, fontWeight: 700, color: pnlColorVal, fontFamily: "monospace" }}>
+              {livePnl >= 0 ? "+" : "-"}₹{Math.abs(livePnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
             </div>
           </div>
         )}
       </div>
-      <div ref={containerRef} style={{ height: 220 }} />
+      {closedCount < 5 ? (
+        <div style={{ height: 220, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ color: "#6b7280", fontSize: 12, textAlign: "center" }}>
+            {closedCount} closed trades so far — chart appears after 5
+          </div>
+        </div>
+      ) : (
+        <div ref={containerRef} style={{ height: 220 }} />
+      )}
     </div>
   );
 }
@@ -1007,6 +996,7 @@ export default function BtcArenaPage() {
   }, [capitals, positions, btcPrice]);
 
   const openPositions = positions.filter(p => p.status === "OPEN");
+  const closedCount   = positions.filter(p => p.status === "CLOSED").length;
 
   return (
     <div className="page-content" style={{ background: "#0A0D14", minHeight: "100vh" }}>
@@ -1030,12 +1020,14 @@ export default function BtcArenaPage() {
         <BtcCapitalSummaryBar capitals={capitals} openPositions={openPositions} positions={positions} btcPrice={btcPrice} />
 
         {/* Live Open Trades panel */}
-        <div style={{ height: 320 }}>
+        <div style={{ height: 248 }}>
           <BtcOpenTradesPanel openPositions={liveOpenPos} strategies={strategies} btcPrice={btcPrice} />
         </div>
 
         {/* Closed Today panel */}
-        <BtcClosedTodayPanel positions={positions} strategies={strategies} />
+        <div style={{ height: 248, marginTop: 10 }}>
+          <BtcClosedTodayPanel positions={positions} strategies={strategies} />
+        </div>
       </div>
 
       {/* Strategy Cards */}
@@ -1054,19 +1046,37 @@ export default function BtcArenaPage() {
         )}
 
         {strategies.length > 0 && (
-          <div className="grid-btc">
-            {strategies.map(s => (
-              <BtcStrategyCard
-                key={s.id}
-                strategy={s}
-                capital={capitals.find(c => c.strategy_id === s.id)}
-                openPositions={positions.filter(p => p.strategy_id === s.id && p.status === "OPEN")}
-                positions={positions}
-                liveCapital={computeLiveCapital(s.id)}
-                onClick={() => router.push('/btc/strategy/' + s.id)}
-              />
-            ))}
-          </div>
+          <>
+            {(() => {
+              const byId = new Map(strategies.map(s => [s.id, s]));
+              const grouped = BTC_FAMILIES.map(f => ({ ...f, items: f.ids.map(id => byId.get(id)).filter(Boolean) as typeof strategies }));
+              const claimed = new Set(BTC_FAMILIES.flatMap(f => f.ids));
+              const ungrouped = strategies.filter(s => !claimed.has(s.id));
+              if (ungrouped.length) grouped.push({ title: 'Other', subtitle: 'Not assigned to a family', ids: [], items: ungrouped });
+              return grouped.filter(g => g.items.length > 0).map(g => (
+                <div key={g.title} style={{ marginBottom: 28 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 12, padding: "0 2px 10px", borderBottom: "1px solid #1a1f2e", marginBottom: 14 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0", letterSpacing: "0.06em", textTransform: "uppercase" }}>{g.title}</span>
+                    <span style={{ fontSize: 11, color: "#4b5563" }}>{g.subtitle}</span>
+                    <span style={{ marginLeft: "auto", fontSize: 10, color: "#374151", fontFamily: "monospace" }}>{g.items.length} strateg{g.items.length === 1 ? "y" : "ies"}</span>
+                  </div>
+                  <div className="grid-btc">
+                    {g.items.map(s => (
+                      <BtcStrategyCard
+                        key={s.id}
+                        strategy={s}
+                        capital={capitals.find(c => c.strategy_id === s.id)}
+                        openPositions={positions.filter(p => p.strategy_id === s.id && p.status === "OPEN")}
+                        positions={positions}
+                        liveCapital={computeLiveCapital(s.id)}
+                        onClick={() => router.push('/btc/strategy/' + s.id)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ));
+            })()}
+          </>
         )}
 
         {strategies.length === 0 && !error && (
@@ -1079,7 +1089,10 @@ export default function BtcArenaPage() {
         )}
 
         {/* BTC Combined Capital History */}
-        <BtcCombinedCapitalHistory startingCapital={capitals.reduce((s, c) => s + (c.allocated_inr ?? 100_000), 0)} />
+        <BtcCombinedCapitalHistory
+          startingCapital={capitals.reduce((s, c) => s + (c.allocated_inr ?? 100_000), 0)}
+          closedCount={closedCount}
+        />
 
         {/* BTC Correlation Heatmap */}
         <BtcCorrelationHeatmap />
