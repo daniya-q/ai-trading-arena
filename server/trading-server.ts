@@ -258,7 +258,9 @@ function processTick(price: number, symbol: string, tsMs: number): void {
     }
 
     if (bucket !== store.bucket) {
-      store.candles.push({ ...store.current });
+      const closed = { ...store.current };
+      store.candles.push(closed);
+      bufferClosedCandle(symbol, interval, closed);
       if (store.candles.length > MAX_CANDLES) store.candles.shift();
       store.current = { open: price, high: price, low: price, close: price, time: bucket, ticks: 1 };
       store.bucket  = bucket;
@@ -747,11 +749,81 @@ async function pollOptionChain(): Promise<void> {
       if (!optionChainHistory[index]) optionChainHistory[index] = [];
       optionChainHistory[index].push(chain);
       if (optionChainHistory[index].length > 12) optionChainHistory[index].shift();
+      void recordOptionChain(index, chain);
       console.log(`[Chain:${index}] PCR: ${chain.pcr.toFixed(2)} | ATM: ${chain.atmStrike} | VIX: ${lastVix.toFixed(1)}`);
     } catch (err) {
       console.error(`[Chain:${index}] Error:`, err);
     }
   }
+}
+
+// ── DATA RECORDERS ────────────────────────────────────────────────────────
+// Only 30s is persisted: Upstox sells 1m+ history, but never sub-minute.
+// 1m/5m/15m are derivable from 30s anyway, so recording them would be waste.
+const RECORD_TIMEFRAME    = "30s";
+const CHAIN_STRIKE_WINDOW = 15;   // strikes either side of ATM to persist
+const CANDLE_BUFFER_MAX   = 5000; // hard cap if the DB is unreachable
+
+type CandleRow = {
+  symbol: string; timeframe: string; bucket_time: string;
+  open: number; high: number; low: number; close: number; ticks: number | null;
+};
+const candleBuffer: CandleRow[] = [];
+
+// Synchronous and cheap — processTick is a hot path and must never await.
+function bufferClosedCandle(symbol: string, timeframe: string, c: Candle): void {
+  if (timeframe !== RECORD_TIMEFRAME) return;
+  candleBuffer.push({
+    symbol,
+    timeframe,
+    bucket_time: new Date(c.time).toISOString(),
+    open: c.open, high: c.high, low: c.low, close: c.close,
+    ticks: c.ticks ?? null,
+  });
+  if (candleBuffer.length > 400) void flushCandleBuffer();
+}
+
+async function flushCandleBuffer(): Promise<void> {
+  if (candleBuffer.length === 0) return;
+  const batch = candleBuffer.splice(0, candleBuffer.length);
+  const { error } = await supabase
+    .from("recorded_candles")
+    .upsert(batch, { onConflict: "symbol,timeframe,bucket_time", ignoreDuplicates: true });
+  if (error) {
+    console.error(`[Recorder] candle flush failed (${batch.length} rows):`, error.message);
+    candleBuffer.unshift(...batch);                        // retry next tick
+    if (candleBuffer.length > CANDLE_BUFFER_MAX) {          // never grow unbounded
+      const dropped = candleBuffer.length - CANDLE_BUFFER_MAX;
+      candleBuffer.splice(0, dropped);
+      console.error(`[Recorder] buffer overflow — dropped ${dropped} oldest candles`);
+    }
+  } else {
+    console.log(`[Recorder] ${batch.length} × ${RECORD_TIMEFRAME} candles persisted`);
+  }
+}
+
+// Option-chain snapshots — the real-premium archive. Expired weeklies are
+// purged by Upstox, so this is the only path to real historical premiums.
+async function recordOptionChain(index: string, chain: FullOptionChain): Promise<void> {
+  const sorted = [...chain.rows].sort((a, b) => a.strike - b.strike);
+  const atmIdx = sorted.findIndex(r => r.strike === chain.atmStrike);
+  const from = atmIdx < 0 ? 0 : Math.max(0, atmIdx - CHAIN_STRIKE_WINDOW);
+  const to   = atmIdx < 0 ? sorted.length : Math.min(sorted.length, atmIdx + CHAIN_STRIKE_WINDOW + 1);
+  const slice = sorted.slice(from, to);
+  if (slice.length === 0) return;
+
+  const { error } = await supabase.from("recorded_option_chains").upsert({
+    index_name:   index,
+    expiry:       chain.expiry,
+    snapshot_at:  new Date(chain.timestamp).toISOString(),
+    spot_price:   chain.spotPrice,
+    atm_strike:   chain.atmStrike,
+    pcr:          chain.pcr,
+    strikes_from: slice[0].strike,
+    strikes_to:   slice[slice.length - 1].strike,
+    chain_rows:   slice,
+  }, { onConflict: "index_name,expiry,snapshot_at", ignoreDuplicates: true });
+  if (error) console.error(`[Recorder] chain ${index} failed:`, error.message);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -5134,6 +5206,9 @@ connectBinanceWS();
 runBtcStrategies();
 setInterval(runBtcStrategies, 30_000);
 setInterval(monitorBtcPositions, 5_000);
+
+// Persist recorded 30s candles every 60 seconds
+setInterval(flushCandleBuffer, 60_000);
 
 // One-time Sharpe backfill for all BTC strategies on startup
 backfillBtcSharpe().catch(console.error);
