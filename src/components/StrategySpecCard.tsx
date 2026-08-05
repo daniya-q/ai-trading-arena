@@ -68,6 +68,7 @@ export default function StrategySpecCard({ strategyId }: { strategyId: string })
       <Row row={{ label: 'Instrument', value: spec.instrument }} strategyId={strategyId} />
       <Row row={{ label: 'Timeframe', value: spec.timeframe }} strategyId={strategyId} />
       <Row row={{ label: 'Window', value: spec.window }} strategyId={strategyId} />
+      {spec.leverage && <Row row={{ label: 'Leverage', value: spec.leverage, param: 'leverage' }} strategyId={strategyId} />}
 
       <GroupHeading text="Entry" accent={spec.accent} />
       {spec.entry.map((r, i) => <Row key={i} row={r} strategyId={strategyId} />)}
@@ -75,8 +76,22 @@ export default function StrategySpecCard({ strategyId }: { strategyId: string })
       <GroupHeading text="Exit (priority order)" accent={spec.accent} />
       {spec.exit.map((r, i) => <Row key={i} row={r} strategyId={strategyId} />)}
 
+      {spec.tiers && (
+        <>
+          <GroupHeading text="Partial booking + tiered trail" accent={spec.accent} />
+          {spec.tiers.map((r, i) => <Row key={i} row={r} strategyId={strategyId} />)}
+        </>
+      )}
+
       <GroupHeading text="Position sizing" accent={spec.accent} />
       <div style={{ fontSize: 'clamp(10px,1.15vh,12.5px)', color: '#e2e8f0', lineHeight: 1.5, paddingTop: 2 }}>{spec.sizing}</div>
+
+      {spec.charges && (
+        <>
+          <GroupHeading text="Charges" accent={spec.accent} />
+          <Row row={{ label: 'Round-trip', value: spec.charges, param: 'fees' }} strategyId={strategyId} />
+        </>
+      )}
     </div>
   );
 }

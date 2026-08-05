@@ -8,9 +8,12 @@ export interface StrategySpec {
   instrument: string;
   timeframe: string;
   window: string;
+  leverage?: string;          // BTC only
   entry: SpecRow[];
   exit: SpecRow[];
+  tiers?: SpecRow[];          // BTC only — partial booking + tiered trailing
   sizing: string;
+  charges?: string;           // shown when fees are materially significant
 }
 
 const SL = (p: string) => ({ label: 'Stop Loss', value: p, param: 'sl' });
@@ -218,6 +221,121 @@ export const STRATEGY_SPEC: Record<string, StrategySpec> = {
       { label: 'Chop filter', value: 'Blocks entry when |EMA16−EMA64| / spot < 0.15%', param: 'chop_filter' }],
     exit: EMA_EXIT, sizing: SIZING60,
   },
+
+  // ─────────── BTC STRATEGIES ───────────
+  // Shared: BTC/USD via Kraken, LONG+SHORT, 24/7, no hard close.
+  // Sizing: qty_inr = capital × 50% × leverage, ₹8,000 max-loss cap.
+  // Charges: Kraken taker 0.26%/side = 0.52% round-trip on NOTIONAL.
+  btc_ema_crossover: {
+    accent: '#F59E0B', instrument: 'BTC/USD · Kraken · LONG + SHORT',
+    timeframe: '30-second candles', window: '24/7 — no market hours, no hard close',
+    leverage: '10×',
+    entry: [
+      { label: 'Signal', value: 'EMA 9 crosses EMA 21 → LONG (up) / SHORT (down)', param: 'entry' },
+      { label: 'Behaviour', value: 'Max one position at a time' },
+    ],
+    exit: [
+      { label: 'Hard SL', value: '20% of entry price (before partial booking)', param: 'sl' },
+      { label: 'Signal exit', value: 'Opposite EMA cross closes remainder' },
+    ],
+    tiers: [
+      { label: 'Partial booking', value: 'Book 30% at 1.0× SL distance; remainder SL → breakeven', param: 'booking' },
+      { label: 'Tier 1', value: '1× SL distance → locks 70% of peak gain', param: 'tiers' },
+      { label: 'Tier 2', value: '2× SL distance → locks 80%', param: 'tiers' },
+      { label: 'Tier 3', value: '4× SL distance → locks 90%', param: 'tiers' },
+    ],
+    sizing: 'qty_inr = capital × 50% × 10× leverage · ₹8,000 max-loss cap',
+    charges: 'Kraken taker 0.26%/side = 0.52% round-trip on notional (≈2.6% of capital per trade at 10×)',
+  },
+  btc_orion: {
+    accent: '#6366F1', instrument: 'BTC/USD · Kraken · LONG + SHORT',
+    timeframe: '15-minute candles', window: '24/7 — ORB resets every 4h (00/04/08/12/16/20 UTC)',
+    leverage: '50×',
+    entry: [
+      { label: 'Signal', value: 'Break of the current 4-hour opening range', param: 'entry' },
+      { label: 'ORB reset', value: 'Every 4 hours — 6 fresh ranges per day', param: 'orb_reset' },
+      { label: 'Limit', value: 'Max 10 trades per day' },
+    ],
+    exit: [
+      { label: 'Hard SL', value: '20% of entry price (before partial booking)', param: 'sl' },
+      { label: 'Signal exit', value: 'ORB block reset closes remainder' },
+    ],
+    tiers: [
+      { label: 'Partial booking', value: 'Book 30% at 1.0× SL distance; remainder SL → breakeven', param: 'booking' },
+      { label: 'Tier 1', value: '1× SL distance → locks 75% of peak gain', param: 'tiers' },
+      { label: 'Tier 2', value: '2× SL distance → locks 85%', param: 'tiers' },
+      { label: 'Tier 3', value: '4× SL distance → locks 92%', param: 'tiers' },
+    ],
+    sizing: 'qty_inr = capital × 50% × 50× leverage · ₹8,000 max-loss cap',
+    charges: '0.52% round-trip on notional (≈13% of capital per trade at 50×)',
+  },
+  btc_ema_confluence: {
+    accent: '#10B981', instrument: 'BTC/USD · Kraken · LONG + SHORT',
+    timeframe: '30-second candles (5-minute for ATR)', window: '24/7 — no market hours',
+    leverage: '100×',
+    entry: [
+      { label: 'Filter 1', value: 'EMA 20/50 trend direction', param: 'entry' },
+      { label: 'Filter 2 — RSI', value: 'RSI between 40 and 60 (neutral band)' },
+      { label: 'Filter 3 — VWAP', value: 'Price on the correct side of VWAP' },
+      { label: 'Filter 4 — ATR', value: 'ATR ≥ 0.1% (loosened from 0.5%, which never triggered)', param: 'atr' },
+      { label: 'Filter 5 — Slope', value: 'EMA 9 slope confirms direction' },
+      { label: 'Note', value: 'All five must align simultaneously' },
+    ],
+    exit: [
+      { label: 'Hard SL', value: '20% of entry price (before partial booking)', param: 'sl' },
+      { label: 'Signal exit', value: 'Filter breakdown closes remainder' },
+    ],
+    tiers: [
+      { label: 'Partial booking', value: 'Book 35% at 1.0× SL distance; remainder SL → breakeven', param: 'booking' },
+      { label: 'Tier 1', value: '1× SL distance → locks 70% of peak gain', param: 'tiers' },
+      { label: 'Tier 2', value: '2× SL distance → locks 82%', param: 'tiers' },
+      { label: 'Tier 3', value: '3× SL distance → locks 92%', param: 'tiers' },
+    ],
+    sizing: 'qty_inr = capital × 50% × 100× leverage · ₹8,000 max-loss cap',
+    charges: '0.52% round-trip on notional (≈26% of capital per trade at 100×)',
+  },
+  btc_supertrend: {
+    accent: '#EF4444', instrument: 'BTC/USD · Kraken · LONG + SHORT',
+    timeframe: '5-minute candles', window: '24/7 — no market hours',
+    leverage: '50×',
+    entry: [
+      { label: 'Signal', value: 'Supertrend(7,3) flips bullish → LONG / bearish → SHORT', param: 'entry' },
+    ],
+    exit: [
+      { label: 'Hard SL', value: '20% of entry price (before partial booking)', param: 'sl' },
+      { label: 'Signal exit', value: 'Opposite Supertrend flip closes remainder' },
+    ],
+    tiers: [
+      { label: 'Partial booking', value: 'Book 30% at 1.0× SL distance; remainder SL → breakeven', param: 'booking' },
+      { label: 'Tier 1', value: '1× SL distance → locks 72% of peak gain', param: 'tiers' },
+      { label: 'Tier 2', value: '2× SL distance → locks 84%', param: 'tiers' },
+      { label: 'Tier 3', value: '4× SL distance → locks 92%', param: 'tiers' },
+    ],
+    sizing: 'qty_inr = capital × 50% × 50× leverage · ₹8,000 max-loss cap',
+    charges: '0.52% round-trip on notional (≈13% of capital per trade at 50×)',
+  },
+  btc_vwap_scalper: {
+    accent: '#F97316', instrument: 'BTC/USD · Kraken · LONG + SHORT',
+    timeframe: '1-minute candles (VWAP resets at UTC midnight)', window: '24/7 — no market hours',
+    leverage: '200× (highest of the five)',
+    entry: [
+      { label: 'Signal', value: 'Price reclaims VWAP (LONG) or rejects it (SHORT)', param: 'entry' },
+      { label: 'Confirm', value: 'RSI 40–60 + tick volume > 20-candle average' },
+      { label: 'Structure', value: 'Previous candle made a higher low (LONG) / lower high (SHORT)' },
+    ],
+    exit: [
+      { label: 'Hard SL', value: '20% of entry price (before partial booking)', param: 'sl' },
+      { label: 'Signal exit', value: 'Opposite VWAP cross closes remainder' },
+    ],
+    tiers: [
+      { label: 'Partial booking', value: 'Book 40% at 0.5× SL distance (earliest of the five)', param: 'booking' },
+      { label: 'Tier 1', value: '0.5× SL distance → locks 80% of peak gain', param: 'tiers' },
+      { label: 'Tier 2', value: '1× SL distance → locks 88%', param: 'tiers' },
+      { label: 'Tier 3', value: '2× SL distance → locks 95%', param: 'tiers' },
+    ],
+    sizing: 'qty_inr = capital × 50% × 200× leverage · ₹8,000 max-loss cap',
+    charges: '0.52% round-trip on notional (≈52% of capital per trade at 200×)',
+  },
 };
 
 // Accent lookup — replaces the duplicated ACCENT maps
@@ -232,6 +350,8 @@ export const SHORT_LABEL: Record<string, string> = {
   expiry_powerhour_dir: 'Exp Dir', expiry_powerhour_straddle: 'Exp Strad',
   orion: 'Orion', ema_confluence: 'Confluence', supertrend: 'Supertrend',
   pcr_reversal: 'PCR Rev', gap_orb: 'Gap+ORB', vwap_scalper: 'VWAP Scalp',
+  btc_ema_crossover: 'BTC EMA ×', btc_orion: 'BTC Orion', btc_ema_confluence: 'BTC Confluence',
+  btc_supertrend: 'BTC Supertrend', btc_vwap_scalper: 'BTC VWAP',
 };
 export const shortLabel = (id: string) => SHORT_LABEL[id] ?? id;
 
@@ -247,4 +367,9 @@ export const STRATEGY_FAMILIES: StrategyFamily[] = [
     ids: ['expiry_powerhour_dir', 'expiry_powerhour_straddle'] },
   { title: 'Standalone Strategies', subtitle: 'Independent signals — no variant race',
     ids: ['orion', 'ema_confluence', 'supertrend', 'pcr_reversal', 'gap_orb', 'vwap_scalper'] },
+];
+
+export const BTC_FAMILIES: StrategyFamily[] = [
+  { title: 'BTC Strategies', subtitle: 'BTC/USD via Kraken · 24/7 · leveraged with partial booking + tiered trailing',
+    ids: ['btc_ema_crossover', 'btc_orion', 'btc_ema_confluence', 'btc_supertrend', 'btc_vwap_scalper'] },
 ];

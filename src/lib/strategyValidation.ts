@@ -108,6 +108,52 @@ export const STRATEGY_VALIDATION: Record<string, StrategyValidation> = {
     chop_filter: { tier: 'testing', note: 'Live A/B; threshold 0.15%' },
     exits:       { tier: 'unvalidated', note: 'Inherited from S1' },
   },
+
+  // ─────────── BTC STRATEGIES ───────────
+  // Aug 2026 finding: Kraken fees (0.52% round-trip on leveraged notional) exceed
+  // typical captured move (~0.1%) — structurally loss-making regardless of signal.
+  btc_ema_crossover: {
+    fees:     { tier: 'validated', note: 'Analysed Aug 2026 — 0.52% round-trip on notional vs ~0.1% typical captured move; structurally loss-making. Redesign pending' },
+    leverage: { tier: 'unvalidated', note: '10× chosen by design; does not change break-even threshold, only decay speed (~2.6% of capital per trade)' },
+    entry:    { tier: 'unvalidated' },
+    sl:       { tier: 'unvalidated', note: 'Sources disagree — doc says flat 20%, page text says 2× ATR, observed stops ~0.1%. Needs code trace' },
+    booking:  { tier: 'unvalidated', note: 'Tiered system designed, never tested' },
+    tiers:    { tier: 'unvalidated', note: 'Tier thresholds never tested' },
+  },
+  btc_orion: {
+    fees:      { tier: 'validated', note: 'Analysed Aug 2026 — fees exceed captured move; structurally loss-making. Redesign pending' },
+    leverage:  { tier: 'unvalidated', note: '50× → ~13% of capital paid in fees per trade' },
+    entry:     { tier: 'unvalidated' },
+    orb_reset: { tier: 'unvalidated', note: 'Changed daily→4-hourly after observing idleness; observation-driven, not measured' },
+    sl:        { tier: 'unvalidated', note: 'Same SL definition discrepancy as the other BTC strategies' },
+    booking:   { tier: 'unvalidated' },
+    tiers:     { tier: 'unvalidated' },
+  },
+  btc_ema_confluence: {
+    fees:     { tier: 'validated', note: 'Analysed Aug 2026 — fees exceed captured move; structurally loss-making. Redesign pending' },
+    leverage: { tier: 'unvalidated', note: '100× → ~26% of capital paid in fees per trade' },
+    entry:    { tier: 'unvalidated' },
+    atr:      { tier: 'unvalidated', note: 'Loosened 0.5%→0.1% because original never triggered; plausible but no logged-signal analysis' },
+    sl:       { tier: 'unvalidated', note: 'Same SL definition discrepancy' },
+    booking:  { tier: 'unvalidated' },
+    tiers:    { tier: 'unvalidated' },
+  },
+  btc_supertrend: {
+    fees:     { tier: 'validated', note: 'Analysed Aug 2026 — fees exceed captured move; structurally loss-making. Redesign pending' },
+    leverage: { tier: 'unvalidated', note: '50× → ~13% of capital paid in fees per trade' },
+    entry:    { tier: 'unvalidated' },
+    sl:       { tier: 'unvalidated', note: 'Same SL definition discrepancy' },
+    booking:  { tier: 'unvalidated' },
+    tiers:    { tier: 'unvalidated' },
+  },
+  btc_vwap_scalper: {
+    fees:     { tier: 'validated', note: 'Analysed Aug 2026 — at 200× leverage, ~52% of capital paid in fees per round trip. Fastest decay of the five (75 trades to zero). Redesign pending' },
+    leverage: { tier: 'unvalidated', note: '200× → ~52% of capital paid in fees per trade' },
+    entry:    { tier: 'unvalidated' },
+    sl:       { tier: 'unvalidated', note: 'Same SL definition discrepancy' },
+    booking:  { tier: 'unvalidated' },
+    tiers:    { tier: 'unvalidated' },
+  },
 };
 
 // Helper: overall validation summary for a strategy (for badges/rollups)
