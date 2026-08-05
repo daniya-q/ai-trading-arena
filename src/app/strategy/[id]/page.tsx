@@ -4,7 +4,7 @@ import { Fragment, useEffect, useRef, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
-  createChart, AreaSeries, ColorType, createSeriesMarkers,
+  createChart, BaselineSeries, ColorType, createSeriesMarkers,
 } from "lightweight-charts";
 import type {
   IChartApi, ISeriesApi, Time,
@@ -105,7 +105,7 @@ function fallbackExitText(pos: Position): string {
 function CapitalHistoryChart({ strategyId, accent, isBtc = false }: { strategyId: string; accent: string; isBtc?: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
-  const seriesRef    = useRef<ISeriesApi<"Area"> | null>(null);
+  const seriesRef    = useRef<ISeriesApi<"Baseline"> | null>(null);
   const [livePnl,    setLivePnl]    = useState(0);
   const [closeCount, setCloseCount] = useState(0);
 
@@ -120,18 +120,22 @@ function CapitalHistoryChart({ strategyId, accent, isBtc = false }: { strategyId
       crosshair: { mode: 1 },
     });
     chartRef.current = chart;
-    const series = chart.addSeries(AreaSeries, {
-      lineColor:              accent,
-      topColor:               `${accent}33`,
-      bottomColor:            `${accent}00`,
+    const series = chart.addSeries(BaselineSeries, {
+      baseValue:              { type: "price", price: 0 },
+      topLineColor:           "#4ade80",
+      topFillColor1:          "rgba(74,222,128,0.28)",
+      topFillColor2:          "rgba(74,222,128,0.03)",
+      bottomLineColor:        "#f87171",
+      bottomFillColor1:       "rgba(248,113,113,0.03)",
+      bottomFillColor2:       "rgba(248,113,113,0.28)",
       lineWidth:              2,
       lineType:               1,
       crosshairMarkerVisible: true,
       lastValueVisible:       true,
       priceLineVisible:       false,
     });
+    series.priceScale().applyOptions({ scaleMargins: { top: 0.12, bottom: 0.12 } });
     seriesRef.current = series;
-    series.createPriceLine({ price: 0, color: "#374151", lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
     return () => { chart.remove(); chartRef.current = seriesRef.current = null; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -411,23 +415,6 @@ export default function StrategyDetailPage() {
         Indian Strategies Dashboard
       </Link>
 
-      {/* Dot navigation — fixed right */}
-      <div style={{
-        position: "fixed", right: 24, top: "50%", transform: "translateY(-50%)",
-        zIndex: 200, display: "flex", flexDirection: "column", gap: 14,
-      }}>
-        {[0, 1, 2].map(i => (
-          <button key={i} onClick={() => scrollToSection(i)} title={["Overview", "Today", "All Trades"][i]} style={{
-            width: activeSection === i ? 10 : 6,
-            height: activeSection === i ? 10 : 6,
-            borderRadius: "50%",
-            background: activeSection === i ? accent : "#374151",
-            border: `1px solid ${activeSection === i ? accent : "#4b5563"}`,
-            cursor: "pointer", padding: 0, transition: "all 0.25s",
-          }} />
-        ))}
-      </div>
-
       {/* Scroll container */}
       <div
         ref={scrollRef}
@@ -515,19 +502,6 @@ export default function StrategyDetailPage() {
             </div>
           </div>
 
-          {/* NEXT ↓ pill */}
-          <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0 18px" }}>
-            <button
-              onClick={() => scrollToSection(1)}
-              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
-              onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-              style={{
-                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
-                borderRadius: 999, padding: "10px 28px", color: "#ffffff",
-                fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer",
-              }}
-            >NEXT ↓</button>
-          </div>
         </section>
 
         {/* ═══════════════════════════════════════
@@ -541,20 +515,6 @@ export default function StrategyDetailPage() {
             position: "relative",
           }}
         >
-          {/* ↑ PREV pill */}
-          <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0" }}>
-            <button
-              onClick={() => scrollToSection(0)}
-              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
-              onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-              style={{
-                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
-                borderRadius: 999, padding: "10px 28px", color: "#ffffff",
-                fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer",
-              }}
-            >↑ PREV</button>
-          </div>
-
           {/* Split: Today's Trades (left) | Cumulative PnL (right) */}
           <div style={{ flex: 1, minHeight: 0, display: "flex", borderTop: "1px solid #1a1f2e" }}>
 
@@ -644,19 +604,6 @@ export default function StrategyDetailPage() {
             </div>
           </div>
 
-          {/* NEXT ↓ pill */}
-          <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 0", borderTop: "1px solid #1a1f2e" }}>
-            <button
-              onClick={() => scrollToSection(2)}
-              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
-              onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-              style={{
-                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
-                borderRadius: 999, padding: "10px 28px", color: "#ffffff",
-                fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer",
-              }}
-            >NEXT ↓</button>
-          </div>
         </section>
 
         {/* ═══════════════════════════════════════
@@ -665,25 +612,11 @@ export default function StrategyDetailPage() {
         <section
           ref={sec3Ref}
           style={{
-            minHeight: "100vh", scrollSnapAlign: "start",
+            height: "100vh", scrollSnapAlign: "start",
             display: "flex", flexDirection: "column",
-            padding: "0 40px 80px",
+            padding: "32px 40px 80px",
           }}
         >
-          {/* ↑ PREV pill */}
-          <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "12px 0", marginBottom: 32 }}>
-            <button
-              onClick={() => scrollToSection(1)}
-              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.15)")}
-              onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
-              style={{
-                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
-                borderRadius: 999, padding: "10px 28px", color: "#ffffff",
-                fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer",
-              }}
-            >↑ PREV</button>
-          </div>
-
           {openTrades.length === 0 && closedTrades.length === 0 ? (
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <div style={{ textAlign: "center" }}>
@@ -764,12 +697,12 @@ export default function StrategyDetailPage() {
                     <span style={{ fontSize: 13, fontWeight: 700, color: "#4b5563", letterSpacing: "0.15em" }}>CLOSED TRADES</span>
                     <span style={{ fontSize: 13, color: "#374151" }}>· {closedTrades.length} completed</span>
                   </div>
-                  <div style={{ overflowX: "auto", background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, overflow: "hidden" }}>
+                  <div style={{ maxHeight: 260, overflowY: "auto", overflowX: "auto", border: "1px solid #1a1f2e", borderRadius: 8 }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 960 }}>
                       <thead>
                         <tr style={{ background: "#070A11" }}>
                           {["Symbol", "Type", "Entry", "Exit", "Duration", "Qty", "PnL", "Return %", "Exit Reason"].map(h => (
-                            <th key={h} style={thStyle}>{h}</th>
+                            <th key={h} style={{ ...thStyle, position: "sticky", top: 0, background: "#070A11" }}>{h}</th>
                           ))}
                         </tr>
                       </thead>

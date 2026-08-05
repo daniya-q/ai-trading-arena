@@ -98,6 +98,9 @@ const optionInstrKeyCache = {};
 let openEquityPositions = [];
 // Peak premiums for open positions (in-memory, intraday only)
 const peakPremiums = {}; // posId → peak premium
+// Expiry power hour — tracks which expiry days have been attempted (reset daily)
+const phDirAttempted = new Set();
+const phStraddleAttempted = new Set();
 // ── Daily gap state (Strategy 6) ────────────────────────────
 let dailyGapPct = 0;
 let gapCalcDate = "";
@@ -144,6 +147,8 @@ function checkDailyReset() {
         for (const k of Object.keys(expiryDayCache))
             delete expiryDayCache[k];
         gapCalcDate = "";
+        phDirAttempted.clear();
+        phStraddleAttempted.clear();
         console.log(`[Daily] Reset for ${today}`);
     }
 }
@@ -731,13 +736,23 @@ const TARGET_PCT = {
     gap_orb: 0.40, // SL 20% → 1:2 RR (gap fill is primary exit; 40% is fallback)
     vwap_scalper: 0.30, // SL 20% → 1:1.5 RR (danger: SL 10% → target 15%, computed from SL)
     ema_crossover_1m: 0.30, // SL 15% → 1:2 RR
+    ema_crossover_chop_lo: 0.30, // chop filter 0.05% — same RR as S1
+    ema_crossover_chop_md: 0.30, // chop filter 0.10%
+    ema_crossover_chop_hi: 0.30, // chop filter 0.15%
 };
+// Strategies with no profit target — target check skipped entirely
+const NO_TARGET_STRATEGIES = new Set([
+    "ema_crossover_1m_run",
+    "ema_crossover_1m_runtrail",
+    "expiry_powerhour_dir",
+    "expiry_powerhour_straddle",
+]);
 function generateExitDetail(reason, pos, exitPrice, peakPremium) {
     const ist = getIST();
     const timeStr = `${String(ist.getUTCHours()).padStart(2, "0")}:${String(ist.getUTCMinutes()).padStart(2, "0")} IST`;
-    const SL_PCT = { ema_crossover: 15, ema_crossover_asym: 15, ema_crossover_confirm: 15, ema_crossover_dualtf: 15, ema_confluence: 15, orion: 30, supertrend: 20, pcr_reversal: 25, gap_orb: 20, vwap_scalper: 20, ema_crossover_1m: 15 };
-    const TRAIL_PCT = { ema_crossover: 10, ema_crossover_asym: 10, ema_crossover_confirm: 10, ema_crossover_dualtf: 10, ema_confluence: 10, orion: 15, supertrend: 12, pcr_reversal: 12, gap_orb: 12, vwap_scalper: 12, ema_crossover_1m: 10 };
-    const CLOSE_TIME = { ema_crossover: "3:20 PM", ema_crossover_asym: "3:20 PM", ema_crossover_confirm: "3:20 PM", ema_crossover_dualtf: "3:20 PM", orion: "3:20 PM", ema_confluence: "3:20 PM", supertrend: "3:20 PM", pcr_reversal: "3:20 PM", gap_orb: "3:20 PM", vwap_scalper: "3:20 PM", ema_crossover_1m: "3:20 PM" };
+    const SL_PCT = { ema_crossover: 15, ema_crossover_asym: 15, ema_crossover_confirm: 15, ema_crossover_dualtf: 15, ema_confluence: 15, orion: 30, supertrend: 20, pcr_reversal: 15, gap_orb: 20, vwap_scalper: 20, ema_crossover_1m: 15, ema_crossover_1m_run: 15, ema_crossover_1m_runtrail: 15, expiry_powerhour_dir: 40, expiry_powerhour_straddle: 40, ema_crossover_chop_lo: 15, ema_crossover_chop_md: 15, ema_crossover_chop_hi: 15 };
+    const TRAIL_PCT = { ema_crossover: 10, ema_crossover_asym: 10, ema_crossover_confirm: 10, ema_crossover_dualtf: 10, ema_confluence: 10, orion: 15, supertrend: 12, pcr_reversal: 12, gap_orb: 12, vwap_scalper: 12, ema_crossover_1m: 10, ema_crossover_1m_runtrail: 10, expiry_powerhour_dir: 20, expiry_powerhour_straddle: 20, ema_crossover_chop_lo: 10, ema_crossover_chop_md: 10, ema_crossover_chop_hi: 10 };
+    const CLOSE_TIME = { ema_crossover: "3:20 PM", ema_crossover_asym: "3:20 PM", ema_crossover_confirm: "3:20 PM", ema_crossover_dualtf: "3:20 PM", orion: "3:20 PM", ema_confluence: "3:20 PM", supertrend: "3:20 PM", pcr_reversal: "3:20 PM", gap_orb: "3:20 PM", vwap_scalper: "3:20 PM", ema_crossover_1m: "3:20 PM", ema_crossover_1m_run: "3:20 PM", ema_crossover_1m_runtrail: "3:20 PM", expiry_powerhour_dir: "3:18 PM", expiry_powerhour_straddle: "3:18 PM", ema_crossover_chop_lo: "3:20 PM", ema_crossover_chop_md: "3:20 PM", ema_crossover_chop_hi: "3:20 PM" };
     switch (reason) {
         case "SL_HIT": {
             const pct = SL_PCT[pos.strategy_id] ?? 15;
@@ -795,7 +810,8 @@ function calcEquityCharges(entryPrice, exitPrice, qty) {
     const stampDuty = lotValue_entry * 0.00003; // 0.003% on buy-side only
     return Math.round((brokerage + stt + exchangeCharges + gst + sebi + stampDuty) * 100) / 100;
 }
-async function closeStrategyPosition(posId, exitPrice, reason) {
+async function closeStrategyPosition(posId, exitPrice, reason, appendDetail // optional text appended to exit_reason_detail (e.g. "PCR at exit: 1.04.")
+) {
     const { data: pos } = await supabase
         .from("strategy_positions")
         .select("entry_price, quantity, strategy_id, symbol, type, stop_loss, trail_sl")
@@ -807,7 +823,8 @@ async function closeStrategyPosition(posId, exitPrice, reason) {
     const grossPnl = (exitPrice - p.entry_price) * p.quantity;
     const charges = calcEquityCharges(p.entry_price, exitPrice, p.quantity);
     const netPnl = grossPnl - charges;
-    const detail = generateExitDetail(reason, p, exitPrice, peakPremiums[posId]);
+    const baseDetail = generateExitDetail(reason, p, exitPrice, peakPremiums[posId]);
+    const detail = appendDetail ? `${baseDetail} ${appendDetail}` : baseDetail;
     const { error } = await supabase.from("strategy_positions").update({
         status: "CLOSED",
         exit_price: exitPrice,
@@ -888,6 +905,13 @@ async function monitorOpenPositions() {
         gap_orb: 920, // 15:20 (entry window unchanged: before 11:30 AM)
         vwap_scalper: 920, // 15:20
         ema_crossover_1m: 920, // 15:20
+        ema_crossover_1m_run: 920, // 15:20
+        ema_crossover_1m_runtrail: 920, // 15:20
+        expiry_powerhour_dir: 918, // 3:18 PM
+        expiry_powerhour_straddle: 918, // 3:18 PM
+        ema_crossover_chop_lo: 920, // 15:20 — same as S1
+        ema_crossover_chop_md: 920,
+        ema_crossover_chop_hi: 920,
     };
     const currentMins = istMins();
     for (const raw of data) {
@@ -907,27 +931,40 @@ async function monitorOpenPositions() {
             pnl: Number(pnl.toFixed(2)),
         }).eq("id", pos.id);
         const pnlPct = (currentPrice - pos.entry_price) / pos.entry_price;
+        // Pre-compute PCR exit annotation for pcr_reversal (appended to exit_reason_detail on any close)
+        const pcrExitDetail = pos.strategy_id === "pcr_reversal"
+            ? (() => { const ch = getLatestChain("NIFTY"); return ch ? `PCR at exit: ${ch.pcr.toFixed(2)}.` : undefined; })()
+            : undefined;
+        // Pre-compute power hour peak annotation
+        const phExitDetail = (pos.strategy_id === "expiry_powerhour_dir" || pos.strategy_id === "expiry_powerhour_straddle")
+            ? `Peak premium: ₹${(peakPremiums[pos.id] ?? pos.entry_price).toFixed(2)}.`
+            : undefined;
+        const appendDetail = pcrExitDetail ?? phExitDetail;
         // ── Priority 1: Hard SL hit ──
         if (pos.stop_loss && currentPrice <= pos.stop_loss) {
-            await closeStrategyPosition(pos.id, currentPrice, "SL_HIT");
+            await closeStrategyPosition(pos.id, currentPrice, "SL_HIT", appendDetail);
             continue;
         }
         // ── Priority 2: Fixed profit target hit ──
-        // For vwap_scalper, derive target from stored SL (1:1.5 RR) to handle danger-mode trades
-        let targetPct = TARGET_PCT[pos.strategy_id] ?? 0.30;
-        if (pos.strategy_id === "vwap_scalper" && pos.stop_loss) {
-            const slPct = (pos.entry_price - pos.stop_loss) / pos.entry_price;
-            if (slPct > 0)
-                targetPct = slPct * 1.5;
-        }
-        if (pnlPct >= targetPct) {
-            await closeStrategyPosition(pos.id, currentPrice, "TARGET_HIT");
-            continue;
+        // Skipped entirely for no-target strategies (ema_crossover_1m_run, ema_crossover_1m_runtrail)
+        if (!NO_TARGET_STRATEGIES.has(pos.strategy_id)) {
+            // For vwap_scalper, derive target from stored SL (1:1.5 RR) to handle danger-mode trades
+            let targetPct = TARGET_PCT[pos.strategy_id] ?? 0.30;
+            if (pos.strategy_id === "vwap_scalper" && pos.stop_loss) {
+                const slPct = (pos.entry_price - pos.stop_loss) / pos.entry_price;
+                if (slPct > 0)
+                    targetPct = slPct * 1.5;
+            }
+            if (pnlPct >= targetPct) {
+                await closeStrategyPosition(pos.id, currentPrice, "TARGET_HIT", appendDetail);
+                continue;
+            }
         }
         // ── Trail SL activation ──
+        // ema_crossover_1m_run: no trail at all — skip activation block entirely
         let trailActivationPct = 0.35;
         let trailPct = 0.12;
-        if (["ema_crossover", "ema_crossover_asym", "ema_crossover_confirm", "ema_crossover_dualtf", "ema_confluence"].includes(pos.strategy_id)) {
+        if (["ema_crossover", "ema_crossover_asym", "ema_crossover_confirm", "ema_crossover_dualtf", "ema_confluence", "ema_crossover_1m_runtrail", "ema_crossover_chop_lo", "ema_crossover_chop_md", "ema_crossover_chop_hi"].includes(pos.strategy_id)) {
             trailActivationPct = 0.20;
             trailPct = 0.10;
         }
@@ -943,7 +980,11 @@ async function monitorOpenPositions() {
             trailActivationPct = 0.35;
             trailPct = 0.12;
         }
-        if (pnlPct >= trailActivationPct) {
+        else if (pos.strategy_id === "expiry_powerhour_dir" || pos.strategy_id === "expiry_powerhour_straddle") {
+            trailActivationPct = 0.50; // +50% from entry
+            trailPct = 0.20; // trail 20% below peak
+        }
+        if (pos.strategy_id !== "ema_crossover_1m_run" && pnlPct >= trailActivationPct) {
             const newTrail = peak * (1 - trailPct);
             if (!pos.trail_sl || newTrail > pos.trail_sl) {
                 await supabase.from("strategy_positions").update({ trail_sl: roundUpToOneDecimal(newTrail) }).eq("id", pos.id);
@@ -952,7 +993,7 @@ async function monitorOpenPositions() {
         }
         // ── Priority 3: Trail SL hit ──
         if (pos.trail_sl && currentPrice <= pos.trail_sl) {
-            await closeStrategyPosition(pos.id, currentPrice, "TRAIL_SL");
+            await closeStrategyPosition(pos.id, currentPrice, "TRAIL_SL", appendDetail);
             continue;
         }
         // ── Orion breakeven: up 20% → move SL to breakeven ──
@@ -962,7 +1003,7 @@ async function monitorOpenPositions() {
         // ── Priority 5: Hard close time ──
         const hc = HARD_CLOSE_MINS[pos.strategy_id];
         if (hc && currentMins >= hc) {
-            await closeStrategyPosition(pos.id, currentPrice, "HARD_CLOSE");
+            await closeStrategyPosition(pos.id, currentPrice, "HARD_CLOSE", appendDetail);
             continue;
         }
     }
@@ -1152,6 +1193,160 @@ async function runStrategy8() {
     });
 }
 // ══════════════════════════════════════════════════════════════
+// Strategy 9 — EMA 1m Let-It-Run (1m candles, no target, no trail)
+// ══════════════════════════════════════════════════════════════
+let s9PrevFast = 0;
+let s9PrevSlow = 0;
+async function runStrategyRun() {
+    if (!isMarketOpen())
+        return;
+    const mins = istMins();
+    if (mins < 585 || mins >= 920)
+        return; // 9:45–15:20
+    const candles = getCandles("NIFTY", "1m");
+    if (candles.length < 66) {
+        console.log(`[S9] Waiting for candles — have ${candles.length}/66`);
+        return;
+    }
+    const closes = candles.map(c => c.close);
+    const fastArr = emaValues(closes, 16);
+    const slowArr = emaValues(closes, 64);
+    const fastCurr = fastArr[fastArr.length - 1];
+    const slowCurr = slowArr[slowArr.length - 1];
+    const fastPrev = s9PrevFast || fastArr[fastArr.length - 2];
+    const slowPrev = s9PrevSlow || slowArr[slowArr.length - 2];
+    const bullCross = fastPrev <= slowPrev && fastCurr > slowCurr;
+    const bearCross = fastPrev >= slowPrev && fastCurr < slowCurr;
+    s9PrevFast = fastCurr;
+    s9PrevSlow = slowCurr;
+    const crossTag = bullCross ? "BULL-CROSS↑" : bearCross ? "BEAR-CROSS↓" : "no-cross";
+    const atr = calcATR(candles, 14);
+    console.log(`[S9] candles=${candles.length} EMA16=${fastCurr.toFixed(1)} EMA64=${slowCurr.toFixed(1)} ATR=${atr.toFixed(1)} | ${crossTag}`);
+    if (!bullCross && !bearCross)
+        return;
+    const optType = bullCross ? "CE" : "PE";
+    const openPos = await getOpenStrategyPositions("ema_crossover_1m_run");
+    for (const pos of openPos) {
+        if (pos.type !== optType) {
+            const cp = getCurrentPrice(pos.symbol);
+            if (cp > 0)
+                await closeStrategyPosition(pos.id, cp, "CROSSOVER");
+        }
+        else {
+            console.log(`[S9] Already in ${optType} — skipping`);
+            return;
+        }
+    }
+    const chain = getLatestChain("NIFTY");
+    if (!chain) {
+        console.log(`[S9] No option chain data`);
+        return;
+    }
+    const fld = optType === "CE" ? "cePremium" : "pePremium";
+    const allPrem = chain.rows.map(r => r[fld]).filter(p => p > 0).sort((a, b) => a - b);
+    const option = getATMOption(chain, optType, 60, 70, lastNiftyPrice);
+    if (!option) {
+        console.log(`[S9] SIGNAL ${optType} — no ${optType} found in ₹60-70 (chain ₹${allPrem[0]?.toFixed(0) ?? "?"}-${allPrem[allPrem.length - 1]?.toFixed(0) ?? "?"}, spot=${lastNiftyPrice.toFixed(0)})`);
+        return;
+    }
+    const s9Capital = await getEquityCurrentValue("ema_crossover_1m_run");
+    const s9Quantity = capQtyByMaxLoss(calcLots(s9Capital, 0.60, option.premium, 65), option.premium, 0.15, 65, "S9");
+    if (s9Quantity === 0) {
+        console.log(`[S9] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s9Capital).toLocaleString("en-IN")} premium=₹${option.premium})`);
+        return;
+    }
+    console.log(`[S9] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s9Capital).toLocaleString("en-IN")} qty=${s9Quantity} — opening trade`);
+    await openStrategyPosition("ema_crossover_1m_run", {
+        symbol: option.symbol,
+        type: optType,
+        side: "LONG",
+        entry_price: option.premium,
+        current_price: option.premium,
+        quantity: s9Quantity,
+        stop_loss: roundUpToOneDecimal(option.premium * 0.85),
+        trail_sl: null,
+        pnl: 0,
+        status: "OPEN",
+    });
+}
+// ══════════════════════════════════════════════════════════════
+// Strategy 10 — EMA 1m Run+Trail (1m candles, no target, trail at +20%)
+// ══════════════════════════════════════════════════════════════
+let s10PrevFast = 0;
+let s10PrevSlow = 0;
+async function runStrategyRunTrail() {
+    if (!isMarketOpen())
+        return;
+    const mins = istMins();
+    if (mins < 585 || mins >= 920)
+        return; // 9:45–15:20
+    const candles = getCandles("NIFTY", "1m");
+    if (candles.length < 66) {
+        console.log(`[S10] Waiting for candles — have ${candles.length}/66`);
+        return;
+    }
+    const closes = candles.map(c => c.close);
+    const fastArr = emaValues(closes, 16);
+    const slowArr = emaValues(closes, 64);
+    const fastCurr = fastArr[fastArr.length - 1];
+    const slowCurr = slowArr[slowArr.length - 1];
+    const fastPrev = s10PrevFast || fastArr[fastArr.length - 2];
+    const slowPrev = s10PrevSlow || slowArr[slowArr.length - 2];
+    const bullCross = fastPrev <= slowPrev && fastCurr > slowCurr;
+    const bearCross = fastPrev >= slowPrev && fastCurr < slowCurr;
+    s10PrevFast = fastCurr;
+    s10PrevSlow = slowCurr;
+    const crossTag = bullCross ? "BULL-CROSS↑" : bearCross ? "BEAR-CROSS↓" : "no-cross";
+    const atr = calcATR(candles, 14);
+    console.log(`[S10] candles=${candles.length} EMA16=${fastCurr.toFixed(1)} EMA64=${slowCurr.toFixed(1)} ATR=${atr.toFixed(1)} | ${crossTag}`);
+    if (!bullCross && !bearCross)
+        return;
+    const optType = bullCross ? "CE" : "PE";
+    const openPos = await getOpenStrategyPositions("ema_crossover_1m_runtrail");
+    for (const pos of openPos) {
+        if (pos.type !== optType) {
+            const cp = getCurrentPrice(pos.symbol);
+            if (cp > 0)
+                await closeStrategyPosition(pos.id, cp, "CROSSOVER");
+        }
+        else {
+            console.log(`[S10] Already in ${optType} — skipping`);
+            return;
+        }
+    }
+    const chain = getLatestChain("NIFTY");
+    if (!chain) {
+        console.log(`[S10] No option chain data`);
+        return;
+    }
+    const fld = optType === "CE" ? "cePremium" : "pePremium";
+    const allPrem = chain.rows.map(r => r[fld]).filter(p => p > 0).sort((a, b) => a - b);
+    const option = getATMOption(chain, optType, 60, 70, lastNiftyPrice);
+    if (!option) {
+        console.log(`[S10] SIGNAL ${optType} — no ${optType} found in ₹60-70 (chain ₹${allPrem[0]?.toFixed(0) ?? "?"}-${allPrem[allPrem.length - 1]?.toFixed(0) ?? "?"}, spot=${lastNiftyPrice.toFixed(0)})`);
+        return;
+    }
+    const s10Capital = await getEquityCurrentValue("ema_crossover_1m_runtrail");
+    const s10Quantity = capQtyByMaxLoss(calcLots(s10Capital, 0.60, option.premium, 65), option.premium, 0.15, 65, "S10");
+    if (s10Quantity === 0) {
+        console.log(`[S10] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s10Capital).toLocaleString("en-IN")} premium=₹${option.premium})`);
+        return;
+    }
+    console.log(`[S10] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s10Capital).toLocaleString("en-IN")} qty=${s10Quantity} — opening trade`);
+    await openStrategyPosition("ema_crossover_1m_runtrail", {
+        symbol: option.symbol,
+        type: optType,
+        side: "LONG",
+        entry_price: option.premium,
+        current_price: option.premium,
+        quantity: s10Quantity,
+        stop_loss: roundUpToOneDecimal(option.premium * 0.85),
+        trail_sl: null,
+        pnl: 0,
+        status: "OPEN",
+    });
+}
+// ══════════════════════════════════════════════════════════════
 // Shared helper — log EMA variant signals to strategy_signals
 // Repurposed columns (no DDL required):
 //   rsi       → confirmation_bar count (0/1/2)
@@ -1190,6 +1385,24 @@ async function logVariantSignal(opts) {
     supabase.from("strategy_signals").insert(row).then(({ error }) => {
         if (error)
             console.error(`${tag} signal log failed: ${error.message}`);
+    });
+}
+// Chop-filter signal logger
+// Repurposed columns: rsi → separation% (stored as-is), volume_ok → entered (true) | blocked (false)
+async function logChopSignal(strategyId, direction, ema16, ema64, price, separationPct, tradeTaken) {
+    const row = {
+        strategy_id: strategyId, index: "NIFTY", direction,
+        ema16: Number(ema16.toFixed(2)), ema64: Number(ema64.toFixed(2)),
+        price: Number(price.toFixed(2)), trade_taken: tradeTaken,
+        all_filters_passed: tradeTaken,
+        rsi: Number(separationPct.toFixed(4)), // separation % at signal
+        volume_ok: tradeTaken, // entered vs blocked
+        oi_rising: false, vwap: null, fib_low: null, fib_high: null,
+        in_fib_zone: false, rsi_pass: tradeTaken, vwap_pass: false,
+    };
+    supabase.from("strategy_signals").insert(row).then(({ error }) => {
+        if (error)
+            console.error(`[${strategyId}] chop signal log failed: ${error.message}`);
     });
 }
 // ══════════════════════════════════════════════════════════════
@@ -1915,6 +2128,40 @@ async function runSupertrendForIndex(index) {
 // ══════════════════════════════════════════════════════════════
 // Strategy 5 — PCR Reversal (5-min checks, 10:00–14:30)
 // ══════════════════════════════════════════════════════════════
+// Column repurposing for strategy_signals (migration 009 DDL not yet on live DB):
+//   ema16     → PCR value at evaluation time
+//   ema64     → ATM OI-change % for triggering side (negative = unwinding)
+//   price     → NIFTY spot price at signal time
+//   rsi_pass  → PCR threshold condition met (PCR > 1.3 for CE, < 0.7 for PE)
+//   vwap_pass → OI-fall condition met (oiChangePct ≤ -10%)
+async function logPCRSignal(opts) {
+    const pcrOk = opts.direction === "CE" ? opts.pcr > 1.3 : opts.pcr < 0.7;
+    const oiOk = opts.oiChangePct <= -10;
+    const row = {
+        strategy_id: "pcr_reversal",
+        index: "NIFTY",
+        direction: opts.direction === "CE" ? "bullish" : "bearish",
+        trade_taken: opts.tradeTaken,
+        all_filters_passed: opts.tradeTaken,
+        ema16: Number(opts.pcr.toFixed(3)),
+        ema64: Number(opts.oiChangePct.toFixed(2)),
+        price: Number(opts.spotPrice.toFixed(2)),
+        rsi_pass: pcrOk,
+        vwap_pass: oiOk,
+        rsi: null,
+        volume_ok: false,
+        oi_rising: false,
+        vwap: null,
+        fib_low: null,
+        fib_high: null,
+        in_fib_zone: false,
+    };
+    console.log(`[S5] signal-log ${opts.direction} PCR=${opts.pcr.toFixed(2)} OI=${opts.oiChangePct.toFixed(1)}% → ${opts.blockedBy ?? (opts.tradeTaken ? "TAKEN" : "?")}`);
+    supabase.from("strategy_signals").insert(row).then(({ error }) => {
+        if (error)
+            console.error(`[S5] signal log failed: ${error.message}`);
+    });
+}
 async function runStrategy5() {
     if (!isMarketOpen())
         return;
@@ -1943,34 +2190,43 @@ async function runStrategy5() {
     const ceOI30 = getOIChangeForATM("NIFTY", "CE", 30);
     const peOIStr = peOI30 ? `${peOI30.pctChange >= 0 ? "+" : ""}${peOI30.pctChange.toFixed(1)}%` : "no-hist";
     const ceOIStr = ceOI30 ? `${ceOI30.pctChange >= 0 ? "+" : ""}${ceOI30.pctChange.toFixed(1)}%` : "no-hist";
-    const distCE = (1.15 - pcr).toFixed(2);
-    const distPE = (pcr - 0.85).toFixed(2);
-    console.log(`[S5] PCR=${pcr.toFixed(2)} (need >1.15 or <0.85) | dist-to-trigger: CE=${distCE} PE=${distPE} | PE-OI-30m=${peOIStr} CE-OI-30m=${ceOIStr} (need <-7%) | trades=${dayCount}/3`);
+    const distCE = (1.3 - pcr).toFixed(2);
+    const distPE = (pcr - 0.7).toFixed(2);
+    console.log(`[S5] PCR=${pcr.toFixed(2)} (need >1.3 or <0.7) | dist-to-trigger: CE=${distCE} PE=${distPE} | PE-OI-30m=${peOIStr} CE-OI-30m=${ceOIStr} (need <-10%) | trades=${dayCount}/3`);
+    const spotPrice = chain.spotPrice ?? 0;
     let optType = null;
-    if (pcr > 1.15) {
-        if (peOI30 && peOI30.pctChange <= -7)
+    if (pcr > 1.3) {
+        if (peOI30 && peOI30.pctChange <= -10) {
             optType = "CE";
-        else
-            console.log(`[S5] PCR oversold (${pcr.toFixed(2)}>1.15) but PE-OI unwind insufficient (${peOIStr}, need <-7%)`);
+        }
+        else {
+            console.log(`[S5] PCR oversold (${pcr.toFixed(2)}>1.3) but PE-OI unwind insufficient (${peOIStr}, need <-10%)`);
+            await logPCRSignal({ direction: "CE", tradeTaken: false, pcr, oiChangePct: peOI30?.pctChange ?? 0, spotPrice, blockedBy: "oi_unwind_insufficient" });
+        }
     }
-    else if (pcr < 0.85) {
-        if (ceOI30 && ceOI30.pctChange <= -7)
+    else if (pcr < 0.7) {
+        if (ceOI30 && ceOI30.pctChange <= -10) {
             optType = "PE";
-        else
-            console.log(`[S5] PCR overbought (${pcr.toFixed(2)}<0.85) but CE-OI unwind insufficient (${ceOIStr}, need <-7%)`);
+        }
+        else {
+            console.log(`[S5] PCR overbought (${pcr.toFixed(2)}<0.7) but CE-OI unwind insufficient (${ceOIStr}, need <-10%)`);
+            await logPCRSignal({ direction: "PE", tradeTaken: false, pcr, oiChangePct: ceOI30?.pctChange ?? 0, spotPrice, blockedBy: "oi_unwind_insufficient" });
+        }
     }
     if (!optType)
         return;
     const option = getATMOption(chain, optType, 60, 70);
     if (!option)
         return;
+    const oiChangePct = optType === "CE" ? (peOI30?.pctChange ?? 0) : (ceOI30?.pctChange ?? 0);
     const s5Capital = await getEquityCurrentValue("pcr_reversal");
-    const s5Quantity = capQtyByMaxLoss(calcLots(s5Capital, 0.60, option.premium, 65), option.premium, 0.25, 65, "S5");
+    const s5Quantity = capQtyByMaxLoss(calcLots(s5Capital, 0.60, option.premium, 65), option.premium, 0.15, 65, "S5");
     if (s5Quantity === 0) {
         console.log(`[S5] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s5Capital).toLocaleString("en-IN")} premium=₹${option.premium})`);
         return;
     }
     console.log(`[S5] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s5Capital).toLocaleString("en-IN")} qty=${s5Quantity} — opening trade`);
+    await logPCRSignal({ direction: optType, tradeTaken: true, pcr, oiChangePct, spotPrice });
     await openStrategyPosition("pcr_reversal", {
         symbol: option.symbol,
         type: optType,
@@ -1978,7 +2234,7 @@ async function runStrategy5() {
         entry_price: option.premium,
         current_price: option.premium,
         quantity: s5Quantity,
-        stop_loss: roundUpToOneDecimal(option.premium * 0.75), // 25% SL
+        stop_loss: roundUpToOneDecimal(option.premium * 0.85), // 15% SL
         trail_sl: null,
         pnl: 0,
         status: "OPEN",
@@ -1996,12 +2252,13 @@ async function monitorPCRPositions() {
     if (!chain)
         return;
     const pcr = chain.pcr;
+    const pcrText = `PCR at exit: ${pcr.toFixed(2)}.`;
     for (const pos of openPos) {
         // PCR back to neutral zone
         if (pcr >= 0.9 && pcr <= 1.1) {
             const cp = getCurrentPrice(pos.symbol);
             if (cp > 0)
-                await closeStrategyPosition(pos.id, cp, "PCR_NEUTRAL");
+                await closeStrategyPosition(pos.id, cp, "PCR_NEUTRAL", pcrText);
             continue;
         }
         // OI buildup on opposite side — detect reversal
@@ -2011,7 +2268,7 @@ async function monitorPCRPositions() {
             // Opposite side building up → exit
             const cp = getCurrentPrice(pos.symbol);
             if (cp > 0)
-                await closeStrategyPosition(pos.id, cp, "OI_REVERSE");
+                await closeStrategyPosition(pos.id, cp, "OI_REVERSE", pcrText);
         }
     }
 }
@@ -2364,6 +2621,290 @@ async function pollOpenPositionLTPsBatched() {
     }
 }
 // ══════════════════════════════════════════════════════════════
+// Strategy 14/15 helpers — Expiry Power Hour
+// ══════════════════════════════════════════════════════════════
+// getSpot230: return NIFTY spot price as of 2:30 PM (IST minutes ≤ 870)
+function getSpot230(index) {
+    const cs = getCandles(index, "30s");
+    for (let i = cs.length - 1; i >= 0; i--) {
+        // Convert epoch ms to IST minute-of-day
+        const m = Math.floor(((cs[i].time % 86400000) + 5.5 * 3600000) / 60000);
+        if (m <= 870)
+            return cs[i].close; // 870 = 14:30
+    }
+    return null;
+}
+// logPowerHourSignal — column-repurposing signal logger
+// Column repurposing for strategy_signals:
+//   ema16   → drift (dir) or CE premium (straddle)
+//   ema64   → chosen strike (dir) or PE premium (straddle)
+//   price   → NIFTY spot at 2:45 PM
+//   vwap    → CE strike (straddle) or null (dir)
+//   fib_low → PE strike (straddle)
+//   rsi_pass  → drift≠0 / CE strike found
+//   vwap_pass → strike found in band / PE strike found
+async function logPowerHourSignal(opts) {
+    const tag = opts.strategy === "expiry_powerhour_dir" ? "[S14]" : "[S15]";
+    console.log(`${tag} signal | spot245=${opts.spotAt245.toFixed(1)} drift=${opts.drift?.toFixed(1) ?? "n/a"}` +
+        (opts.skipReason ? ` SKIP(${opts.skipReason})` : "") +
+        ` trade_taken=${opts.tradeTaken}`);
+    const row = {
+        strategy_id: opts.strategy,
+        index: "NIFTY",
+        direction: (opts.drift != null ? (opts.drift >= 0 ? "bullish" : "bearish") : "bullish"),
+        ema16: Number((opts.drift ?? opts.cePremium ?? 0).toFixed(2)), // drift (dir) or CE premium (straddle)
+        ema64: Number((opts.ceStrike ?? opts.pePremium ?? 0).toFixed(2)), // strike (dir) or PE premium (straddle)
+        price: Number(opts.spotAt245.toFixed(2)),
+        vwap: opts.ceStrike ?? null, // CE strike (straddle)
+        fib_low: opts.peStrike ?? null, // PE strike (straddle)
+        fib_high: null,
+        in_fib_zone: false,
+        rsi: null,
+        volume_ok: false,
+        oi_rising: false,
+        trade_taken: opts.tradeTaken,
+        all_filters_passed: opts.tradeTaken,
+        rsi_pass: opts.drift !== 0 && opts.drift != null ? true : opts.cePremium != null,
+        vwap_pass: opts.ceStrike != null || opts.peStrike != null,
+    };
+    supabase.from("strategy_signals").insert(row).then(({ error }) => {
+        if (error)
+            console.error(`${tag} signal log failed: ${error.message}`);
+    });
+}
+// ══════════════════════════════════════════════════════════════
+// Strategy 14 — Expiry Power Hour Directional
+// Entry: 2:45 PM on NIFTY expiry day; direction from drift(2:45–2:30)
+// Strike: nearest-to-spot in ₹15–30 premium band
+// SL: 40% | Trail: +50% activates → 20% below peak | Hard close: 3:18 PM
+// ══════════════════════════════════════════════════════════════
+async function runStrategy14() {
+    if (!isMarketOpen())
+        return;
+    const mins = istMins();
+    if (mins < 885 || mins >= 918)
+        return; // only 2:45–3:18 PM
+    const today = todayIST();
+    if (phDirAttempted.has(today))
+        return;
+    const expiry = await isExpiryDay("NIFTY");
+    if (!expiry) {
+        phDirAttempted.add(today);
+        return; // silent skip on non-expiry days
+    }
+    phDirAttempted.add(today); // mark before any trade attempt
+    const chain = getLatestChain("NIFTY");
+    if (!chain) {
+        console.log("[S14] No option chain at 2:45");
+        return;
+    }
+    const spot245 = chain.spotPrice ?? lastNiftyPrice;
+    const spot230 = getSpot230("NIFTY");
+    if (!spot230) {
+        console.log("[S14] No 2:30 PM spot candle");
+        return;
+    }
+    const drift = spot245 - spot230;
+    if (drift === 0) {
+        console.log(`[S14] drift=0 at 2:45 — skip`);
+        await logPowerHourSignal({ strategy: "expiry_powerhour_dir", tradeTaken: false, spotAt245: spot245, drift, skipReason: "drift=0" });
+        return;
+    }
+    const optType = drift > 0 ? "CE" : "PE";
+    const option = getATMOption(chain, optType, 15, 30, lastNiftyPrice);
+    if (!option) {
+        console.log(`[S14] No ${optType} strike in ₹15–30 band`);
+        await logPowerHourSignal({ strategy: "expiry_powerhour_dir", tradeTaken: false, spotAt245: spot245, drift, skipReason: "no_valid_strike" });
+        return;
+    }
+    const capital = await getEquityCurrentValue("expiry_powerhour_dir");
+    const qty = capQtyByMaxLoss(calcLots(capital, 0.60, option.premium, 65), option.premium, 0.40, 65, "S14");
+    if (qty === 0) {
+        console.log(`[S14] qty=0`);
+        return;
+    }
+    console.log(`[S14] EXPIRY DIR ${optType} drift=${drift.toFixed(1)} → ${option.symbol} @ ₹${option.premium} qty=${qty}`);
+    await logPowerHourSignal({
+        strategy: "expiry_powerhour_dir", tradeTaken: true, spotAt245: spot245, drift,
+        ceStrike: optType === "CE" ? option.strike : undefined, cePremium: optType === "CE" ? option.premium : undefined,
+        peStrike: optType === "PE" ? option.strike : undefined, pePremium: optType === "PE" ? option.premium : undefined,
+    });
+    await openStrategyPosition("expiry_powerhour_dir", {
+        symbol: option.symbol,
+        type: optType,
+        side: "LONG",
+        entry_price: option.premium,
+        current_price: option.premium,
+        quantity: qty,
+        stop_loss: roundUpToOneDecimal(option.premium * 0.60), // 40% SL
+        trail_sl: null,
+        pnl: 0,
+        status: "OPEN",
+    });
+}
+// ══════════════════════════════════════════════════════════════
+// Strategy 15 — Expiry Power Hour Straddle
+// Entry: 2:45 PM on NIFTY expiry day; both CE and PE in ₹15–30 band
+// Each leg independent SL 40% | Trail: +50% → 20% below peak | 3:18 PM
+// ══════════════════════════════════════════════════════════════
+async function runStrategy15() {
+    if (!isMarketOpen())
+        return;
+    const mins = istMins();
+    if (mins < 885 || mins >= 918)
+        return; // only 2:45–3:18 PM
+    const today = todayIST();
+    if (phStraddleAttempted.has(today))
+        return;
+    const expiry = await isExpiryDay("NIFTY");
+    if (!expiry) {
+        phStraddleAttempted.add(today);
+        return; // silent skip on non-expiry days
+    }
+    phStraddleAttempted.add(today); // mark before any trade attempt
+    const chain = getLatestChain("NIFTY");
+    if (!chain) {
+        console.log("[S15] No option chain at 2:45");
+        return;
+    }
+    const spot245 = chain.spotPrice ?? lastNiftyPrice;
+    // Both sides must be findable BEFORE opening either
+    const ceOption = getATMOption(chain, "CE", 15, 30, lastNiftyPrice);
+    const peOption = getATMOption(chain, "PE", 15, 30, lastNiftyPrice);
+    if (!ceOption || !peOption) {
+        const missing = !ceOption && !peOption ? "both_CE_PE" : !ceOption ? "CE" : "PE";
+        console.log(`[S15] No valid ${missing} strike in ₹15–30 band — skip`);
+        await logPowerHourSignal({ strategy: "expiry_powerhour_straddle", tradeTaken: false, spotAt245: spot245, skipReason: `no_${missing}` });
+        return;
+    }
+    const capital = await getEquityCurrentValue("expiry_powerhour_straddle");
+    const ceQty = capQtyByMaxLoss(calcLots(capital, 0.30, ceOption.premium, 65), ceOption.premium, 0.40, 65, "S15-CE");
+    const peQty = capQtyByMaxLoss(calcLots(capital, 0.30, peOption.premium, 65), peOption.premium, 0.40, 65, "S15-PE");
+    if (ceQty === 0 && peQty === 0) {
+        console.log(`[S15] both legs qty=0`);
+        return;
+    }
+    console.log(`[S15] EXPIRY STRADDLE → CE: ${ceOption.symbol} @ ₹${ceOption.premium} qty=${ceQty} | PE: ${peOption.symbol} @ ₹${peOption.premium} qty=${peQty}`);
+    await logPowerHourSignal({
+        strategy: "expiry_powerhour_straddle", tradeTaken: true, spotAt245: spot245,
+        ceStrike: ceOption.strike, cePremium: ceOption.premium,
+        peStrike: peOption.strike, pePremium: peOption.premium,
+    });
+    if (ceQty > 0) {
+        await openStrategyPosition("expiry_powerhour_straddle", {
+            symbol: ceOption.symbol,
+            type: "CE",
+            side: "LONG",
+            entry_price: ceOption.premium,
+            current_price: ceOption.premium,
+            quantity: ceQty,
+            stop_loss: roundUpToOneDecimal(ceOption.premium * 0.60), // 40% SL
+            trail_sl: null,
+            pnl: 0,
+            status: "OPEN",
+        });
+    }
+    if (peQty > 0) {
+        await openStrategyPosition("expiry_powerhour_straddle", {
+            symbol: peOption.symbol,
+            type: "PE",
+            side: "LONG",
+            entry_price: peOption.premium,
+            current_price: peOption.premium,
+            quantity: peQty,
+            stop_loss: roundUpToOneDecimal(peOption.premium * 0.60), // 40% SL
+            trail_sl: null,
+            pnl: 0,
+            status: "OPEN",
+        });
+    }
+}
+// ══════════════════════════════════════════════════════════════
+// Strategies 16/17/18 — EMA Crossover Chop-Filter variants
+// separation = |EMA16 − EMA64| / spot × 100; enter only if separation ≥ threshold.
+// Exits/flips identical to S1 (unfiltered). State vars are per-variant.
+// ══════════════════════════════════════════════════════════════
+let chopLoPrevFast = 0, chopLoPrevSlow = 0;
+let chopMdPrevFast = 0, chopMdPrevSlow = 0;
+let chopHiPrevFast = 0, chopHiPrevSlow = 0;
+async function runChopVariant(strategyId, threshold, prev, tag) {
+    if (!isMarketOpen())
+        return;
+    const mins = istMins();
+    if (mins < 585 || mins >= 920)
+        return; // 9:45–15:20
+    const candles = getCandles("NIFTY", "30s");
+    if (candles.length < 66)
+        return;
+    const closes = candles.map(c => c.close);
+    const fastArr = emaValues(closes, 16);
+    const slowArr = emaValues(closes, 64);
+    const fastCurr = fastArr[fastArr.length - 1];
+    const slowCurr = slowArr[slowArr.length - 1];
+    const fastPrev = prev.fast || fastArr[fastArr.length - 2];
+    const slowPrev = prev.slow || slowArr[slowArr.length - 2];
+    const bullCross = fastPrev <= slowPrev && fastCurr > slowCurr;
+    const bearCross = fastPrev >= slowPrev && fastCurr < slowCurr;
+    prev.fast = fastCurr;
+    prev.slow = slowCurr;
+    if (!bullCross && !bearCross)
+        return;
+    const optType = bullCross ? "CE" : "PE";
+    // EXIT/FLIP first — unfiltered, so an open position always closes on opposite cross
+    const openPos = await getOpenStrategyPositions(strategyId);
+    for (const pos of openPos) {
+        if (pos.type !== optType) {
+            const cp = getCurrentPrice(pos.symbol);
+            if (cp > 0)
+                await closeStrategyPosition(pos.id, cp, "CROSSOVER");
+        }
+        else {
+            return; // already in same direction
+        }
+    }
+    // CHOP FILTER — entry gate only
+    const separation = Math.abs(fastCurr - slowCurr) / lastNiftyPrice * 100;
+    if (separation < threshold) {
+        await logChopSignal(strategyId, optType === "CE" ? "bullish" : "bearish", fastCurr, slowCurr, lastNiftyPrice, separation, false);
+        console.log(`${tag} ${optType} BLOCKED(chop) sep=${separation.toFixed(3)}% < ${threshold}%`);
+        return;
+    }
+    // ENTRY — identical to S1
+    const chain = getLatestChain("NIFTY");
+    if (!chain)
+        return;
+    const option = getATMOption(chain, optType, 60, 70, lastNiftyPrice);
+    if (!option)
+        return;
+    const cap = await getEquityCurrentValue(strategyId);
+    const qty = capQtyByMaxLoss(calcLots(cap, 0.60, option.premium, 65), option.premium, 0.15, 65, tag);
+    if (qty === 0)
+        return;
+    await logChopSignal(strategyId, optType === "CE" ? "bullish" : "bearish", fastCurr, slowCurr, lastNiftyPrice, separation, true);
+    console.log(`${tag} ${optType} → ${option.symbol} @ ₹${option.premium} sep=${separation.toFixed(3)}% qty=${qty} — opening`);
+    await openStrategyPosition(strategyId, {
+        symbol: option.symbol,
+        type: optType,
+        side: "LONG",
+        entry_price: option.premium,
+        current_price: option.premium,
+        quantity: qty,
+        stop_loss: roundUpToOneDecimal(option.premium * 0.85),
+        trail_sl: null,
+        pnl: 0,
+        status: "OPEN",
+    });
+}
+async function runChopLo() {
+    await runChopVariant("ema_crossover_chop_lo", 0.05, { get fast() { return chopLoPrevFast; }, set fast(v) { chopLoPrevFast = v; }, get slow() { return chopLoPrevSlow; }, set slow(v) { chopLoPrevSlow = v; } }, "[ChopLo]");
+}
+async function runChopMd() {
+    await runChopVariant("ema_crossover_chop_md", 0.10, { get fast() { return chopMdPrevFast; }, set fast(v) { chopMdPrevFast = v; }, get slow() { return chopMdPrevSlow; }, set slow(v) { chopMdPrevSlow = v; } }, "[ChopMd]");
+}
+async function runChopHi() {
+    await runChopVariant("ema_crossover_chop_hi", 0.15, { get fast() { return chopHiPrevFast; }, set fast(v) { chopHiPrevFast = v; }, get slow() { return chopHiPrevSlow; }, set slow(v) { chopHiPrevSlow = v; } }, "[ChopHi]");
+}
+// ══════════════════════════════════════════════════════════════
 // Main equity strategy loop — every 30s
 // ══════════════════════════════════════════════════════════════
 let strategyRunning = false;
@@ -2394,9 +2935,16 @@ async function runEquityStrategies() {
             runStrategy6(),
             runStrategy7(),
             runStrategy8(),
+            runStrategyRun(),
+            runStrategyRunTrail(),
             runStrategyAsym(),
             runStrategyConfirm(),
             runStrategyDualTf(),
+            runStrategy14(),
+            runStrategy15(),
+            runChopLo(),
+            runChopMd(),
+            runChopHi(),
         ]);
         await Promise.allSettled([
             monitorOpenPositions(),
@@ -3632,19 +4180,29 @@ function pearsonCorr(xs, ys) {
     const d = Math.sqrt(vx * vy);
     return d === 0 ? null : +(cov / d).toFixed(3);
 }
+// Cumulative capital curve. Expects rows normalised to { closed_at, pnl } where
+// pnl is ALREADY NET of charges — callers must do that mapping.
+// Dates are bucketed in IST (UTC+5:30), not UTC.
 function buildCapitalHistory(trades, allocated) {
+    const IST_MS = 5.5 * 3600 * 1000;
+    const istDay = (iso) => new Date(new Date(iso).getTime() + IST_MS).toISOString().slice(0, 10);
     const byDate = {};
     for (const t of trades) {
         if (!t.closed_at)
             continue;
-        const d = t.closed_at.slice(0, 10);
+        const d = istDay(t.closed_at);
         byDate[d] = (byDate[d] ?? 0) + (t.pnl ?? 0);
     }
     const dates = Object.keys(byDate).sort();
+    const todayIst = istDay(new Date().toISOString());
     if (dates.length === 0)
-        return [{ date: new Date().toISOString().slice(0, 10), capital: allocated }];
+        return [{ date: todayIst, capital: allocated }];
+    // Anchor the baseline on the day BEFORE the first close, so the first real
+    // date isn't duplicated (the old version pushed dates[0] twice).
+    const anchor = new Date(new Date(dates[0] + "T00:00:00Z").getTime() - 86400000)
+        .toISOString().slice(0, 10);
     let cap = allocated;
-    const result = [{ date: dates[0], capital: allocated }];
+    const result = [{ date: anchor, capital: +allocated.toFixed(2) }];
     for (const d of dates) {
         cap += byDate[d];
         result.push({ date: d, capital: +cap.toFixed(2) });
@@ -4064,12 +4622,14 @@ app.get("/api/capital-history", async (req, res) => {
     const strategy = req.query.strategy;
     if (strategy) {
         const [tRes, cRes] = await Promise.all([
-            supabase.from("strategy_positions").select("pnl,closed_at")
+            supabase.from("strategy_positions").select("pnl,charges,closed_at")
                 .eq("strategy_id", strategy).eq("status", "CLOSED").order("closed_at", { ascending: true }),
             supabase.from("strategy_capital").select("allocated_capital").eq("strategy_id", strategy).single(),
         ]);
         const allocated = cRes.data?.allocated_capital ?? 100000;
-        res.json(buildCapitalHistory((tRes.data ?? []), allocated));
+        const norm = (tRes.data ?? [])
+            .map(r => ({ closed_at: r.closed_at, pnl: (r.pnl ?? 0) - (r.charges ?? 0) }));
+        res.json(buildCapitalHistory(norm, allocated));
     }
     else {
         // Load all non-placeholder strategies dynamically
@@ -4077,7 +4637,7 @@ app.get("/api/capital-history", async (req, res) => {
             .from("strategies").select("id").neq("status", "placeholder");
         const ALL = (stratRows ?? []).map((r) => r.id);
         const [tRes, cRes] = await Promise.all([
-            supabase.from("strategy_positions").select("pnl,closed_at")
+            supabase.from("strategy_positions").select("pnl,charges,closed_at")
                 .in("strategy_id", ALL).eq("status", "CLOSED").order("closed_at", { ascending: true }),
             supabase.from("strategy_capital").select("strategy_id,allocated_capital").in("strategy_id", ALL),
         ]);
@@ -4085,7 +4645,9 @@ app.get("/api/capital-history", async (req, res) => {
         for (const c of (cRes.data ?? []))
             allocMap[c.strategy_id] = c.allocated_capital;
         const totalAlloc = ALL.reduce((s, id) => s + (allocMap[id] ?? 100000), 0);
-        res.json(buildCapitalHistory((tRes.data ?? []), totalAlloc));
+        const norm = (tRes.data ?? [])
+            .map(r => ({ closed_at: r.closed_at, pnl: (r.pnl ?? 0) - (r.charges ?? 0) }));
+        res.json(buildCapitalHistory(norm, totalAlloc));
     }
 });
 // ── /api/btc-capital-history?strategy=btc_ema_crossover ──────────────────
@@ -4093,14 +4655,14 @@ app.get("/api/btc-capital-history", async (req, res) => {
     const strategy = req.query.strategy;
     if (strategy) {
         const [tRes, cRes] = await Promise.all([
-            supabase.from("btc_strategy_positions").select("pnl_inr,closed_at")
+            supabase.from("btc_strategy_positions").select("pnl_inr,charges_inr,closed_at")
                 .eq("strategy_id", strategy).eq("status", "CLOSED").order("closed_at", { ascending: true }),
             supabase.from("btc_strategy_capital").select("allocated_inr").eq("strategy_id", strategy).single(),
         ]);
         const allocated = cRes.data?.allocated_inr ?? 10000;
-        const trades = (tRes.data ?? [])
-            .map(t => ({ pnl: t.pnl_inr, closed_at: t.closed_at }));
-        res.json(buildCapitalHistory(trades, allocated));
+        const norm = (tRes.data ?? [])
+            .map(r => ({ closed_at: r.closed_at, pnl: (r.pnl_inr ?? 0) - (r.charges_inr ?? 0) }));
+        res.json(buildCapitalHistory(norm, allocated));
     }
     else {
         // Load all active BTC strategies dynamically
@@ -4108,7 +4670,7 @@ app.get("/api/btc-capital-history", async (req, res) => {
             .from("btc_strategies").select("id").eq("is_active", true);
         const ALL = (stratRows ?? []).map((r) => r.id);
         const [tRes, cRes] = await Promise.all([
-            supabase.from("btc_strategy_positions").select("pnl_inr,closed_at")
+            supabase.from("btc_strategy_positions").select("pnl_inr,charges_inr,closed_at")
                 .in("strategy_id", ALL).eq("status", "CLOSED").order("closed_at", { ascending: true }),
             supabase.from("btc_strategy_capital").select("strategy_id,allocated_inr").in("strategy_id", ALL),
         ]);
@@ -4116,9 +4678,9 @@ app.get("/api/btc-capital-history", async (req, res) => {
         for (const c of (cRes.data ?? []))
             allocMap[c.strategy_id] = c.allocated_inr;
         const totalAlloc = ALL.reduce((s, id) => s + (allocMap[id] ?? 10000), 0);
-        const trades = (tRes.data ?? [])
-            .map(t => ({ pnl: t.pnl_inr, closed_at: t.closed_at }));
-        res.json(buildCapitalHistory(trades, totalAlloc));
+        const norm = (tRes.data ?? [])
+            .map(r => ({ closed_at: r.closed_at, pnl: (r.pnl_inr ?? 0) - (r.charges_inr ?? 0) }));
+        res.json(buildCapitalHistory(norm, totalAlloc));
     }
 });
 // ══════════════════════════════════════════════════════════════

@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { createChart, HistogramSeries, AreaSeries, ColorType, createSeriesMarkers } from "lightweight-charts";
+import { createChart, HistogramSeries, BaselineSeries, ColorType, createSeriesMarkers } from "lightweight-charts";
 import type { IChartApi, ISeriesApi, Time } from "lightweight-charts";
 import { accentFor, shortLabel, STRATEGY_FAMILIES } from '@/lib/strategySpec';
 import ValidationDots from '@/components/ValidationDots';
@@ -1406,7 +1406,7 @@ function CorrelationHeatmap() {
   const hasAnyPair = !!matrix && matrix.some((row, i) => row.some((v, j) => i !== j && v != null));
 
   return (
-    <div style={{ background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, padding: "20px 24px", marginTop: 24 }}>
+    <div style={{ background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, padding: "20px 24px", height: "100%" }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: "#4b5563", letterSpacing: "0.1em", marginBottom: 16 }}>
         STRATEGY CORRELATION
       </div>
@@ -1470,7 +1470,7 @@ function CorrelationHeatmap() {
 function CombinedCapitalHistory({ startingCapital, closedCount }: { startingCapital: number; closedCount: number }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef     = useRef<IChartApi | null>(null);
-  const seriesRef    = useRef<ISeriesApi<"Area"> | null>(null);
+  const seriesRef    = useRef<ISeriesApi<"Baseline"> | null>(null);
   const [livePnl,  setLivePnl]  = useState(0);
   const [closeCount, setCloseCount] = useState(0);
 
@@ -1486,18 +1486,22 @@ function CombinedCapitalHistory({ startingCapital, closedCount }: { startingCapi
       crosshair: { mode: 1 },
     });
     chartRef.current = chart;
-    const series = chart.addSeries(AreaSeries, {
-      lineColor:              "#3b82f6",
-      topColor:               "rgba(59,130,246,0.20)",
-      bottomColor:            "rgba(59,130,246,0.00)",
+    const series = chart.addSeries(BaselineSeries, {
+      baseValue:              { type: "price", price: 0 },
+      topLineColor:           "#4ade80",
+      topFillColor1:          "rgba(74,222,128,0.28)",
+      topFillColor2:          "rgba(74,222,128,0.03)",
+      bottomLineColor:        "#f87171",
+      bottomFillColor1:       "rgba(248,113,113,0.03)",
+      bottomFillColor2:       "rgba(248,113,113,0.28)",
       lineWidth:              2,
       lineType:               1,
       crosshairMarkerVisible: true,
       lastValueVisible:       true,
       priceLineVisible:       false,
     });
+    series.priceScale().applyOptions({ scaleMargins: { top: 0.12, bottom: 0.12 } });
     seriesRef.current = series;
-    series.createPriceLine({ price: 0, color: "#374151", lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
     return () => { chart.remove(); chartRef.current = seriesRef.current = null; };
   }, [closedCount]);
 
@@ -1534,7 +1538,7 @@ function CombinedCapitalHistory({ startingCapital, closedCount }: { startingCapi
   const pnlColor = livePnl >= 0 ? "#4ade80" : "#f87171";
 
   return (
-    <div style={{ background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, overflow: "hidden", marginTop: 24 }}>
+    <div style={{ background: "#0B0E17", border: "1px solid #1a1f2e", borderRadius: 12, overflow: "hidden", height: "100%" }}>
       <div style={{ display: "flex", alignItems: "center", padding: "12px 20px", borderBottom: "1px solid #1a1f2e" }}>
         <div>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#3b82f6", letterSpacing: "0.1em" }}>CUMULATIVE PNL</div>
@@ -1717,14 +1721,18 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Combined Capital History */}
-        <CombinedCapitalHistory
-          startingCapital={capitals.reduce((s, c) => s + (c.allocated_capital ?? 100_000), 0)}
-          closedCount={positions.filter(p => p.status === "CLOSED").length}
-        />
-
-        {/* Correlation Heatmap */}
-        <CorrelationHeatmap />
+        {/* Cumulative PnL + Correlation side by side */}
+        <div style={{ display: "flex", gap: 12, marginTop: 24, alignItems: "stretch" }}>
+          <div style={{ flex: "1 1 50%", minWidth: 0 }}>
+            <CombinedCapitalHistory
+              startingCapital={capitals.reduce((s, c) => s + (c.allocated_capital ?? 100_000), 0)}
+              closedCount={positions.filter(p => p.status === "CLOSED").length}
+            />
+          </div>
+          <div style={{ flex: "1 1 50%", minWidth: 0 }}>
+            <CorrelationHeatmap />
+          </div>
+        </div>
       </div>
     </div>
   );
