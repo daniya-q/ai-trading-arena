@@ -221,6 +221,32 @@ export const STRATEGY_SPEC: Record<string, StrategySpec> = {
       { label: 'Chop filter', value: 'Blocks entry when |EMA16−EMA64| / spot < 0.15%', param: 'chop_filter' }],
     exit: EMA_EXIT, sizing: SIZING60,
   },
+  ema_crossover_run: {
+    accent: '#A3E635', instrument: 'Nifty 50 options · weekly expiry',
+    timeframe: '30-second candles', window: '9:45 AM – 3:20 PM IST',
+    entry: EMA_ENTRY,
+    exit: [
+      SL('15% of premium'),
+      { label: 'Target', value: 'NONE — removed', param: 'no_target' },
+      { label: 'Trail SL', value: 'NONE — removed', param: 'no_trail' },
+      { label: 'Signal exit', value: 'Opposite EMA crossover' },
+      CLOSE('3:20 PM IST'),
+    ],
+    sizing: SIZING60,
+  },
+  ema_crossover_runtrail: {
+    accent: '#FB923C', instrument: 'Nifty 50 options · weekly expiry',
+    timeframe: '30-second candles', window: '9:45 AM – 3:20 PM IST',
+    entry: EMA_ENTRY,
+    exit: [
+      SL('15% of premium'),
+      { label: 'Target', value: 'NONE — removed', param: 'no_target' },
+      TRAIL('activates +20% · trails 10% below peak (ratchet)'),
+      { label: 'Signal exit', value: 'Opposite EMA crossover' },
+      CLOSE('3:20 PM IST'),
+    ],
+    sizing: SIZING60,
+  },
   ema_confluence_run: {
     accent: '#34D399', instrument: 'Nifty 50 options · weekly expiry',
     timeframe: '30-second candles', window: '9:45 AM – 3:20 PM IST',
@@ -364,6 +390,7 @@ export const SHORT_LABEL: Record<string, string> = {
   ema_crossover_asym: 'Asym', ema_crossover_confirm: 'Confirm', ema_crossover_dualtf: 'Dual-TF',
   ema_crossover_chop_lo: 'Chop .05', ema_crossover_chop_md: 'Chop .10', ema_crossover_chop_hi: 'Chop .15',
   ema_crossover_1m_run: 'Run', ema_crossover_1m_runtrail: 'Run+Trail',
+  ema_crossover_run: 'EMA Run', ema_crossover_runtrail: 'EMA Run+Trail',
   expiry_powerhour_dir: 'Exp Dir', expiry_powerhour_straddle: 'Exp Strad',
   orion: 'Orion', ema_confluence: 'Confluence', ema_confluence_run: 'Confluence Run', supertrend: 'Supertrend',
   pcr_reversal: 'PCR Rev', gap_orb: 'Gap+ORB', vwap_scalper: 'VWAP Scalp',
@@ -375,9 +402,10 @@ export const shortLabel = (id: string) => SHORT_LABEL[id] ?? id;
 // ── Experiment families for dashboard grouping ──
 export interface StrategyFamily { title: string; subtitle: string; ids: string[]; }
 export const STRATEGY_FAMILIES: StrategyFamily[] = [
-  { title: 'EMA 30s Family', subtitle: 'S1 control vs confirmation & chop-filter variants',
+  { title: 'EMA 30s Family', subtitle: 'S1 control vs confirmation, chop-filter & no-target variants',
     ids: ['ema_crossover', 'ema_crossover_asym', 'ema_crossover_confirm', 'ema_crossover_dualtf',
-          'ema_crossover_chop_lo', 'ema_crossover_chop_md', 'ema_crossover_chop_hi'] },
+          'ema_crossover_chop_lo', 'ema_crossover_chop_md', 'ema_crossover_chop_hi',
+          'ema_crossover_run', 'ema_crossover_runtrail'] },
   { title: 'EMA 1-minute Family', subtitle: 'S8 control vs no-target exit variants',
     ids: ['ema_crossover_1m', 'ema_crossover_1m_run', 'ema_crossover_1m_runtrail'] },
   { title: 'Expiry Day', subtitle: 'Power-hour trades — expiry Tuesdays only, one entry at 2:45 PM',

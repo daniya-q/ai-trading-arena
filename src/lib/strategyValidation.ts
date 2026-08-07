@@ -108,6 +108,18 @@ export const STRATEGY_VALIDATION: Record<string, StrategyValidation> = {
     chop_filter: { tier: 'testing', note: 'Live A/B; threshold 0.15%' },
     exits:       { tier: 'unvalidated', note: 'Inherited from S1' },
   },
+  ema_crossover_run: {
+    entry:     { tier: 'unvalidated', note: 'Inherited from S1' },
+    sl:        { tier: 'unvalidated' },
+    no_target: { tier: 'testing', note: 'Live A/B vs S1 — transfers the Confluence expectancy finding to the unfiltered 30s signal' },
+    no_trail:  { tier: 'testing', note: 'Live A/B vs S21 — settles the trail question on 30s data' },
+  },
+  ema_crossover_runtrail: {
+    entry:     { tier: 'unvalidated', note: 'Inherited from S1' },
+    sl:        { tier: 'unvalidated' },
+    no_target: { tier: 'testing', note: 'Live A/B vs S1' },
+    trail:     { tier: 'testing', note: 'Live A/B vs S20 — does the trail help or clip winners on 30s?' },
+  },
   ema_confluence_run: {
     rsi:      { tier: 'validated', note: 'Signal-log analysis + sweep; 65/35 confirmed (shared with S3)' },
     vwap:     { tier: 'unvalidated' },

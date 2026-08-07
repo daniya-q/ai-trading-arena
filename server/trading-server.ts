@@ -905,11 +905,14 @@ const NO_TARGET_STRATEGIES = new Set([
   "expiry_powerhour_dir",
   "expiry_powerhour_straddle",
   "ema_confluence_run",
+  "ema_crossover_run",
+  "ema_crossover_runtrail",
 ]);
 
 const NO_TRAIL_STRATEGIES = new Set([
   "ema_crossover_1m_run",
   "ema_confluence_run",
+  "ema_crossover_run",
 ]);
 
 function generateExitDetail(
@@ -921,9 +924,9 @@ function generateExitDetail(
   const ist   = getIST();
   const timeStr = `${String(ist.getUTCHours()).padStart(2,"0")}:${String(ist.getUTCMinutes()).padStart(2,"0")} IST`;
 
-  const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_crossover_asym:15, ema_crossover_confirm:15, ema_crossover_dualtf:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:15, gap_orb:20, vwap_scalper:20, ema_crossover_1m:15, ema_crossover_1m_run:15, ema_crossover_1m_runtrail:15, expiry_powerhour_dir:40, expiry_powerhour_straddle:40, ema_crossover_chop_lo:15, ema_crossover_chop_md:15, ema_crossover_chop_hi:15, ema_confluence_run:15 };
-  const TRAIL_PCT: Record<string, number> = { ema_crossover:10, ema_crossover_asym:10, ema_crossover_confirm:10, ema_crossover_dualtf:10, ema_confluence:10, orion:15, supertrend:12, pcr_reversal:12, gap_orb:12, vwap_scalper:12, ema_crossover_1m:10, ema_crossover_1m_runtrail:10, expiry_powerhour_dir:20, expiry_powerhour_straddle:20, ema_crossover_chop_lo:10, ema_crossover_chop_md:10, ema_crossover_chop_hi:10 };
-  const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:20 PM", ema_crossover_asym:"3:20 PM", ema_crossover_confirm:"3:20 PM", ema_crossover_dualtf:"3:20 PM", orion:"3:20 PM", ema_confluence:"3:20 PM", supertrend:"3:20 PM", pcr_reversal:"3:20 PM", gap_orb:"3:20 PM", vwap_scalper:"3:20 PM", ema_crossover_1m:"3:20 PM", ema_crossover_1m_run:"3:20 PM", ema_crossover_1m_runtrail:"3:20 PM", expiry_powerhour_dir:"3:18 PM", expiry_powerhour_straddle:"3:18 PM", ema_crossover_chop_lo:"3:20 PM", ema_crossover_chop_md:"3:20 PM", ema_crossover_chop_hi:"3:20 PM", ema_confluence_run:"3:20 PM" };
+  const SL_PCT: Record<string, number>    = { ema_crossover:15, ema_crossover_asym:15, ema_crossover_confirm:15, ema_crossover_dualtf:15, ema_confluence:15, orion:30, supertrend:20, pcr_reversal:15, gap_orb:20, vwap_scalper:20, ema_crossover_1m:15, ema_crossover_1m_run:15, ema_crossover_1m_runtrail:15, expiry_powerhour_dir:40, expiry_powerhour_straddle:40, ema_crossover_chop_lo:15, ema_crossover_chop_md:15, ema_crossover_chop_hi:15, ema_confluence_run:15, ema_crossover_run:15, ema_crossover_runtrail:15 };
+  const TRAIL_PCT: Record<string, number> = { ema_crossover:10, ema_crossover_asym:10, ema_crossover_confirm:10, ema_crossover_dualtf:10, ema_confluence:10, orion:15, supertrend:12, pcr_reversal:12, gap_orb:12, vwap_scalper:12, ema_crossover_1m:10, ema_crossover_1m_runtrail:10, expiry_powerhour_dir:20, expiry_powerhour_straddle:20, ema_crossover_chop_lo:10, ema_crossover_chop_md:10, ema_crossover_chop_hi:10, ema_crossover_runtrail:10 };
+  const CLOSE_TIME: Record<string, string> = { ema_crossover:"3:20 PM", ema_crossover_asym:"3:20 PM", ema_crossover_confirm:"3:20 PM", ema_crossover_dualtf:"3:20 PM", orion:"3:20 PM", ema_confluence:"3:20 PM", supertrend:"3:20 PM", pcr_reversal:"3:20 PM", gap_orb:"3:20 PM", vwap_scalper:"3:20 PM", ema_crossover_1m:"3:20 PM", ema_crossover_1m_run:"3:20 PM", ema_crossover_1m_runtrail:"3:20 PM", expiry_powerhour_dir:"3:18 PM", expiry_powerhour_straddle:"3:18 PM", ema_crossover_chop_lo:"3:20 PM", ema_crossover_chop_md:"3:20 PM", ema_crossover_chop_hi:"3:20 PM", ema_confluence_run:"3:20 PM", ema_crossover_run:"3:20 PM", ema_crossover_runtrail:"3:20 PM" };
 
   switch (reason) {
     case "SL_HIT": {
@@ -1096,6 +1099,8 @@ async function monitorOpenPositions(): Promise<void> {
     ema_crossover_1m_runtrail: 920,  // 15:20
     expiry_powerhour_dir:      918,  // 3:18 PM
     expiry_powerhour_straddle: 918,  // 3:18 PM
+    ema_crossover_run:         920,  // 15:20
+    ema_crossover_runtrail:    920,  // 15:20
     ema_crossover_chop_lo:     920,  // 15:20 — same as S1
     ema_crossover_chop_md:     920,
     ema_crossover_chop_hi:     920,
@@ -1163,7 +1168,7 @@ async function monitorOpenPositions(): Promise<void> {
     // ema_crossover_1m_run: no trail at all — skip activation block entirely
     let trailActivationPct = 0.35;
     let trailPct           = 0.12;
-    if (["ema_crossover", "ema_crossover_asym", "ema_crossover_confirm", "ema_crossover_dualtf", "ema_confluence", "ema_crossover_1m_runtrail", "ema_crossover_chop_lo", "ema_crossover_chop_md", "ema_crossover_chop_hi"].includes(pos.strategy_id)) {
+    if (["ema_crossover", "ema_crossover_asym", "ema_crossover_confirm", "ema_crossover_dualtf", "ema_confluence", "ema_crossover_1m_runtrail", "ema_crossover_chop_lo", "ema_crossover_chop_md", "ema_crossover_chop_hi", "ema_crossover_runtrail"].includes(pos.strategy_id)) {
       trailActivationPct = 0.20;
       trailPct           = 0.10;
     } else if (pos.strategy_id === "orion") {
@@ -1322,6 +1327,95 @@ async function runStrategy1(): Promise<void> {
     pnl:          0,
     status:       "OPEN",
   });
+}
+
+// ══════════════════════════════════════════════════════════════
+// Strategy 20 — EMA Crossover Let-It-Run (30s, no target, no trail)
+// Strategy 21 — EMA Crossover Run+Trail (30s, no target, trail on)
+// Identical entry to S1. Exits differ only in target/trail.
+// Completes the 30s arm of the no-target matrix (1m arm = S12/S13).
+// ══════════════════════════════════════════════════════════════
+
+let s20PrevFast = 0, s20PrevSlow = 0;
+let s21PrevFast = 0, s21PrevSlow = 0;
+
+async function runEmaRunVariant(
+  strategyId: string,
+  prev: { fast: number; slow: number },
+  tag: string
+): Promise<void> {
+  if (!isMarketOpen()) return;
+  const mins = istMins();
+  if (mins < 585 || mins >= 920) return; // 9:45–15:20
+
+  const candles = getCandles("NIFTY", "30s");
+  if (candles.length < 66) return;
+
+  const closes   = candles.map(c => c.close);
+  const fastArr  = emaValues(closes, 16);
+  const slowArr  = emaValues(closes, 64);
+  const fastCurr = fastArr[fastArr.length - 1];
+  const slowCurr = slowArr[slowArr.length - 1];
+  const fastPrev = prev.fast || fastArr[fastArr.length - 2];
+  const slowPrev = prev.slow || slowArr[slowArr.length - 2];
+
+  const bullCross = fastPrev <= slowPrev && fastCurr > slowCurr;
+  const bearCross = fastPrev >= slowPrev && fastCurr < slowCurr;
+
+  prev.fast = fastCurr;
+  prev.slow = slowCurr;
+
+  if (!bullCross && !bearCross) return;
+
+  const optType = bullCross ? "CE" : "PE";
+
+  // Exit/flip on opposite cross — identical to S1
+  const openPos = await getOpenStrategyPositions(strategyId);
+  for (const pos of openPos) {
+    if (pos.type !== optType) {
+      const cp = getCurrentPrice(pos.symbol);
+      if (cp > 0) await closeStrategyPosition(pos.id, cp, "CROSSOVER");
+    } else {
+      return; // already in same direction
+    }
+  }
+
+  const chain = getLatestChain("NIFTY");
+  if (!chain) return;
+  const option = getATMOption(chain, optType, 60, 70, lastNiftyPrice);
+  if (!option) { console.log(`${tag} SIGNAL ${optType} — no strike in ₹60-70`); return; }
+
+  const cap = await getEquityCurrentValue(strategyId);
+  const qty = capQtyByMaxLoss(calcLots(cap, 0.60, option.premium, 65), option.premium, 0.15, 65, tag);
+  if (qty === 0) { console.log(`${tag} SIGNAL ${optType} — lot calc=0`); return; }
+
+  console.log(`${tag} SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} qty=${qty} — opening`);
+  await openStrategyPosition(strategyId, {
+    symbol:        option.symbol,
+    type:          optType,
+    side:          "LONG",
+    entry_price:   option.premium,
+    current_price: option.premium,
+    quantity:      qty,
+    stop_loss:     roundUpToOneDecimal(option.premium * 0.85),
+    trail_sl:      null,
+    pnl:           0,
+    status:        "OPEN",
+  });
+}
+
+async function runEmaRun(): Promise<void> {
+  await runEmaRunVariant("ema_crossover_run", {
+    get fast() { return s20PrevFast; }, set fast(v) { s20PrevFast = v; },
+    get slow() { return s20PrevSlow; }, set slow(v) { s20PrevSlow = v; },
+  }, "[S20]");
+}
+
+async function runEmaRunTrail(): Promise<void> {
+  await runEmaRunVariant("ema_crossover_runtrail", {
+    get fast() { return s21PrevFast; }, set fast(v) { s21PrevFast = v; },
+    get slow() { return s21PrevSlow; }, set slow(v) { s21PrevSlow = v; },
+  }, "[S21]");
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -3414,6 +3508,8 @@ async function runEquityStrategies(): Promise<void> {
       runChopMd(),
       runChopHi(),
       runStrategyConfluenceRun(),
+      runEmaRun(),
+      runEmaRunTrail(),
     ]);
     await Promise.allSettled([
       monitorOpenPositions(),
