@@ -761,6 +761,7 @@ async function pollOptionChain(): Promise<void> {
 // Only 30s is persisted: Upstox sells 1m+ history, but never sub-minute.
 // 1m/5m/15m are derivable from 30s anyway, so recording them would be waste.
 const RECORD_TIMEFRAME    = "30s";
+const RECORD_SYMBOLS      = new Set(["NIFTY", "BANKNIFTY", "SENSEX"]); // BTC excluded — Kraken publishes free OHLC history
 const CHAIN_STRIKE_WINDOW = 10;   // strikes either side of ATM — sized for Supabase free-tier 500MB limit
 const CHAIN_RECORD_EVERY  = 2;    // persist every Nth poll (poll is 60s → 2-minute snapshots)
 const chainPollCount: Record<string, number> = {};
@@ -775,6 +776,10 @@ const candleBuffer: CandleRow[] = [];
 // Synchronous and cheap — processTick is a hot path and must never await.
 function bufferClosedCandle(symbol: string, timeframe: string, c: Candle): void {
   if (timeframe !== RECORD_TIMEFRAME) return;
+  if (!RECORD_SYMBOLS.has(symbol)) return;          // BTC excluded — Kraken has free history
+  const ist  = new Date(c.time + 5.5 * 3600 * 1000);
+  const mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+  if (mins < 555 || mins > 930) return;             // 9:15–15:30 IST only
   candleBuffer.push({
     symbol,
     timeframe,
