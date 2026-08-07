@@ -969,6 +969,8 @@ function generateExitDetail(
       return `Gap fill target reached at ${timeStr}. Price returned to previous day's close level. Trade objective achieved at ₹${exitPrice.toFixed(2)}.`;
     case "VWAP_CROSS":
       return `Price crossed VWAP in opposite direction at ${timeStr}. ${pos.type === "CE" ? "Price fell below" : "Price rose above"} VWAP — exit signal triggered at ₹${exitPrice.toFixed(2)}.`;
+    case "STALE_CLOSE":
+      return `Orphaned position force-closed at boot. The server was not running during the 15:20 hard-close window. Exit at ₹${exitPrice.toFixed(2)}.`;
     default:
       return `Position closed at ${timeStr}. Reason: ${reason}. Exit: ₹${exitPrice.toFixed(2)}.`;
   }
@@ -5459,6 +5461,65 @@ Promise.all([
   console.error("[Boot] Candle seeding error:", err);
 });
 
+// ── Boot-time orphan recovery ─────────────────────────────────────────────
+// HARD_CLOSE only fires while the market is open. If the server is down
+// during 15:20–15:30 IST, open positions survive with nothing evaluating
+// them. On boot, force-close anything left over from a previous day.
+async function closeStalePositions(): Promise<void> {
+  const todayIst = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+
+  const { data: stale, error } = await supabase
+    .from("strategy_positions")
+    .select("*")
+    .eq("status", "OPEN");
+  if (error) { console.error("[StaleScan] query failed:", error.message); return; }
+  if (!stale?.length) { console.log("[StaleScan] no open positions"); return; }
+
+  for (const pos of stale) {
+    const openedIst = new Date(new Date(pos.opened_at).getTime() + 5.5 * 3600 * 1000)
+      .toISOString().slice(0, 10);
+    if (openedIst >= todayIst) continue;   // opened today — leave it alone
+
+    // Best available price: live cache, else last recorded current_price, else entry
+    const cached = getCurrentPrice(pos.symbol);
+    const exitPx = cached > 0 ? cached : (pos.current_price ?? pos.entry_price);
+    const detail = `STALE_CLOSE — position opened ${openedIst} was still OPEN at boot on ${todayIst}. ` +
+      `Force-closed at ${cached > 0 ? "live" : "last-known"} price ₹${exitPx}. ` +
+      `Cause: server was not running during the 15:20 hard-close window.`;
+
+    console.warn(`[StaleScan] ORPHAN: ${pos.strategy_id} ${pos.symbol} opened ${openedIst} — closing at ₹${exitPx}`);
+    await closeStrategyPosition(pos.id, exitPx, "STALE_CLOSE", detail);
+  }
+}
+
+// ── Hard-close watchdog ───────────────────────────────────────────────────
+// Runs OUTSIDE the isMarketOpen() gate. If it's past 15:25 IST on a weekday
+// and equity positions are still open, close them. Covers the case where the
+// 30s strategy loop missed the 15:20–15:30 window entirely.
+async function hardCloseWatchdog(): Promise<void> {
+  const ist = new Date(Date.now() + 5.5 * 3600 * 1000);
+  const day = ist.getUTCDay();
+  if (day === 0 || day === 6) return;                   // weekend
+  const mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+  if (mins < 925) return;                               // only after 15:25 IST
+
+  const { data: open } = await supabase
+    .from("strategy_positions").select("*").eq("status", "OPEN");
+  if (!open?.length) return;
+
+  const todayIst = ist.toISOString().slice(0, 10);
+  for (const pos of open) {
+    const openedIst = new Date(new Date(pos.opened_at).getTime() + 5.5 * 3600 * 1000)
+      .toISOString().slice(0, 10);
+    if (openedIst !== todayIst) continue;               // older ones are the stale scan's job
+    const cached = getCurrentPrice(pos.symbol);
+    const exitPx = cached > 0 ? cached : (pos.current_price ?? pos.entry_price);
+    console.warn(`[Watchdog] ${pos.strategy_id} ${pos.symbol} still open past 15:25 — force-closing at ₹${exitPx}`);
+    await closeStrategyPosition(pos.id, exitPx, "HARD_CLOSE",
+      `Watchdog force-close after 15:25 IST — the in-session hard close did not fire.`);
+  }
+}
+
 // LTP every second
 pollLTP();
 setInterval(pollLTP, 1_000);
@@ -5466,6 +5527,12 @@ setInterval(pollLTP, 1_000);
 // Option chain every 60 seconds
 pollOptionChain();
 setInterval(pollOptionChain, 60_000);
+
+// Stale-position scan — runs once, 5 s after boot so price cache can fill
+setTimeout(() => { void closeStalePositions(); }, 5_000);
+
+// Hard-close watchdog — every 5 min, outside isMarketOpen() gate
+setInterval(() => { void hardCloseWatchdog(); }, 5 * 60_000);
 
 // Equity strategy loop every 30 seconds
 runEquityStrategies();
