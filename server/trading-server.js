@@ -757,6 +757,25 @@ async function recordOptionChain(index, chain) {
     if (error)
         console.error(`[Recorder] chain ${index} failed:`, error.message);
 }
+// ── VIX recorder ──────────────────────────────────────────────────────────
+// lastVix is in-memory only and resets to 0 on every restart, so there is no
+// history to evaluate Orion's VIX < 13 skip rule against. One row per minute
+// during market hours is enough (VIX moves slowly).
+let lastVixRecordedMinute = -1;
+async function recordVix() {
+    if (!isMarketOpen())
+        return;
+    if (!lastVix || lastVix <= 0)
+        return;
+    const now = new Date();
+    const minuteBucket = Math.floor(now.getTime() / 60000);
+    if (minuteBucket === lastVixRecordedMinute)
+        return;
+    lastVixRecordedMinute = minuteBucket;
+    const { error } = await supabase.from("recorded_vix").upsert({ snapshot_at: new Date(minuteBucket * 60000).toISOString(), vix: lastVix }, { onConflict: "snapshot_at", ignoreDuplicates: true });
+    if (error)
+        console.error("[Recorder] VIX write failed:", error.message);
+}
 // ══════════════════════════════════════════════════════════════
 // Strategy DB helpers
 // ══════════════════════════════════════════════════════════════
@@ -1849,8 +1868,12 @@ async function runStrategy2() {
     const mins = istMins();
     if (mins < 570 || mins >= 840)
         return; // 9:30–14:00
-    // VIX filter
-    if (lastVix > 0 && lastVix < 13) {
+    // VIX filter — block until VIX is known (lastVix=0 means first LTP poll hasn't returned yet)
+    if (lastVix === 0) {
+        console.log(`[S2] VIX not yet available — skipping until first LTP poll`);
+        return;
+    }
+    if (lastVix < 13) {
         console.log(`[S2] VIX ${lastVix} < 13 — skipping trades today`);
         return;
     }
@@ -1925,14 +1948,19 @@ async function runOrionForIndex(index, mins) {
     const ceBreakout = price > orbH;
     const aboveVwap = price > vwap;
     const ceOIchange = getOIChangeForATM(index, "CE", 5);
-    const ceOIrising = ceOIchange ? ceOIchange.pctChange > 0 : true;
     const peBreakout = price < orbL;
     const belowVwap = price < vwap;
     const peOIchange = getOIChangeForATM(index, "PE", 5);
-    const peOIrising = peOIchange ? peOIchange.pctChange > 0 : true;
+    const ceOIhasData = !!ceOIchange;
+    const peOIhasData = !!peOIchange;
+    const ceOIrising = ceOIchange ? ceOIchange.pctChange > 0 : false; // fail-safe: no data → blocks entry
+    const peOIrising = peOIchange ? peOIchange.pctChange > 0 : false; // fail-safe: no data → blocks entry
+    if (!ceOIhasData || !peOIhasData) {
+        console.log(`[S2:${index}] OI history unavailable (CE:${ceOIhasData} PE:${peOIhasData}) — OI gate blocks entry`);
+    }
     const ceOIStr = ceOIchange ? `${ceOIchange.pctChange >= 0 ? "+" : ""}${ceOIchange.pctChange.toFixed(1)}%` : "no-hist";
     const peOIStr = peOIchange ? `${peOIchange.pctChange >= 0 ? "+" : ""}${peOIchange.pctChange.toFixed(1)}%` : "no-hist";
-    console.log(`[S2:${index}] price=${price.toFixed(0)} ORB H:${orbH} L:${orbL} VWAP=${vwap.toFixed(0)} | CE:brk=${ceBreakout} avwap=${aboveVwap} OI=${ceOIStr} | PE:brk=${peBreakout} bvwap=${belowVwap} OI=${peOIStr}`);
+    console.log(`[S2:${index}] price=${price.toFixed(0)} ORB H:${orbH} L:${orbL} VWAP=${vwap.toFixed(0)} | CE:brk=${ceBreakout} avwap=${aboveVwap} OI=${ceOIStr}(data=${ceOIhasData}) | PE:brk=${peBreakout} bvwap=${belowVwap} OI=${peOIStr}(data=${peOIhasData})`);
     let optType = null;
     if (ceBreakout && aboveVwap && ceOIrising)
         optType = "CE";
@@ -5170,5 +5198,7 @@ setInterval(runBtcStrategies, 30000);
 setInterval(monitorBtcPositions, 5000);
 // Persist recorded 30s candles every 60 seconds
 setInterval(flushCandleBuffer, 60000);
+// Persist VIX once per minute during market hours
+setInterval(recordVix, 60000);
 // One-time Sharpe backfill for all BTC strategies on startup
 backfillBtcSharpe().catch(console.error);
