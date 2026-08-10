@@ -41,6 +41,13 @@ export const STRATEGY_VALIDATION: Record<string, StrategyValidation> = {
     target: { tier: 'unvalidated' },
     trail:  { tier: 'unvalidated' },
   },
+  supertrend_late: {
+    entry:      { tier: 'unvalidated', note: 'Inherited from S4' },
+    late_entry: { tier: 'testing', note: 'Live A/B vs S4 — archived data showed 9:45–11:00 entries returned −₹42,357 at 25% win rate vs +₹1.54L at 57.7% for 11:00–13:00 (69 trades, Jun–Jul 2026)' },
+    sl:         { tier: 'unvalidated' },
+    target:     { tier: 'unvalidated' },
+    trail:      { tier: 'unvalidated' },
+  },
   pcr_reversal: {
     thresholds: { tier: 'validated', note: 'Reverted to strict 1.3/0.7 on evidence' },
     sl:         { tier: 'validated', note: 'Tightened 25%→15% from real overshoot data' },

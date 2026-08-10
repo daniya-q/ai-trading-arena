@@ -83,6 +83,19 @@ export const STRATEGY_SPEC: Record<string, StrategySpec> = {
       { label: 'Signal exit', value: 'Opposite Supertrend flip' }, CLOSE('3:20 PM IST')],
     sizing: SIZING30 + ' · multi-index',
   },
+  supertrend_late: {
+    accent: '#FCA5A5', instrument: 'Nifty + BankNifty options',
+    timeframe: '5-minute candles', window: '11:00 AM – 3:20 PM IST · entry cutoff 2:30 PM',
+    entry: [
+      { label: 'Signal', value: 'Supertrend(7,3) flips green → CE · red → PE', param: 'entry' },
+      { label: 'Limit', value: 'Max 2 trades per instrument per day' },
+      { label: 'Variant', value: 'No entries before 11:00 AM — opening period has no established trend', param: 'late_entry' },
+    ],
+    exit: [SL('20% of premium'), TGT('40% of premium'),
+      TRAIL('activates +35% · trails 12% below peak'),
+      { label: 'Signal exit', value: 'Opposite Supertrend flip' }, CLOSE('3:20 PM IST')],
+    sizing: SIZING30 + ' · multi-index',
+  },
   pcr_reversal: {
     accent: '#8B5CF6', instrument: 'Nifty 50 options',
     timeframe: 'Option chain polled every 5 minutes', window: '10:00 AM – 2:30 PM IST',
@@ -392,7 +405,7 @@ export const SHORT_LABEL: Record<string, string> = {
   ema_crossover_1m_run: 'Run', ema_crossover_1m_runtrail: 'Run+Trail',
   ema_crossover_run: 'EMA Run', ema_crossover_runtrail: 'EMA Run+Trail',
   expiry_powerhour_dir: 'Exp Dir', expiry_powerhour_straddle: 'Exp Strad',
-  orion: 'Orion', ema_confluence: 'Confluence', ema_confluence_run: 'Confluence Run', supertrend: 'Supertrend',
+  orion: 'Orion', ema_confluence: 'Confluence', ema_confluence_run: 'Confluence Run', supertrend: 'Supertrend', supertrend_late: 'Supertrend Late',
   pcr_reversal: 'PCR Rev', gap_orb: 'Gap+ORB', vwap_scalper: 'VWAP Scalp',
   btc_ema_crossover: 'BTC EMA ×', btc_orion: 'BTC Orion', btc_ema_confluence: 'BTC Confluence',
   btc_supertrend: 'BTC Supertrend', btc_vwap_scalper: 'BTC VWAP',
@@ -411,7 +424,7 @@ export const STRATEGY_FAMILIES: StrategyFamily[] = [
   { title: 'Expiry Day', subtitle: 'Power-hour trades — expiry Tuesdays only, one entry at 2:45 PM',
     ids: ['expiry_powerhour_dir', 'expiry_powerhour_straddle'] },
   { title: 'Standalone Strategies', subtitle: 'Independent signals — no variant race',
-    ids: ['orion', 'ema_confluence', 'ema_confluence_run', 'supertrend', 'pcr_reversal', 'gap_orb', 'vwap_scalper'] },
+    ids: ['orion', 'ema_confluence', 'ema_confluence_run', 'supertrend', 'supertrend_late', 'pcr_reversal', 'gap_orb', 'vwap_scalper'] },
 ];
 
 export const BTC_FAMILIES: StrategyFamily[] = [

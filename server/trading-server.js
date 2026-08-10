@@ -209,7 +209,9 @@ function processTick(price, symbol, tsMs) {
             continue;
         }
         if (bucket !== store.bucket) {
-            store.candles.push({ ...store.current });
+            const closed = { ...store.current };
+            store.candles.push(closed);
+            bufferClosedCandle(symbol, interval, closed);
             if (store.candles.length > MAX_CANDLES)
                 store.candles.shift();
             store.current = { open: price, high: price, low: price, close: price, time: bucket, ticks: 1 };
@@ -677,12 +679,83 @@ async function pollOptionChain() {
             optionChainHistory[index].push(chain);
             if (optionChainHistory[index].length > 12)
                 optionChainHistory[index].shift();
+            void recordOptionChain(index, chain);
             console.log(`[Chain:${index}] PCR: ${chain.pcr.toFixed(2)} | ATM: ${chain.atmStrike} | VIX: ${lastVix.toFixed(1)}`);
         }
         catch (err) {
             console.error(`[Chain:${index}] Error:`, err);
         }
     }
+}
+// ── DATA RECORDERS ────────────────────────────────────────────────────────
+// Only 30s is persisted: Upstox sells 1m+ history, but never sub-minute.
+// 1m/5m/15m are derivable from 30s anyway, so recording them would be waste.
+const RECORD_TIMEFRAME = "30s";
+const CHAIN_STRIKE_WINDOW = 10; // strikes either side of ATM — sized for Supabase free-tier 500MB limit
+const CHAIN_RECORD_EVERY = 2; // persist every Nth poll (poll is 60s → 2-minute snapshots)
+const chainPollCount = {};
+const CANDLE_BUFFER_MAX = 5000; // hard cap if the DB is unreachable
+const candleBuffer = [];
+// Synchronous and cheap — processTick is a hot path and must never await.
+function bufferClosedCandle(symbol, timeframe, c) {
+    if (timeframe !== RECORD_TIMEFRAME)
+        return;
+    candleBuffer.push({
+        symbol,
+        timeframe,
+        bucket_time: new Date(c.time).toISOString(),
+        open: c.open, high: c.high, low: c.low, close: c.close,
+        ticks: c.ticks ?? null,
+    });
+    if (candleBuffer.length > 400)
+        void flushCandleBuffer();
+}
+async function flushCandleBuffer() {
+    if (candleBuffer.length === 0)
+        return;
+    const batch = candleBuffer.splice(0, candleBuffer.length);
+    const { error } = await supabase
+        .from("recorded_candles")
+        .upsert(batch, { onConflict: "symbol,timeframe,bucket_time", ignoreDuplicates: true });
+    if (error) {
+        console.error(`[Recorder] candle flush failed (${batch.length} rows):`, error.message);
+        candleBuffer.unshift(...batch); // retry next tick
+        if (candleBuffer.length > CANDLE_BUFFER_MAX) { // never grow unbounded
+            const dropped = candleBuffer.length - CANDLE_BUFFER_MAX;
+            candleBuffer.splice(0, dropped);
+            console.error(`[Recorder] buffer overflow — dropped ${dropped} oldest candles`);
+        }
+    }
+    else {
+        console.log(`[Recorder] ${batch.length} × ${RECORD_TIMEFRAME} candles persisted`);
+    }
+}
+// Option-chain snapshots — the real-premium archive. Expired weeklies are
+// purged by Upstox, so this is the only path to real historical premiums.
+async function recordOptionChain(index, chain) {
+    chainPollCount[index] = (chainPollCount[index] ?? 0) + 1;
+    if (chainPollCount[index] % CHAIN_RECORD_EVERY !== 0)
+        return;
+    const sorted = [...chain.rows].sort((a, b) => a.strike - b.strike);
+    const atmIdx = sorted.findIndex(r => r.strike === chain.atmStrike);
+    const from = atmIdx < 0 ? 0 : Math.max(0, atmIdx - CHAIN_STRIKE_WINDOW);
+    const to = atmIdx < 0 ? sorted.length : Math.min(sorted.length, atmIdx + CHAIN_STRIKE_WINDOW + 1);
+    const slice = sorted.slice(from, to);
+    if (slice.length === 0)
+        return;
+    const { error } = await supabase.from("recorded_option_chains").upsert({
+        index_name: index,
+        expiry: chain.expiry,
+        snapshot_at: new Date(chain.timestamp).toISOString(),
+        spot_price: chain.spotPrice,
+        atm_strike: chain.atmStrike,
+        pcr: chain.pcr,
+        strikes_from: slice[0].strike,
+        strikes_to: slice[slice.length - 1].strike,
+        chain_rows: slice,
+    }, { onConflict: "index_name,expiry,snapshot_at", ignoreDuplicates: true });
+    if (error)
+        console.error(`[Recorder] chain ${index} failed:`, error.message);
 }
 // ══════════════════════════════════════════════════════════════
 // Strategy DB helpers
@@ -732,6 +805,7 @@ const TARGET_PCT = {
     orion: 0.45, // SL 30% → 1:1.5 RR
     ema_confluence: 0.30, // SL 15% → 1:2 RR
     supertrend: 0.40, // SL 20% → 1:2 RR
+    supertrend_late: 0.40, // SL 20% → 1:2 RR (S22 clone, entry from 11:00 AM)
     pcr_reversal: 0.375, // SL 25% → 1:1.5 RR
     gap_orb: 0.40, // SL 20% → 1:2 RR (gap fill is primary exit; 40% is fallback)
     vwap_scalper: 0.30, // SL 20% → 1:1.5 RR (danger: SL 10% → target 15%, computed from SL)
@@ -746,13 +820,18 @@ const NO_TARGET_STRATEGIES = new Set([
     "ema_crossover_1m_runtrail",
     "expiry_powerhour_dir",
     "expiry_powerhour_straddle",
+    "ema_confluence_run",
+]);
+const NO_TRAIL_STRATEGIES = new Set([
+    "ema_crossover_1m_run",
+    "ema_confluence_run",
 ]);
 function generateExitDetail(reason, pos, exitPrice, peakPremium) {
     const ist = getIST();
     const timeStr = `${String(ist.getUTCHours()).padStart(2, "0")}:${String(ist.getUTCMinutes()).padStart(2, "0")} IST`;
-    const SL_PCT = { ema_crossover: 15, ema_crossover_asym: 15, ema_crossover_confirm: 15, ema_crossover_dualtf: 15, ema_confluence: 15, orion: 30, supertrend: 20, pcr_reversal: 15, gap_orb: 20, vwap_scalper: 20, ema_crossover_1m: 15, ema_crossover_1m_run: 15, ema_crossover_1m_runtrail: 15, expiry_powerhour_dir: 40, expiry_powerhour_straddle: 40, ema_crossover_chop_lo: 15, ema_crossover_chop_md: 15, ema_crossover_chop_hi: 15 };
-    const TRAIL_PCT = { ema_crossover: 10, ema_crossover_asym: 10, ema_crossover_confirm: 10, ema_crossover_dualtf: 10, ema_confluence: 10, orion: 15, supertrend: 12, pcr_reversal: 12, gap_orb: 12, vwap_scalper: 12, ema_crossover_1m: 10, ema_crossover_1m_runtrail: 10, expiry_powerhour_dir: 20, expiry_powerhour_straddle: 20, ema_crossover_chop_lo: 10, ema_crossover_chop_md: 10, ema_crossover_chop_hi: 10 };
-    const CLOSE_TIME = { ema_crossover: "3:20 PM", ema_crossover_asym: "3:20 PM", ema_crossover_confirm: "3:20 PM", ema_crossover_dualtf: "3:20 PM", orion: "3:20 PM", ema_confluence: "3:20 PM", supertrend: "3:20 PM", pcr_reversal: "3:20 PM", gap_orb: "3:20 PM", vwap_scalper: "3:20 PM", ema_crossover_1m: "3:20 PM", ema_crossover_1m_run: "3:20 PM", ema_crossover_1m_runtrail: "3:20 PM", expiry_powerhour_dir: "3:18 PM", expiry_powerhour_straddle: "3:18 PM", ema_crossover_chop_lo: "3:20 PM", ema_crossover_chop_md: "3:20 PM", ema_crossover_chop_hi: "3:20 PM" };
+    const SL_PCT = { ema_crossover: 15, ema_crossover_asym: 15, ema_crossover_confirm: 15, ema_crossover_dualtf: 15, ema_confluence: 15, orion: 30, supertrend: 20, supertrend_late: 20, pcr_reversal: 15, gap_orb: 20, vwap_scalper: 20, ema_crossover_1m: 15, ema_crossover_1m_run: 15, ema_crossover_1m_runtrail: 15, expiry_powerhour_dir: 40, expiry_powerhour_straddle: 40, ema_crossover_chop_lo: 15, ema_crossover_chop_md: 15, ema_crossover_chop_hi: 15, ema_confluence_run: 15 };
+    const TRAIL_PCT = { ema_crossover: 10, ema_crossover_asym: 10, ema_crossover_confirm: 10, ema_crossover_dualtf: 10, ema_confluence: 10, orion: 15, supertrend: 12, supertrend_late: 12, pcr_reversal: 12, gap_orb: 12, vwap_scalper: 12, ema_crossover_1m: 10, ema_crossover_1m_runtrail: 10, expiry_powerhour_dir: 20, expiry_powerhour_straddle: 20, ema_crossover_chop_lo: 10, ema_crossover_chop_md: 10, ema_crossover_chop_hi: 10 };
+    const CLOSE_TIME = { ema_crossover: "3:20 PM", ema_crossover_asym: "3:20 PM", ema_crossover_confirm: "3:20 PM", ema_crossover_dualtf: "3:20 PM", orion: "3:20 PM", ema_confluence: "3:20 PM", supertrend: "3:20 PM", supertrend_late: "3:20 PM", pcr_reversal: "3:20 PM", gap_orb: "3:20 PM", vwap_scalper: "3:20 PM", ema_crossover_1m: "3:20 PM", ema_crossover_1m_run: "3:20 PM", ema_crossover_1m_runtrail: "3:20 PM", expiry_powerhour_dir: "3:18 PM", expiry_powerhour_straddle: "3:18 PM", ema_crossover_chop_lo: "3:20 PM", ema_crossover_chop_md: "3:20 PM", ema_crossover_chop_hi: "3:20 PM", ema_confluence_run: "3:20 PM" };
     switch (reason) {
         case "SL_HIT": {
             const pct = SL_PCT[pos.strategy_id] ?? 15;
@@ -760,7 +839,7 @@ function generateExitDetail(reason, pos, exitPrice, peakPremium) {
             return `Stop loss hit at ${timeStr}. Entry: ₹${pos.entry_price.toFixed(2)}. SL was set at ${pct}% below entry = ₹${sl.toFixed(1)}. Price dropped to ₹${exitPrice.toFixed(2)}.`;
         }
         case "CROSSOVER": {
-            if (pos.strategy_id === "supertrend") {
+            if (pos.strategy_id === "supertrend" || pos.strategy_id === "supertrend_late") {
                 const flip = pos.type === "CE" ? "red (bearish)" : "green (bullish)";
                 return `Supertrend flipped ${flip} at ${timeStr}. Opposite signal triggered — position closed.`;
             }
@@ -901,6 +980,7 @@ async function monitorOpenPositions() {
         orion: 920, // 15:20 (entry window unchanged: 9:30–14:00)
         ema_confluence: 920,
         supertrend: 920,
+        supertrend_late: 920,
         pcr_reversal: 920,
         gap_orb: 920, // 15:20 (entry window unchanged: before 11:30 AM)
         vwap_scalper: 920, // 15:20
@@ -912,6 +992,7 @@ async function monitorOpenPositions() {
         ema_crossover_chop_lo: 920, // 15:20 — same as S1
         ema_crossover_chop_md: 920,
         ema_crossover_chop_hi: 920,
+        ema_confluence_run: 920, // 15:20
     };
     const currentMins = istMins();
     for (const raw of data) {
@@ -984,7 +1065,7 @@ async function monitorOpenPositions() {
             trailActivationPct = 0.50; // +50% from entry
             trailPct = 0.20; // trail 20% below peak
         }
-        if (pos.strategy_id !== "ema_crossover_1m_run" && pnlPct >= trailActivationPct) {
+        if (!NO_TRAIL_STRATEGIES.has(pos.strategy_id) && pnlPct >= trailActivationPct) {
             const newTrail = peak * (1 - trailPct);
             if (!pos.trail_sl || newTrail > pos.trail_sl) {
                 await supabase.from("strategy_positions").update({ trail_sl: roundUpToOneDecimal(newTrail) }).eq("id", pos.id);
@@ -2040,6 +2121,159 @@ async function runStrategy3() {
     });
 }
 // ══════════════════════════════════════════════════════════════
+// Strategy 19 — EMA Confluence Run (clone of S3, no target, no trail)
+// ══════════════════════════════════════════════════════════════
+let s19PrevFast = 0;
+let s19PrevSlow = 0;
+async function runStrategyConfluenceRun() {
+    if (!isMarketOpen())
+        return;
+    const mins = istMins();
+    if (mins < 585 || mins >= 920)
+        return; // 9:45–15:20
+    const candles = getCandles("NIFTY", "30s");
+    if (candles.length < 66) {
+        console.log(`[S19] Waiting for candles — have ${candles.length}/66`);
+        return;
+    }
+    const openPos = await getOpenStrategyPositions("ema_confluence_run");
+    if (openPos.length >= 1) {
+        console.log(`[S19] Position already open (${openPos[0].symbol}) — skipping`);
+        return;
+    }
+    const closes = candles.map(c => c.close);
+    const fastArr = emaValues(closes, 16);
+    const slowArr = emaValues(closes, 64);
+    const fastCurr = fastArr[fastArr.length - 1];
+    const slowCurr = slowArr[slowArr.length - 1];
+    const fastPrev = s19PrevFast || fastArr[fastArr.length - 2];
+    const slowPrev = s19PrevSlow || slowArr[slowArr.length - 2];
+    const bullCross = fastPrev <= slowPrev && fastCurr > slowCurr;
+    const bearCross = fastPrev >= slowPrev && fastCurr < slowCurr;
+    s19PrevFast = fastCurr;
+    s19PrevSlow = slowCurr;
+    const rsi = calcRSI(candles, 14);
+    const vwap = calcVWAP(candles);
+    const crossTag = bullCross ? "BULL-CROSS↑" : bearCross ? "BEAR-CROSS↓" : "no-cross";
+    console.log(`[S19] candles=${candles.length} EMA16=${fastCurr.toFixed(1)} EMA64=${slowCurr.toFixed(1)} RSI=${rsi.toFixed(1)} VWAP=${vwap.toFixed(0)} price=${lastNiftyPrice.toFixed(0)} | ${crossTag}`);
+    if (!bullCross && !bearCross)
+        return;
+    const optType = bullCross ? "CE" : "PE";
+    // Filter 1: RSI
+    const rsiOk = optType === "CE" ? rsi < 65 : rsi > 35;
+    const rsiTag = rsiOk
+        ? `RSI=${rsi.toFixed(1)}✓`
+        : `RSI=${rsi.toFixed(1)}✗(CE need <65, PE need >35)`;
+    // Filter 2: VWAP
+    const price = lastNiftyPrice;
+    const vwapOk = optType === "CE" ? price > vwap : price < vwap;
+    const vwapTag = vwapOk
+        ? `VWAP=price ${optType === "CE" ? "above" : "below"}✓`
+        : `VWAP=price ${optType === "CE" ? "below" : "above"} vwap=${vwap.toFixed(0)}✗`;
+    // Filter 3: Fibonacci zone (38.2–50% support for CE, 50–78.6% resistance for PE)
+    // Using last 200 candles (100 min) for stable levels; ±0.5% tolerance
+    const recentHighs = candles.slice(-200).map(c => c.high);
+    const recentLows = candles.slice(-200).map(c => c.low);
+    const fib = calcFibLevels(Math.max(...recentHighs), Math.min(...recentLows));
+    let inFibZone;
+    let fibTag;
+    if (optType === "CE") {
+        const lo = fib["38.2"] * 0.995;
+        const hi = fib["50"] * 1.005;
+        inFibZone = price >= lo && price <= hi;
+        fibTag = inFibZone
+            ? `Fib=in 38.2-50% zone (${fib["38.2"].toFixed(0)}-${fib["50"].toFixed(0)})✓`
+            : `Fib=NOT in 38.2-50% zone (${fib["38.2"].toFixed(0)}-${fib["50"].toFixed(0)}) price=${price.toFixed(0)}✗`;
+    }
+    else {
+        const lo = fib["50"] * 0.995;
+        const hi = fib["78.6"] * 1.005;
+        inFibZone = price >= lo && price <= hi;
+        fibTag = inFibZone
+            ? `Fib=in 50-78.6% zone (${fib["50"].toFixed(0)}-${fib["78.6"].toFixed(0)})✓`
+            : `Fib=NOT in 50-78.6% zone (${fib["50"].toFixed(0)}-${fib["78.6"].toFixed(0)}) price=${price.toFixed(0)}✗`;
+    }
+    // Filter 4: Volume — crossover candle ticks vs 20-candle avg; fallback to OI rising
+    const lastCandle = candles[candles.length - 1];
+    const prev20 = candles.slice(-21, -1);
+    const avgTicks = prev20.reduce((s, c) => s + (c.ticks ?? 1), 0) / (prev20.length || 1);
+    const ticksOk = (lastCandle.ticks ?? 1) > avgTicks;
+    const oiRisingOk = isOIRising("NIFTY");
+    const volOk = ticksOk || oiRisingOk;
+    const volTag = volOk
+        ? `OI/Vol=confirmed (ticks=${lastCandle.ticks ?? 0} avg=${avgTicks.toFixed(0)} oiRising=${oiRisingOk})✓`
+        : `OI/Vol=insufficient (ticks=${lastCandle.ticks ?? 0} avg=${avgTicks.toFixed(0)} oiRising=${oiRisingOk})✗`;
+    const allOk = rsiOk && vwapOk && inFibZone && volOk;
+    const fibLow = optType === "CE" ? fib["38.2"] : fib["50"];
+    const fibHigh = optType === "CE" ? fib["50"] : fib["78.6"];
+    const s19SignalRow = {
+        strategy_id: "ema_confluence_run",
+        index: "NIFTY",
+        direction: bullCross ? "bullish" : "bearish",
+        ema16: Number(fastCurr.toFixed(2)),
+        ema64: Number(slowCurr.toFixed(2)),
+        rsi: Number(rsi.toFixed(2)),
+        price: Number(price.toFixed(2)),
+        vwap: Number(vwap.toFixed(2)),
+        fib_low: Number(fibLow.toFixed(2)),
+        fib_high: Number(fibHigh.toFixed(2)),
+        in_fib_zone: inFibZone,
+        volume_ok: volOk,
+        oi_rising: oiRisingOk,
+        rsi_pass: rsiOk,
+        vwap_pass: vwapOk,
+        all_filters_passed: allOk,
+        trade_taken: false,
+    };
+    if (!allOk) {
+        console.log(`[S19] ${optType === "CE" ? "BULL-CROSS↑" : "BEAR-CROSS↓"} BLOCKED: ${rsiTag} | ${vwapTag} | ${fibTag} | ${volTag}`);
+        supabase.from("strategy_signals").insert(s19SignalRow).then(({ error }) => {
+            if (error)
+                console.error("[S19] Signal log failed:", error.message);
+            else
+                console.log(`[S19] Signal logged — blocked (rsi=${rsiOk} vwap=${vwapOk} fib=${inFibZone} vol=${volOk})`);
+        });
+        return;
+    }
+    const chain = getLatestChain("NIFTY");
+    if (!chain) {
+        console.log(`[S19] No option chain`);
+        return;
+    }
+    const fld = optType === "CE" ? "cePremium" : "pePremium";
+    const allPrem = chain.rows.map(r => r[fld]).filter(p => p > 0).sort((a, b) => a - b);
+    const option = getATMOption(chain, optType, 60, 70, lastNiftyPrice);
+    if (!option) {
+        console.log(`[S19] SIGNAL ${optType} — no ${optType} found in ₹60-70 (chain ₹${allPrem[0]?.toFixed(0) ?? "?"}-${allPrem[allPrem.length - 1]?.toFixed(0) ?? "?"}, spot=${lastNiftyPrice.toFixed(0)})`);
+        return;
+    }
+    const s19Capital = await getEquityCurrentValue("ema_confluence_run");
+    const s19Quantity = capQtyByMaxLoss(calcLots(s19Capital, 0.60, option.premium, 65), option.premium, 0.15, 65, "S19");
+    if (s19Quantity === 0) {
+        console.log(`[S19] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s19Capital).toLocaleString("en-IN")} premium=₹${option.premium})`);
+        return;
+    }
+    console.log(`[S19] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s19Capital).toLocaleString("en-IN")} qty=${s19Quantity} — opening trade`);
+    await openStrategyPosition("ema_confluence_run", {
+        symbol: option.symbol,
+        type: optType,
+        side: "LONG",
+        entry_price: option.premium,
+        current_price: option.premium,
+        quantity: s19Quantity,
+        stop_loss: roundUpToOneDecimal(option.premium * 0.85),
+        trail_sl: null,
+        pnl: 0,
+        status: "OPEN",
+    });
+    supabase.from("strategy_signals").insert({ ...s19SignalRow, trade_taken: true }).then(({ error }) => {
+        if (error)
+            console.error("[S19] Signal log (trade) failed:", error.message);
+        else
+            console.log(`[S19] Signal logged — trade taken`);
+    });
+}
+// ══════════════════════════════════════════════════════════════
 // Strategy 4 — Supertrend (5m candles, 9:45–14:30)
 // ══════════════════════════════════════════════════════════════
 const s4DailyTrades = {};
@@ -2124,6 +2358,95 @@ async function runSupertrendForIndex(index) {
         status: "OPEN",
     });
     s4DailyTrades[todayKey] = dayTrades + 1;
+}
+// ══════════════════════════════════════════════════════════════
+// Strategy 22 — Supertrend Late Entry (5m candles, 11:00–14:30)
+// Clone of S4 with entry window shifted from 9:45 → 11:00 AM.
+// Rationale: 69 archived S4 trades Jun–Jul 2026 showed 9:45–11:00
+// returned −₹42,357 at 25.0% WR vs +₹1,54,238 at 57.7% for 11:00–13:00.
+// ══════════════════════════════════════════════════════════════
+const s22DailyTrades = {};
+async function runStrategySupertrendLate() {
+    if (!isMarketOpen())
+        return;
+    const mins = istMins();
+    if (mins < 660 || mins >= 870)
+        return; // 11:00–14:30
+    const indices = ["NIFTY", "BANKNIFTY"];
+    for (const index of indices) {
+        await runSupertrendLateForIndex(index);
+    }
+}
+async function runSupertrendLateForIndex(index) {
+    const candles5m = getCandles(index, "5m");
+    if (candles5m.length < 10) {
+        console.log(`[S22:${index}] Waiting for 5m candles — have ${candles5m.length}/10`);
+        return;
+    }
+    const openPos = await getOpenStrategyPositions("supertrend_late");
+    const indexPos = openPos.filter(p => p.symbol.startsWith(index));
+    const todayKey = `${index}_${todayIST()}`;
+    const dayTrades = s22DailyTrades[todayKey] ?? 0;
+    if (dayTrades >= 2) {
+        console.log(`[S22:${index}] Daily limit reached (${dayTrades}/2)`);
+        return;
+    }
+    const series = calcSupertrendSeries(candles5m, 7, 3);
+    if (series.length < 2) {
+        console.log(`[S22:${index}] Supertrend series too short (${series.length})`);
+        return;
+    }
+    const currST = series[series.length - 1];
+    const prevST = series[series.length - 2];
+    const flipped = currST.dir !== prevST.dir;
+    console.log(`[S22:${index}] candles=${candles5m.length} ST=${currST.dir}(line=${currST.value.toFixed(0)}) prev=${prevST.dir} | ${flipped ? "FLIP!" : "no-flip"} | dayTrades=${dayTrades}/2 openPos=${indexPos.length}`);
+    if (!flipped)
+        return;
+    for (const pos of indexPos) {
+        const wrongType = currST.dir === "up" ? "PE" : "CE";
+        if (pos.type === wrongType) {
+            const cp = getCurrentPrice(pos.symbol);
+            if (cp > 0)
+                await closeStrategyPosition(pos.id, cp, "CROSSOVER");
+        }
+    }
+    if (indexPos.length >= 1) {
+        console.log(`[S22:${index}] Position exists — skipping new entry`);
+        return;
+    }
+    const optType = currST.dir === "up" ? "CE" : "PE";
+    const chain = getLatestChain(index);
+    if (!chain) {
+        console.log(`[S22:${index}] No option chain`);
+        return;
+    }
+    const fld = optType === "CE" ? "cePremium" : "pePremium";
+    const allPrem = chain.rows.map(r => r[fld]).filter(p => p > 0).sort((a, b) => a - b);
+    const option = getATMOptionForIndex(chain, index, optType, 60, 70);
+    if (!option) {
+        console.log(`[S22:${index}] SIGNAL ${optType} — no option in ₹60-70 (chain ₹${allPrem[0]?.toFixed(0) ?? "?"}-${allPrem[allPrem.length - 1]?.toFixed(0) ?? "?"})`);
+        return;
+    }
+    const s22Capital = await getEquityCurrentValue("supertrend_late");
+    const s22Quantity = capQtyByMaxLoss(calcLots(s22Capital, 0.30, option.premium, LOT_SIZES[index]), option.premium, 0.20, LOT_SIZES[index], `S22:${index}`);
+    if (s22Quantity === 0) {
+        console.log(`[S22:${index}] SIGNAL ${optType} — lot calc=0, skipping (capital=₹${Math.round(s22Capital).toLocaleString("en-IN")} premium=₹${option.premium})`);
+        return;
+    }
+    console.log(`[S22:${index}] SIGNAL ${optType} → ${option.symbol} @ ₹${option.premium} — capital=₹${Math.round(s22Capital).toLocaleString("en-IN")} qty=${s22Quantity} — opening trade`);
+    await openStrategyPosition("supertrend_late", {
+        symbol: option.symbol,
+        type: optType,
+        side: "LONG",
+        entry_price: option.premium,
+        current_price: option.premium,
+        quantity: s22Quantity,
+        stop_loss: roundUpToOneDecimal(option.premium * 0.80),
+        trail_sl: null,
+        pnl: 0,
+        status: "OPEN",
+    });
+    s22DailyTrades[todayKey] = dayTrades + 1;
 }
 // ══════════════════════════════════════════════════════════════
 // Strategy 5 — PCR Reversal (5-min checks, 10:00–14:30)
@@ -2931,6 +3254,7 @@ async function runEquityStrategies() {
             runStrategy2(),
             runStrategy3(),
             runStrategy4(),
+            runStrategySupertrendLate(),
             runStrategy5(),
             runStrategy6(),
             runStrategy7(),
@@ -2945,6 +3269,7 @@ async function runEquityStrategies() {
             runChopLo(),
             runChopMd(),
             runChopHi(),
+            runStrategyConfluenceRun(),
         ]);
         await Promise.allSettled([
             monitorOpenPositions(),
@@ -4734,5 +5059,7 @@ connectBinanceWS();
 runBtcStrategies();
 setInterval(runBtcStrategies, 30000);
 setInterval(monitorBtcPositions, 5000);
+// Persist recorded 30s candles every 60 seconds
+setInterval(flushCandleBuffer, 60000);
 // One-time Sharpe backfill for all BTC strategies on startup
 backfillBtcSharpe().catch(console.error);
