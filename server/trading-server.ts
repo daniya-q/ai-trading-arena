@@ -143,10 +143,12 @@ const phStraddleAttempted = new Set<string>();
 // ── Daily gap state (Strategy 6) ────────────────────────────
 let dailyGapPct  = 0;
 let gapCalcDate  = "";
-let orbHigh: Record<string, number> = {}; // "NIFTY" → ORB high
-let orbLow:  Record<string, number> = {}; // "NIFTY" → ORB low
+let orbHigh: Record<string, number> = {}; // "NIFTY" → ORB high (Orion's copy)
+let orbLow:  Record<string, number> = {}; // "NIFTY" → ORB low  (Orion's copy)
 let orbSet:  Record<string, boolean> = {};
 let prevDayClose: Record<string, number> = {}; // "NIFTY" → prev day close
+// Per-strategy ORB caches — deliberately NOT shared between strategies.
+const s6Orb: Record<string, { high: number; low: number }> = {};
 
 // ── Per-strategy daily trade counters ───────────────────────
 const dailyTradeCounts: Record<string, number> = {};
@@ -184,13 +186,30 @@ function checkDailyReset(): void {
   if (tradeDateStr !== today) {
     tradeDateStr = today;
     for (const k of Object.keys(dailyTradeCounts)) dailyTradeCounts[k] = 0;
-    // Reset ORB state
+    // Reset ORB state (Orion's shared copy)
     for (const k of Object.keys(orbSet)) orbSet[k] = false;
+    // Reset S6's independent ORB cache
+    for (const k of Object.keys(s6Orb)) delete s6Orb[k];
     // Clear expiry day cache
     for (const k of Object.keys(expiryDayCache)) delete expiryDayCache[k];
     gapCalcDate = "";
     phDirAttempted.clear();
     phStraddleAttempted.clear();
+    // prevDayClose was only ever seeded at boot — on a multi-day run the gap
+    // was being computed against a stale close. Re-derive at each date roll.
+    for (const sym of ["NIFTY", "BANKNIFTY", "SENSEX"]) {
+      const c1m = getCandles(sym, "1m");
+      const istD2 = getIST();
+      const istMid2 = Date.UTC(istD2.getUTCFullYear(), istD2.getUTCMonth(), istD2.getUTCDate())
+                    - (5 * 60 + 30) * 60_000;
+      const prior = c1m.filter(c => c.time < istMid2);
+      if (prior.length) {
+        prevDayClose[sym] = prior[prior.length - 1].close;
+        console.log(`[DailyReset] ${sym} prevDayClose = ${prevDayClose[sym]}`);
+      } else {
+        console.warn(`[DailyReset] ${sym} — no prior-day 1m candles in buffer; prevDayClose left at ${prevDayClose[sym] ?? 0}`);
+      }
+    }
     console.log(`[Daily] Reset for ${today}`);
   }
 }
@@ -280,6 +299,24 @@ function getCandles(symbol: string, interval: string): Candle[] {
   const all = [...store.candles];
   if (store.current) all.push({ ...store.current });
   return all;
+}
+
+// ── ORB (opening range) — computed independently per strategy family ───────
+// Previously orbHigh/orbLow/orbSet were set ONLY inside runOrionForIndex(),
+// so any strategy reading them silently inherited Orion's VIX filter.
+// This helper is self-contained and safe to call from anywhere.
+function computeORB(index: string): { high: number; low: number } | null {
+  const candles15m = getCandles(index, "15m");
+  if (!candles15m.length) return null;
+
+  const istD = getIST();
+  const istMid = Date.UTC(istD.getUTCFullYear(), istD.getUTCMonth(), istD.getUTCDate())
+               - (5 * 60 + 30) * 60_000;
+  const orb915Ms = istMid + (9 * 60 + 15) * 60_000;   // 9:15:00 IST today, in UTC ms
+
+  const c = candles15m.find(x => x.time === orb915Ms);
+  if (!c) return null;
+  return { high: c.high, low: c.low };
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2792,6 +2829,34 @@ async function monitorPCRPositions(): Promise<void> {
 // Strategy 6 — Gap + ORB (morning only, before 11:30)
 // ══════════════════════════════════════════════════════════════
 
+// Gap+ORB signal logger. Repurposed columns:
+//   ema16 → gap %, ema64 → prevDayClose, price → spot,
+//   vwap → ORB high, fib_low → ORB low,
+//   rsi_pass → gate passed, volume_ok → trade taken
+async function logGapOrbSignal(opts: {
+  direction: "bullish" | "bearish" | "none";
+  gapPct: number; pdc: number; price: number;
+  orbHigh: number; orbLow: number;
+  tradeTaken: boolean; blockedReason?: string;
+}): Promise<void> {
+  console.log(`[S6] signal gap=${opts.gapPct.toFixed(2)}% pdc=${opts.pdc} price=${opts.price} ORB=${opts.orbLow}-${opts.orbHigh} taken=${opts.tradeTaken}${opts.blockedReason ? ` blocked(${opts.blockedReason})` : ""}`);
+  supabase.from("strategy_signals").insert({
+    strategy_id: "gap_orb", index: "NIFTY",
+    direction: opts.direction === "none" ? "bullish" : opts.direction,
+    ema16:    Number(opts.gapPct.toFixed(4)),
+    ema64:    Number(opts.pdc.toFixed(2)),
+    price:    Number(opts.price.toFixed(2)),
+    vwap:     Number(opts.orbHigh.toFixed(2)),
+    fib_low:  Number(opts.orbLow.toFixed(2)),
+    fib_high: null, in_fib_zone: false,
+    rsi: null, oi_rising: false,
+    trade_taken:        opts.tradeTaken,
+    all_filters_passed: opts.tradeTaken,
+    rsi_pass:  !opts.blockedReason,
+    volume_ok: opts.tradeTaken,
+  }).then(({ error }) => { if (error) console.error("[S6] signal log failed:", error.message); });
+}
+
 async function runStrategy6(): Promise<void> {
   if (!isMarketOpen()) return;
   const mins = istMins();
@@ -2830,12 +2895,14 @@ async function runStrategy6(): Promise<void> {
     console.log(`[S6] Gap calculated: ${dailyGapPct.toFixed(2)}% | open=${todayOpen} PDC=${pdc}`);
   }
 
-  if (!orbSet["NIFTY"]) {
-    console.log(`[S6] ORB not set yet`);
-    return;
+  if (!s6Orb["NIFTY"]) {
+    const orb = computeORB("NIFTY");
+    if (!orb) { console.log(`[S6] ORB not available — 9:15 candle not found yet`); return; }
+    s6Orb["NIFTY"] = orb;
+    console.log(`[S6] ORB set independently — H:${orb.high} L:${orb.low}`);
   }
-  const orbH  = orbHigh["NIFTY"] ?? 0;
-  const orbL  = orbLow["NIFTY"]  ?? 0;
+  const orbH = s6Orb["NIFTY"].high;
+  const orbL = s6Orb["NIFTY"].low;
   const price = lastNiftyPrice;
 
   const chain = getLatestChain("NIFTY");
@@ -2858,7 +2925,10 @@ async function runStrategy6(): Promise<void> {
 
   console.log(`[S6] gap=${dailyGapPct.toFixed(2)}% ORB H=${orbH} L=${orbL} | ${reason}`);
 
-  if (!optType) return;
+  if (!optType) {
+    await logGapOrbSignal({ direction: "none", gapPct: dailyGapPct, pdc, price, orbHigh: orbH, orbLow: orbL, tradeTaken: false, blockedReason: reason });
+    return;
+  }
 
   const option = getATMOption(chain, optType, 60, 70);
   if (!option) return;
@@ -2879,6 +2949,7 @@ async function runStrategy6(): Promise<void> {
     pnl:          0,
     status:       "OPEN",
   });
+  await logGapOrbSignal({ direction: optType === "CE" ? "bullish" : "bearish", gapPct: dailyGapPct, pdc, price, orbHigh: orbH, orbLow: orbL, tradeTaken: true });
 
   dailyTradeCounts[dayKey] = (dailyTradeCounts[dayKey] ?? 0) + 1;
 }
