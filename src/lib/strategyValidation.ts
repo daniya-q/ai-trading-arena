@@ -66,6 +66,20 @@ export const STRATEGY_VALIDATION: Record<string, StrategyValidation> = {
     target: { tier: 'unvalidated' },
     trail:  { tier: 'unvalidated' },
   },
+  vwap_scalper_dband_lo: {
+    entry:    { tier: 'unvalidated', note: 'Inherited from S7' },
+    deadband: { tier: 'testing', note: 'Live A/B vs S7 — 272 archived VWAP_CROSS exits netted −₹1.29L with 91% landing within ±5% of entry (~₹32k fee drag). Threshold not derivable from archive (only 31 reconstructible trades); two candidates under test' },
+    sl:       { tier: 'unvalidated', note: 'Fired once in 295 trades — effectively decorative' },
+    target:   { tier: 'unvalidated' },
+    trail:    { tier: 'unvalidated' },
+  },
+  vwap_scalper_dband_hi: {
+    entry:    { tier: 'unvalidated', note: 'Inherited from S7' },
+    deadband: { tier: 'testing', note: 'Live A/B vs S7 — 272 archived VWAP_CROSS exits netted −₹1.29L with 91% landing within ±5% of entry (~₹32k fee drag). Threshold not derivable from archive (only 31 reconstructible trades); two candidates under test' },
+    sl:       { tier: 'unvalidated', note: 'Fired once in 295 trades — effectively decorative' },
+    target:   { tier: 'unvalidated' },
+    trail:    { tier: 'unvalidated' },
+  },
   ema_crossover_1m: {
     entry:  { tier: 'unvalidated' },
     sl:     { tier: 'unvalidated' },

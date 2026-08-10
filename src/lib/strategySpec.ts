@@ -138,6 +138,38 @@ export const STRATEGY_SPEC: Record<string, StrategySpec> = {
       { label: 'Signal exit', value: 'Opposite VWAP cross' }, CLOSE('3:20 PM IST')],
     sizing: SIZING30 + ' · halves during expiry danger windows',
   },
+  vwap_scalper_dband_lo: {
+    accent: '#FDBA74', instrument: 'Nifty · BankNifty · Sensex options',
+    timeframe: '1-minute candles', window: '9:45 AM – 3:20 PM IST · expiry-aware',
+    entry: [
+      { label: 'Signal', value: 'Pullback to VWAP, then close back across it', param: 'entry' },
+      { label: 'Confirm', value: 'RSI 40–60 + OI rising + prior higher-low (CE) / lower-high (PE)' },
+      { label: 'Strike', value: '₹50–80 premium' },
+    ],
+    exit: [SL('20% · tightens to 10% in expiry danger windows'),
+      TGT('30% · tightens to 15% in danger windows'),
+      { label: 'Breakeven', value: 'At +25% profit, SL moves to entry' },
+      TRAIL('activates +35% · trails 12% (5% in danger windows)'),
+      { label: 'Signal exit', value: 'Opposite VWAP cross — only if price is ≥0.03% past VWAP (deadband)', param: 'deadband' },
+      CLOSE('3:20 PM IST')],
+    sizing: SIZING30 + ' · halves during expiry danger windows',
+  },
+  vwap_scalper_dband_hi: {
+    accent: '#FB923C', instrument: 'Nifty · BankNifty · Sensex options',
+    timeframe: '1-minute candles', window: '9:45 AM – 3:20 PM IST · expiry-aware',
+    entry: [
+      { label: 'Signal', value: 'Pullback to VWAP, then close back across it', param: 'entry' },
+      { label: 'Confirm', value: 'RSI 40–60 + OI rising + prior higher-low (CE) / lower-high (PE)' },
+      { label: 'Strike', value: '₹50–80 premium' },
+    ],
+    exit: [SL('20% · tightens to 10% in expiry danger windows'),
+      TGT('30% · tightens to 15% in danger windows'),
+      { label: 'Breakeven', value: 'At +25% profit, SL moves to entry' },
+      TRAIL('activates +35% · trails 12% (5% in danger windows)'),
+      { label: 'Signal exit', value: 'Opposite VWAP cross — only if price is ≥0.08% past VWAP (deadband)', param: 'deadband' },
+      CLOSE('3:20 PM IST')],
+    sizing: SIZING30 + ' · halves during expiry danger windows',
+  },
   ema_crossover_asym: {
     accent: '#34D399', instrument: 'Nifty 50 options · weekly expiry',
     timeframe: '30-second candles', window: '9:45 AM – 3:20 PM IST',
@@ -407,6 +439,7 @@ export const SHORT_LABEL: Record<string, string> = {
   expiry_powerhour_dir: 'Exp Dir', expiry_powerhour_straddle: 'Exp Strad',
   orion: 'Orion', ema_confluence: 'Confluence', ema_confluence_run: 'Confluence Run', supertrend: 'Supertrend', supertrend_late: 'Supertrend Late',
   pcr_reversal: 'PCR Rev', gap_orb: 'Gap+ORB', vwap_scalper: 'VWAP Scalp',
+  vwap_scalper_dband_lo: 'VWAP DB .03', vwap_scalper_dband_hi: 'VWAP DB .08',
   btc_ema_crossover: 'BTC EMA ×', btc_orion: 'BTC Orion', btc_ema_confluence: 'BTC Confluence',
   btc_supertrend: 'BTC Supertrend', btc_vwap_scalper: 'BTC VWAP',
 };
@@ -424,7 +457,7 @@ export const STRATEGY_FAMILIES: StrategyFamily[] = [
   { title: 'Expiry Day', subtitle: 'Power-hour trades — expiry Tuesdays only, one entry at 2:45 PM',
     ids: ['expiry_powerhour_dir', 'expiry_powerhour_straddle'] },
   { title: 'Standalone Strategies', subtitle: 'Independent signals — no variant race',
-    ids: ['orion', 'ema_confluence', 'ema_confluence_run', 'supertrend', 'supertrend_late', 'pcr_reversal', 'gap_orb', 'vwap_scalper'] },
+    ids: ['orion', 'ema_confluence', 'ema_confluence_run', 'supertrend', 'supertrend_late', 'pcr_reversal', 'gap_orb', 'vwap_scalper', 'vwap_scalper_dband_lo', 'vwap_scalper_dband_hi'] },
 ];
 
 export const BTC_FAMILIES: StrategyFamily[] = [
