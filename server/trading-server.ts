@@ -177,7 +177,7 @@ function isMarketOpen(): boolean {
   const d = getIST();
   if (d.getUTCDay() === 0 || d.getUTCDay() === 6) return false;
   const m = d.getUTCHours() * 60 + d.getUTCMinutes();
-  return m >= 555 && m <= 930; // 9:15–15:30
+  return m >= 555 && m <= 940; // 9:15–15:40 IST (F&O session; extended from 15:30 on 2026-08-03)
 }
 
 // Reset daily counters at start of day
@@ -231,8 +231,10 @@ async function isExpiryDay(index: "NIFTY" | "BANKNIFTY" | "SENSEX"): Promise<boo
   return result;
 }
 
-// Danger windows: 11:30 12:30 13:00 14:00 14:45 15:00 IST (in minutes from midnight)
-const DANGER_WINDOW_MINS = [690, 750, 780, 840, 885, 900];
+// Danger windows: 11:30 12:30 13:00 14:00 14:45 15:00 15:15 IST (in minutes from midnight)
+// 915 (15:15) added 2026-08-31: the F&O settlement VWAP window is now 15:10–15:40 and
+// the index freezes at 15:15 while options keep trading — the riskiest stretch of the day.
+const DANGER_WINDOW_MINS = [690, 750, 780, 840, 885, 900, 915];
 
 function isDangerWindow(): boolean {
   const m = istMins();
@@ -816,7 +818,7 @@ function bufferClosedCandle(symbol: string, timeframe: string, c: Candle): void 
   if (!RECORD_SYMBOLS.has(symbol)) return;          // BTC excluded — Kraken has free history
   const ist  = new Date(c.time + 5.5 * 3600 * 1000);
   const mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
-  if (mins < 555 || mins > 930) return;             // 9:15–15:30 IST only
+  if (mins < 555 || mins > 940) return;             // 9:15–15:40 IST — F&O session extended 2026-08-03
   candleBuffer.push({
     symbol,
     timeframe,
@@ -5556,7 +5558,7 @@ async function closeStalePositions(): Promise<void> {
     const exitPx = cached > 0 ? cached : (pos.current_price ?? pos.entry_price);
     const detail = `STALE_CLOSE — position opened ${openedIst} was still OPEN at boot on ${todayIst}. ` +
       `Force-closed at ${cached > 0 ? "live" : "last-known"} price ₹${exitPx}. ` +
-      `Cause: server was not running during the 15:20 hard-close window.`;
+      `Cause: server was not running during the hard-close window (15:20) or the watchdog window (15:25+, F&O session ends 15:40).`;
 
     console.warn(`[StaleScan] ORPHAN: ${pos.strategy_id} ${pos.symbol} opened ${openedIst} — closing at ₹${exitPx}`);
     await closeStrategyPosition(pos.id, exitPx, "STALE_CLOSE", detail);
