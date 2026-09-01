@@ -851,8 +851,14 @@ async function flushCandleBuffer(): Promise<void> {
 // Option-chain snapshots — the real-premium archive. Expired weeklies are
 // purged by Upstox, so this is the only path to real historical premiums.
 async function recordOptionChain(index: string, chain: FullOptionChain): Promise<void> {
+  // Dense sampling through the CAS window (15:20–15:40): the auction print lands
+  // ~15:28–15:30 and 2-minute sampling misses it on roughly half of days.
+  const istNow = new Date(Date.now() + 5.5 * 3600 * 1000);
+  const nowMins = istNow.getUTCHours() * 60 + istNow.getUTCMinutes();
+  const inCasWindow = nowMins >= 920 && nowMins <= 940;   // 15:20–15:40 IST
+
   chainPollCount[index] = (chainPollCount[index] ?? 0) + 1;
-  if (chainPollCount[index] % CHAIN_RECORD_EVERY !== 0) return;
+  if (!inCasWindow && chainPollCount[index] % CHAIN_RECORD_EVERY !== 0) return;
   const sorted = [...chain.rows].sort((a, b) => a.strike - b.strike);
   const atmIdx = sorted.findIndex(r => r.strike === chain.atmStrike);
   const from = atmIdx < 0 ? 0 : Math.max(0, atmIdx - CHAIN_STRIKE_WINDOW);
