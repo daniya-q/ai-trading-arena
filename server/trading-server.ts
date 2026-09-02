@@ -1008,17 +1008,22 @@ function generateExitDetail(
   }
 }
 
-function calcEquityCharges(entryPrice: number, exitPrice: number, qty: number): number {
+function calcEquityCharges(entryPrice: number, exitPrice: number, qty: number, symbol: string): number {
   const lotValue_entry  = entryPrice * qty;
   const lotValue_exit   = exitPrice  * qty;
   const turnover        = lotValue_entry + lotValue_exit;
+  const isBSE           = /^(SENSEX|BANKEX)\b/i.test(symbol);   // BSE = SENSEX / BANKEX options
+
   const brokerage       = 40;                                    // ₹20/order × 2 orders (entry + exit)
   const stt             = lotValue_exit  * 0.001;                // 0.1% on sell-side premium (options)
-  const exchangeCharges = turnover       * 0.00053;              // NSE: 0.053% on total turnover
-  const gst             = (brokerage + exchangeCharges) * 0.18;  // 18% on brokerage + exchange charges
+  const exchangeCharges = isBSE                                  // SEBI flat-fee circular, Oct 2024
+    ? turnover * 0.000325                                        //   BSE SENSEX/BANKEX: ₹3,250/crore
+    : turnover * 0.0003503;                                      //   NSE NIFTY/BANKNIFTY: ₹3,503/crore
+  const ipft            = isBSE ? 0 : turnover * 0.000005;      // NSE IPFT ₹50/crore; BSE equiv not published
+  const gst             = (brokerage + exchangeCharges + ipft) * 0.18; // 18% on brokerage + ETC + IPFT
   const sebi            = (turnover / 10_000_000) * 10;          // ₹10 per crore of turnover
   const stampDuty       = lotValue_entry * 0.00003;              // 0.003% on buy-side only
-  return Math.round((brokerage + stt + exchangeCharges + gst + sebi + stampDuty) * 100) / 100;
+  return Math.round((brokerage + stt + exchangeCharges + ipft + gst + sebi + stampDuty) * 100) / 100;
 }
 
 async function closeStrategyPosition(
@@ -1036,7 +1041,7 @@ async function closeStrategyPosition(
 
   const p = pos as { entry_price: number; quantity: number; strategy_id: string; symbol: string; type: string; stop_loss: number | null; trail_sl: number | null };
   const grossPnl  = (exitPrice - p.entry_price) * p.quantity;
-  const charges   = calcEquityCharges(p.entry_price, exitPrice, p.quantity);
+  const charges   = calcEquityCharges(p.entry_price, exitPrice, p.quantity, p.symbol);
   const netPnl    = grossPnl - charges;
   const baseDetail = generateExitDetail(reason, p, exitPrice, peakPremiums[posId]);
   const detail     = appendDetail ? `${baseDetail} ${appendDetail}` : baseDetail;
