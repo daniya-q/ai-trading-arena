@@ -35,11 +35,6 @@ const EMA_EXIT: SpecRow[] = [
 ];
 
 export const STRATEGY_SPEC: Record<string, StrategySpec> = {
-  ema_crossover: {
-    accent: '#F59E0B', instrument: 'Nifty 50 options · weekly expiry',
-    timeframe: '30-second candles', window: '9:45 AM – 3:20 PM IST',
-    entry: EMA_ENTRY, exit: EMA_EXIT, sizing: SIZING60,
-  },
   ema_crossover_1m: {
     accent: '#EC4899', instrument: 'Nifty 50 options · weekly expiry',
     timeframe: '1-minute candles', window: '9:45 AM – 3:20 PM IST',
@@ -57,19 +52,6 @@ export const STRATEGY_SPEC: Record<string, StrategySpec> = {
       { label: 'Breakeven', value: 'At +20% profit, SL moves to entry' },
       TRAIL('activates +35% · trails 15% below peak'), CLOSE('3:20 PM IST')],
     sizing: SIZING30 + ' · multi-index (can hold all three)',
-  },
-  ema_confluence: {
-    accent: '#10B981', instrument: 'Nifty 50 options · weekly expiry',
-    timeframe: '30-second candles', window: '9:45 AM – 3:20 PM IST',
-    entry: [
-      { label: 'Filter 1', value: '16 EMA crosses 64 EMA', param: 'entry' },
-      { label: 'Filter 2 — RSI', value: 'CE requires RSI < 65 · PE requires RSI > 35', param: 'rsi' },
-      { label: 'Filter 3 — VWAP', value: 'CE above VWAP · PE below VWAP', param: 'vwap' },
-      { label: 'Filter 4 — Volume', value: 'Candle ticks > 20-candle avg OR OI rising' },
-      { label: 'Filter 5 — Fib', value: 'CE in 38.2–50% zone · PE in 50–78.6% zone', param: 'fib' },
-      { label: 'Note', value: 'All five must align simultaneously' },
-    ],
-    exit: EMA_EXIT, sizing: SIZING60,
   },
   supertrend: {
     accent: '#EF4444', instrument: 'Nifty + BankNifty options',
@@ -170,36 +152,6 @@ export const STRATEGY_SPEC: Record<string, StrategySpec> = {
       CLOSE('3:20 PM IST')],
     sizing: SIZING30 + ' · halves during expiry danger windows',
   },
-  ema_crossover_asym: {
-    accent: '#34D399', instrument: 'Nifty 50 options · weekly expiry',
-    timeframe: '30-second candles', window: '9:45 AM – 3:20 PM IST',
-    entry: [...EMA_ENTRY,
-      { label: 'Variant', value: 'Entry instant; exit/flip needs 2-bar confirmation', param: 'confirmation' }],
-    exit: [...EMA_EXIT.slice(0, 3),
-      { label: 'Signal exit', value: 'Opposite cross must hold 2 consecutive bars', param: 'confirmation' },
-      CLOSE('3:20 PM IST')],
-    sizing: SIZING60,
-  },
-  ema_crossover_confirm: {
-    accent: '#60A5FA', instrument: 'Nifty 50 options · weekly expiry',
-    timeframe: '30-second candles', window: '9:45 AM – 3:20 PM IST',
-    entry: [...EMA_ENTRY,
-      { label: 'Variant', value: 'Both entry AND exit need 2-bar confirmation', param: 'confirmation' }],
-    exit: [...EMA_EXIT.slice(0, 3),
-      { label: 'Signal exit', value: 'Opposite cross must hold 2 consecutive bars', param: 'confirmation' },
-      CLOSE('3:20 PM IST')],
-    sizing: SIZING60,
-  },
-  ema_crossover_dualtf: {
-    accent: '#A78BFA', instrument: 'Nifty 50 options · weekly expiry',
-    timeframe: '30-second + 1-minute candles', window: '9:45 AM – 3:20 PM IST',
-    entry: [...EMA_ENTRY,
-      { label: 'Variant', value: '30s cross AND 1-min EMAs must agree on direction', param: 'dual_tf' }],
-    exit: [...EMA_EXIT.slice(0, 3),
-      { label: 'Signal exit', value: 'Opposite 30s cross AND 1-min agreement', param: 'dual_tf' },
-      CLOSE('3:20 PM IST')],
-    sizing: SIZING60,
-  },
   ema_crossover_1m_run: {
     accent: '#84CC16', instrument: 'Nifty 50 options · weekly expiry',
     timeframe: '1-minute candles', window: '9:45 AM – 3:20 PM IST',
@@ -244,70 +196,6 @@ export const STRATEGY_SPEC: Record<string, StrategySpec> = {
       { label: 'Target', value: 'NONE — no profit target' },
       TRAIL('activates +50% · trails 20% below peak, per leg'), CLOSE('3:18 PM IST')],
     sizing: 'Half size per leg (30% capital each) · ₹4,000 max loss per leg',
-  },
-  ema_crossover_chop_lo: {
-    accent: '#22D3EE', instrument: 'Nifty 50 options · weekly expiry',
-    timeframe: '30-second candles', window: '9:45 AM – 3:20 PM IST',
-    entry: [...EMA_ENTRY,
-      { label: 'Chop filter', value: 'Blocks entry when |EMA16−EMA64| / spot < 0.05%', param: 'chop_filter' }],
-    exit: EMA_EXIT, sizing: SIZING60,
-  },
-  ema_crossover_chop_md: {
-    accent: '#2DD4BF', instrument: 'Nifty 50 options · weekly expiry',
-    timeframe: '30-second candles', window: '9:45 AM – 3:20 PM IST',
-    entry: [...EMA_ENTRY,
-      { label: 'Chop filter', value: 'Blocks entry when |EMA16−EMA64| / spot < 0.10%', param: 'chop_filter' }],
-    exit: EMA_EXIT, sizing: SIZING60,
-  },
-  ema_crossover_chop_hi: {
-    accent: '#4ADE80', instrument: 'Nifty 50 options · weekly expiry',
-    timeframe: '30-second candles', window: '9:45 AM – 3:20 PM IST',
-    entry: [...EMA_ENTRY,
-      { label: 'Chop filter', value: 'Blocks entry when |EMA16−EMA64| / spot < 0.15%', param: 'chop_filter' }],
-    exit: EMA_EXIT, sizing: SIZING60,
-  },
-  ema_crossover_run: {
-    accent: '#A3E635', instrument: 'Nifty 50 options · weekly expiry',
-    timeframe: '30-second candles', window: '9:45 AM – 3:20 PM IST',
-    entry: EMA_ENTRY,
-    exit: [
-      SL('15% of premium'),
-      { label: 'Target', value: 'NONE — removed', param: 'no_target' },
-      { label: 'Trail SL', value: 'NONE — removed', param: 'no_trail' },
-      { label: 'Signal exit', value: 'Opposite EMA crossover' },
-      CLOSE('3:20 PM IST'),
-    ],
-    sizing: SIZING60,
-  },
-  ema_crossover_runtrail: {
-    accent: '#FB923C', instrument: 'Nifty 50 options · weekly expiry',
-    timeframe: '30-second candles', window: '9:45 AM – 3:20 PM IST',
-    entry: EMA_ENTRY,
-    exit: [
-      SL('15% of premium'),
-      { label: 'Target', value: 'NONE — removed', param: 'no_target' },
-      TRAIL('activates +20% · trails 10% below peak (ratchet)'),
-      { label: 'Signal exit', value: 'Opposite EMA crossover' },
-      CLOSE('3:20 PM IST'),
-    ],
-    sizing: SIZING60,
-  },
-  ema_confluence_run: {
-    accent: '#34D399', instrument: 'Nifty 50 options · weekly expiry',
-    timeframe: '30-second candles', window: '9:45 AM – 3:20 PM IST',
-    entry: [
-      { label: 'Filter 1', value: '16 EMA crosses 64 EMA', param: 'entry' },
-      { label: 'Filter 2 — RSI', value: 'CE requires RSI < 65 · PE requires RSI > 35', param: 'rsi' },
-      { label: 'Filter 3 — VWAP', value: 'CE above VWAP · PE below VWAP', param: 'vwap' },
-      { label: 'Filter 4 — Volume', value: 'Candle ticks > 20-candle avg OR OI rising' },
-      { label: 'Filter 5 — Fib', value: 'CE in 38.2–50% zone · PE in 50–78.6% zone', param: 'fib' },
-      { label: 'Note', value: 'All five must align simultaneously' },
-    ],
-    exit: [SL('15% of premium'),
-      { label: 'Target', value: 'NONE — expectancy sweep: no-target = 2.18 pts/trade vs 1.04 best fixed', param: 'no_target' },
-      { label: 'Trail SL', value: 'NONE — all 16 trail configs lost to no-trail in 4.5yr sweep', param: 'no_trail' },
-      { label: 'Signal exit', value: 'Opposite EMA crossover' }, CLOSE('3:20 PM IST')],
-    sizing: SIZING60,
   },
 
   // ─────────── BTC STRATEGIES ───────────
@@ -431,13 +319,9 @@ export const accentFor = (id: string) => STRATEGY_SPEC[id]?.accent ?? '#6b7280';
 
 // ── Short labels for compact displays (correlation matrix etc.) ──
 export const SHORT_LABEL: Record<string, string> = {
-  ema_crossover: 'EMA ×', ema_crossover_1m: 'EMA 1m',
-  ema_crossover_asym: 'Asym', ema_crossover_confirm: 'Confirm', ema_crossover_dualtf: 'Dual-TF',
-  ema_crossover_chop_lo: 'Chop .05', ema_crossover_chop_md: 'Chop .10', ema_crossover_chop_hi: 'Chop .15',
-  ema_crossover_1m_run: 'Run', ema_crossover_1m_runtrail: 'Run+Trail',
-  ema_crossover_run: 'EMA Run', ema_crossover_runtrail: 'EMA Run+Trail',
+  ema_crossover_1m: 'EMA 1m', ema_crossover_1m_run: 'Run', ema_crossover_1m_runtrail: 'Run+Trail',
   expiry_powerhour_dir: 'Exp Dir', expiry_powerhour_straddle: 'Exp Strad',
-  orion: 'Orion', ema_confluence: 'Confluence', ema_confluence_run: 'Confluence Run', supertrend: 'Supertrend', supertrend_late: 'Supertrend Late',
+  orion: 'Orion', supertrend: 'Supertrend', supertrend_late: 'Supertrend Late',
   pcr_reversal: 'PCR Rev', gap_orb: 'Gap+ORB', vwap_scalper: 'VWAP Scalp',
   vwap_scalper_dband_lo: 'VWAP DB .03', vwap_scalper_dband_hi: 'VWAP DB .08',
   btc_ema_crossover: 'BTC EMA ×', btc_orion: 'BTC Orion', btc_ema_confluence: 'BTC Confluence',
@@ -448,16 +332,12 @@ export const shortLabel = (id: string) => SHORT_LABEL[id] ?? id;
 // ── Experiment families for dashboard grouping ──
 export interface StrategyFamily { title: string; subtitle: string; ids: string[]; }
 export const STRATEGY_FAMILIES: StrategyFamily[] = [
-  { title: 'EMA 30s Family', subtitle: 'S1 control vs confirmation, chop-filter & no-target variants',
-    ids: ['ema_crossover', 'ema_crossover_asym', 'ema_crossover_confirm', 'ema_crossover_dualtf',
-          'ema_crossover_chop_lo', 'ema_crossover_chop_md', 'ema_crossover_chop_hi',
-          'ema_crossover_run', 'ema_crossover_runtrail'] },
   { title: 'EMA 1-minute Family', subtitle: 'S8 control vs no-target exit variants',
     ids: ['ema_crossover_1m', 'ema_crossover_1m_run', 'ema_crossover_1m_runtrail'] },
   { title: 'Expiry Day', subtitle: 'Power-hour trades — expiry Tuesdays only, one entry at 2:45 PM',
     ids: ['expiry_powerhour_dir', 'expiry_powerhour_straddle'] },
   { title: 'Standalone Strategies', subtitle: 'Independent signals — no variant race',
-    ids: ['orion', 'ema_confluence', 'ema_confluence_run', 'supertrend', 'supertrend_late', 'pcr_reversal', 'gap_orb', 'vwap_scalper', 'vwap_scalper_dband_lo', 'vwap_scalper_dband_hi'] },
+    ids: ['orion', 'supertrend', 'supertrend_late', 'pcr_reversal', 'gap_orb', 'vwap_scalper', 'vwap_scalper_dband_lo', 'vwap_scalper_dband_hi'] },
 ];
 
 export const BTC_FAMILIES: StrategyFamily[] = [

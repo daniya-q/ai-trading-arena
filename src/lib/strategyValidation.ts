@@ -14,26 +14,11 @@ export interface StrategyValidation {
 }
 
 export const STRATEGY_VALIDATION: Record<string, StrategyValidation> = {
-  ema_crossover: {
-    entry:  { tier: 'unvalidated', note: 'Signal tested as non-predictive; never optimized' },
-    strike: { tier: 'unvalidated' },
-    sl:     { tier: 'unvalidated' },
-    target: { tier: 'unvalidated' },
-    trail:  { tier: 'unvalidated' },
-  },
   orion: {
     entry:  { tier: 'unvalidated' },
     sl:     { tier: 'unvalidated' },
     target: { tier: 'unvalidated' },
     trail:  { tier: 'unvalidated' },
-  },
-  ema_confluence: {
-    rsi:    { tier: 'validated', note: 'Signal-log analysis + sweep; 65/35 confirmed' },
-    vwap:   { tier: 'unvalidated' },
-    fib:    { tier: 'unvalidated' },
-    sl:     { tier: 'unvalidated', note: '≈ backtest optimum by coincidence, not confirmed' },
-    target: { tier: 'validated', note: 'Tested — HARMFUL; fixed target caps winners, should be removed' },
-    trail:  { tier: 'validated', note: 'Tested — HARMFUL; trail clips tail-runners, should be removed' },
   },
   supertrend: {
     entry:  { tier: 'unvalidated' },
@@ -86,18 +71,6 @@ export const STRATEGY_VALIDATION: Record<string, StrategyValidation> = {
     target: { tier: 'unvalidated' },
     trail:  { tier: 'unvalidated' },
   },
-  ema_crossover_asym: {
-    confirmation: { tier: 'testing', note: 'Live A/B vs S1; backtest said inert' },
-    exits:        { tier: 'unvalidated', note: 'Inherited from S1' },
-  },
-  ema_crossover_confirm: {
-    confirmation: { tier: 'testing', note: 'Live A/B vs S1; backtest said inert' },
-    exits:        { tier: 'unvalidated', note: 'Inherited from S1' },
-  },
-  ema_crossover_dualtf: {
-    dual_tf: { tier: 'testing', note: 'Live A/B vs S1' },
-    exits:   { tier: 'unvalidated', note: 'Inherited from S1' },
-  },
   ema_crossover_1m_run: {
     no_target: { tier: 'testing', note: 'Live A/B vs S8' },
     sl:        { tier: 'unvalidated' },
@@ -116,38 +89,6 @@ export const STRATEGY_VALIDATION: Record<string, StrategyValidation> = {
     entry: { tier: 'testing', note: 'Real-index wave analysis; live confirming' },
     sl:    { tier: 'unvalidated' },
     trail: { tier: 'unvalidated' },
-  },
-  ema_crossover_chop_lo: {
-    chop_filter: { tier: 'testing', note: 'Live A/B; threshold 0.05%' },
-    exits:       { tier: 'unvalidated', note: 'Inherited from S1' },
-  },
-  ema_crossover_chop_md: {
-    chop_filter: { tier: 'testing', note: 'Live A/B; threshold 0.10% (backtest pick)' },
-    exits:       { tier: 'unvalidated', note: 'Inherited from S1' },
-  },
-  ema_crossover_chop_hi: {
-    chop_filter: { tier: 'testing', note: 'Live A/B; threshold 0.15%' },
-    exits:       { tier: 'unvalidated', note: 'Inherited from S1' },
-  },
-  ema_crossover_run: {
-    entry:     { tier: 'unvalidated', note: 'Inherited from S1' },
-    sl:        { tier: 'unvalidated' },
-    no_target: { tier: 'testing', note: 'Live A/B vs S1 — transfers the Confluence expectancy finding to the unfiltered 30s signal' },
-    no_trail:  { tier: 'testing', note: 'Live A/B vs S21 — settles the trail question on 30s data' },
-  },
-  ema_crossover_runtrail: {
-    entry:     { tier: 'unvalidated', note: 'Inherited from S1' },
-    sl:        { tier: 'unvalidated' },
-    no_target: { tier: 'testing', note: 'Live A/B vs S1' },
-    trail:     { tier: 'testing', note: 'Live A/B vs S20 — does the trail help or clip winners on 30s?' },
-  },
-  ema_confluence_run: {
-    rsi:      { tier: 'validated', note: 'Signal-log analysis + sweep; 65/35 confirmed (shared with S3)' },
-    vwap:     { tier: 'unvalidated' },
-    fib:      { tier: 'unvalidated' },
-    sl:       { tier: 'unvalidated', note: 'Inherited from S3' },
-    no_target: { tier: 'validated', note: 'Expectancy sweep on 4.5yr real index data: no-target = 2.18 pts/trade vs 1.04 best fixed target' },
-    no_trail:  { tier: 'validated', note: 'All 16 trail configs underperformed no-trail in 4.5yr sweep' },
   },
 
   // ─────────── BTC STRATEGIES ───────────
