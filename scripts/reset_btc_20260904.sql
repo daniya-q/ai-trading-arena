@@ -1,6 +1,7 @@
 -- ────────────────────────────────────────────────────────────────────────────
 -- BTC strategies reset — Sep 4, 2026
--- New architecture: 5× leverage · 3% price SL · simple trail (+6%/3%)
+-- New architecture: 5× leverage · 1.5% price SL · simple trail (+3%/1.5%)
+-- Risk: qty_inr = capital × 5× = ₹5,00,000 notional · 1.5% SL = ₹7,500 max loss per trade
 -- Run this in Supabase SQL editor AFTER the new code is live on Railway.
 -- ────────────────────────────────────────────────────────────────────────────
 

@@ -200,9 +200,11 @@ export const STRATEGY_SPEC: Record<string, StrategySpec> = {
 
   // ─────────── BTC STRATEGIES ───────────
   // Shared: BTC/USD via Kraken, LONG+SHORT, 24/7, no hard close.
-  // All strategies: 5× leverage. Sizing: qty_inr = capital × 50% × 5×.
+  // All strategies: 5× leverage. Sizing: qty_inr = capital × leverage.
+  // At ₹1,00,000 capital: ₹5,00,000 notional · 1.5% SL = ₹7,500 max loss (7.5% of capital).
   // Charges: Kraken taker 0.26%/side = 0.52% round-trip on notional (≈2.6% of capital at 5×).
-  // Exit: hard SL at 3% price move; trail activates at +6%, trails 3% from peak.
+  // Exit: hard SL at 1.5% price move; trail activates at +3%, trails 1.5% from peak.
+  // Note: 15m candle buffer seeded from Kraken history at startup (~seconds to first signal).
   btc_ema_crossover: {
     accent: '#F59E0B', instrument: 'BTC/USD · Kraken · LONG + SHORT',
     timeframe: '15-minute candles', window: '24/7 — no market hours, no hard close',
@@ -212,11 +214,11 @@ export const STRATEGY_SPEC: Record<string, StrategySpec> = {
       { label: 'Behaviour', value: 'Max 1 position/direction per day; flips on opposite cross' },
     ],
     exit: [
-      { label: 'Hard SL', value: '3% price move from entry', param: 'sl' },
-      { label: 'Trail SL', value: 'Activates at +6% · trails 3% below peak price', param: 'trail' },
+      { label: 'Hard SL', value: '1.5% price move from entry', param: 'sl' },
+      { label: 'Trail SL', value: 'Activates at +3% · trails 1.5% below peak price', param: 'trail' },
       { label: 'Signal exit', value: 'Opposite EMA cross' },
     ],
-    sizing: 'qty_inr = capital × 50% × 5× · ₹8,000 max-loss cap',
+    sizing: '₹5,00,000 notional at 5× · 1.5% stop = ₹7,500 max loss per trade',
     charges: '0.52% round-trip on notional (≈2.6% of capital at 5×)',
   },
   btc_orion: {
@@ -229,10 +231,10 @@ export const STRATEGY_SPEC: Record<string, StrategySpec> = {
       { label: 'Limit', value: 'Max 2 trades per day' },
     ],
     exit: [
-      { label: 'Hard SL', value: '3% price move from entry', param: 'sl' },
-      { label: 'Trail SL', value: 'Activates at +6% · trails 3% below peak price', param: 'trail' },
+      { label: 'Hard SL', value: '1.5% price move from entry', param: 'sl' },
+      { label: 'Trail SL', value: 'Activates at +3% · trails 1.5% below peak price', param: 'trail' },
     ],
-    sizing: 'qty_inr = capital × 50% × 5× · ₹8,000 max-loss cap',
+    sizing: '₹5,00,000 notional at 5× · 1.5% stop = ₹7,500 max loss per trade',
     charges: '0.52% round-trip on notional (≈2.6% of capital at 5×)',
   },
   btc_ema_confluence: {
@@ -248,10 +250,10 @@ export const STRATEGY_SPEC: Record<string, StrategySpec> = {
       { label: 'Note', value: 'All five must align simultaneously' },
     ],
     exit: [
-      { label: 'Hard SL', value: '3% price move from entry', param: 'sl' },
-      { label: 'Trail SL', value: 'Activates at +6% · trails 3% below peak price', param: 'trail' },
+      { label: 'Hard SL', value: '1.5% price move from entry', param: 'sl' },
+      { label: 'Trail SL', value: 'Activates at +3% · trails 1.5% below peak price', param: 'trail' },
     ],
-    sizing: 'qty_inr = capital × 50% × 5× · ₹8,000 max-loss cap',
+    sizing: '₹5,00,000 notional at 5× · 1.5% stop = ₹7,500 max loss per trade',
     charges: '0.52% round-trip on notional (≈2.6% of capital at 5×)',
   },
   btc_supertrend: {
@@ -263,11 +265,11 @@ export const STRATEGY_SPEC: Record<string, StrategySpec> = {
       { label: 'Limit', value: 'Max 2 trades per day' },
     ],
     exit: [
-      { label: 'Hard SL', value: '3% price move from entry', param: 'sl' },
-      { label: 'Trail SL', value: 'Activates at +6% · trails 3% below peak price', param: 'trail' },
+      { label: 'Hard SL', value: '1.5% price move from entry', param: 'sl' },
+      { label: 'Trail SL', value: 'Activates at +3% · trails 1.5% below peak price', param: 'trail' },
       { label: 'Signal exit', value: 'Opposite Supertrend flip' },
     ],
-    sizing: 'qty_inr = capital × 50% × 5× · ₹8,000 max-loss cap',
+    sizing: '₹5,00,000 notional at 5× · 1.5% stop = ₹7,500 max loss per trade',
     charges: '0.52% round-trip on notional (≈2.6% of capital at 5×)',
   },
   btc_vwap_scalper: {
@@ -280,11 +282,11 @@ export const STRATEGY_SPEC: Record<string, StrategySpec> = {
       { label: 'Structure', value: 'Previous candle made a higher low (LONG) / lower high (SHORT)' },
     ],
     exit: [
-      { label: 'Hard SL', value: '3% price move from entry', param: 'sl' },
-      { label: 'Trail SL', value: 'Activates at +6% · trails 3% below peak price', param: 'trail' },
+      { label: 'Hard SL', value: '1.5% price move from entry', param: 'sl' },
+      { label: 'Trail SL', value: 'Activates at +3% · trails 1.5% below peak price', param: 'trail' },
       { label: 'Signal exit', value: 'Opposite VWAP cross on 5m' },
     ],
-    sizing: 'qty_inr = capital × 50% × 5× · ₹8,000 max-loss cap',
+    sizing: '₹5,00,000 notional at 5× · 1.5% stop = ₹7,500 max loss per trade',
     charges: '0.52% round-trip on notional (≈2.6% of capital at 5×)',
   },
 };
@@ -316,6 +318,6 @@ export const STRATEGY_FAMILIES: StrategyFamily[] = [
 ];
 
 export const BTC_FAMILIES: StrategyFamily[] = [
-  { title: 'BTC Strategies', subtitle: 'BTC/USD via Kraken · 24/7 · 5× leverage · 3% SL · +6% trail activates',
+  { title: 'BTC Strategies', subtitle: 'BTC/USD via Kraken · 24/7 · 5× · ₹7,500 max loss · 1.5% SL · +3% trail activates',
     ids: ['btc_ema_crossover', 'btc_orion', 'btc_ema_confluence', 'btc_supertrend', 'btc_vwap_scalper'] },
 ];

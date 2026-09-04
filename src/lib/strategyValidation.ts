@@ -92,45 +92,46 @@ export const STRATEGY_VALIDATION: Record<string, StrategyValidation> = {
   },
 
   // ─────────── BTC STRATEGIES ───────────
-  // Sep 2026 rebuild: all 5 strategies reset to 5× leverage, 3% price SL, simple trail.
+  // Sep 2026 rebuild: all 5 strategies at 5× leverage, 1.5% price SL, simple trail.
+  // Sizing: qty_inr = capital × leverage (no 50% factor) → ₹5L notional at ₹1L capital.
   // Fee finding (Aug 2026): 0.52% round-trip on notional ≈ 2.6% of capital at 5×.
-  // At 5× the fee drag is survivable; break-even is ~1 winning trade per 2 losers.
+  // Risk: 1.5% SL × ₹5L = ₹7,500 max loss per trade = 7.5% of capital. SL is 3× fee hurdle.
   btc_ema_crossover: {
     fees:      { tier: 'validated', note: 'Confirmed 0.52% round-trip on notional; at 5× ≈ 2.6% of capital per trade — survivable threshold' },
-    leverage:  { tier: 'testing',   note: '5× chosen Sep 2026 (was 10×); survivable fee drag. Live confirming' },
+    leverage:  { tier: 'testing',   note: '5× chosen Sep 2026 (was 10×); ₹5L notional at ₹1L capital. Live confirming' },
     entry:     { tier: 'unvalidated', note: '15m EMA 9/21 crossover — timeframe changed from 30s Sep 2026' },
-    sl:        { tier: 'testing',   note: '3% price SL — chosen Sep 2026 (was 1.5×ATR). Live confirming' },
-    trail:     { tier: 'testing',   note: 'Activates +6%, trails 3% from peak — Sep 2026 (replaced tiered system). Live confirming' },
+    sl:        { tier: 'testing',   note: '1.5% price SL — Sep 2026 (was 1.5×ATR). ₹7,500 max loss at ₹1L capital. Live confirming' },
+    trail:     { tier: 'testing',   note: 'Activates +3%, trails 1.5% from peak — Sep 2026 (replaced tiered system). Live confirming' },
   },
   btc_orion: {
     fees:      { tier: 'validated', note: 'Confirmed 0.52% round-trip; at 5× ≈ 2.6% of capital per trade' },
     leverage:  { tier: 'testing',   note: '5× chosen Sep 2026 (was 50×). Live confirming' },
     entry:     { tier: 'unvalidated', note: 'UTC daily ORB 00:00–00:30 — changed from 4-hourly Sep 2026' },
     orb_reset: { tier: 'testing',   note: 'Daily reset (was 4-hourly). More data needed to compare' },
-    sl:        { tier: 'testing',   note: '3% price SL — chosen Sep 2026 (was ORB opposite boundary). Live confirming' },
-    trail:     { tier: 'testing',   note: 'Activates +6%, trails 3% from peak — Sep 2026. Live confirming' },
+    sl:        { tier: 'testing',   note: '1.5% price SL — Sep 2026 (was ORB opposite boundary). Live confirming' },
+    trail:     { tier: 'testing',   note: 'Activates +3%, trails 1.5% from peak — Sep 2026. Live confirming' },
   },
   btc_ema_confluence: {
     fees:      { tier: 'validated', note: 'Confirmed 0.52% round-trip; at 5× ≈ 2.6% of capital per trade' },
     leverage:  { tier: 'testing',   note: '5× chosen Sep 2026 (was 100×). Live confirming' },
     entry:     { tier: 'unvalidated', note: '5-filter confluence on 5m — unchanged' },
     atr:       { tier: 'unvalidated', note: 'Threshold 0.1% unchanged; original 0.5% never triggered' },
-    sl:        { tier: 'testing',   note: '3% price SL — chosen Sep 2026 (was 2×ATR). Live confirming' },
-    trail:     { tier: 'testing',   note: 'Activates +6%, trails 3% from peak — Sep 2026. Live confirming' },
+    sl:        { tier: 'testing',   note: '1.5% price SL — Sep 2026 (was 2×ATR). Live confirming' },
+    trail:     { tier: 'testing',   note: 'Activates +3%, trails 1.5% from peak — Sep 2026. Live confirming' },
   },
   btc_supertrend: {
     fees:      { tier: 'validated', note: 'Confirmed 0.52% round-trip; at 5× ≈ 2.6% of capital per trade' },
     leverage:  { tier: 'testing',   note: '5× chosen Sep 2026 (was 50×). Live confirming' },
     entry:     { tier: 'unvalidated', note: 'Supertrend(7,3) on 15m — timeframe changed from 5m Sep 2026' },
-    sl:        { tier: 'testing',   note: '3% price SL — chosen Sep 2026 (was Supertrend line). Live confirming' },
-    trail:     { tier: 'testing',   note: 'Activates +6%, trails 3% from peak — Sep 2026. Live confirming' },
+    sl:        { tier: 'testing',   note: '1.5% price SL — Sep 2026 (was Supertrend line). Live confirming' },
+    trail:     { tier: 'testing',   note: 'Activates +3%, trails 1.5% from peak — Sep 2026. Live confirming' },
   },
   btc_vwap_scalper: {
     fees:      { tier: 'validated', note: 'Confirmed 0.52% round-trip; at 5× ≈ 2.6% of capital per trade (was 52% at 200×)' },
     leverage:  { tier: 'testing',   note: '5× chosen Sep 2026 (was 200×). Live confirming' },
     entry:     { tier: 'unvalidated', note: 'VWAP bounce/reject on 5m — timeframe changed from 1m Sep 2026' },
-    sl:        { tier: 'testing',   note: '3% price SL — chosen Sep 2026 (was ATR-based). Live confirming' },
-    trail:     { tier: 'testing',   note: 'Activates +6%, trails 3% from peak — Sep 2026. Live confirming' },
+    sl:        { tier: 'testing',   note: '1.5% price SL — Sep 2026 (was ATR-based). Live confirming' },
+    trail:     { tier: 'testing',   note: 'Activates +3%, trails 1.5% from peak — Sep 2026. Live confirming' },
   },
 };
 
