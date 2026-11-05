@@ -72,11 +72,9 @@ export const STRATEGY_VALIDATION: Record<string, StrategyValidation> = {
     trail:  { tier: 'unvalidated' },
   },
   ema_crossover_1m_run: {
-    no_target: { tier: 'testing', note: 'Live A/B vs S8' },
     sl:        { tier: 'unvalidated' },
   },
   ema_crossover_1m_runtrail: {
-    no_target: { tier: 'testing', note: 'Backtest-supported, live-leading pre-reset' },
     trail:     { tier: 'testing', note: 'Live A/B vs S8' },
     sl:        { tier: 'unvalidated' },
   },

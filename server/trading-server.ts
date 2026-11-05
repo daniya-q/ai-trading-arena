@@ -58,6 +58,10 @@ interface OptionChainRow {
   pePremium:  number;
   ceOI:       number;
   peOI:       number;
+  ceBid:      number;
+  ceAsk:      number;
+  peBid:      number;
+  peAsk:      number;
 }
 
 interface FullOptionChain {
@@ -610,8 +614,8 @@ async function fetchFullOptionChain(index: string, expiry: string): Promise<Full
       data?: Array<{
         strike_price:           number;
         underlying_spot_price?: number;
-        call_options?: { instrument_key?: string; market_data?: { ltp?: number; oi?: number } };
-        put_options?:  { instrument_key?: string; market_data?: { ltp?: number; oi?: number } };
+        call_options?: { instrument_key?: string; market_data?: { ltp?: number; oi?: number; bid_price?: number; ask_price?: number } };
+        put_options?:  { instrument_key?: string; market_data?: { ltp?: number; oi?: number; bid_price?: number; ask_price?: number } };
       }>;
     };
     const chain = json.data ?? [];
@@ -639,6 +643,10 @@ async function fetchFullOptionChain(index: string, expiry: string): Promise<Full
         pePremium: row.put_options?.market_data?.ltp  ?? 0,
         ceOI,
         peOI,
+        ceBid:     row.call_options?.market_data?.bid_price ?? 0,
+        ceAsk:     row.call_options?.market_data?.ask_price ?? 0,
+        peBid:     row.put_options?.market_data?.bid_price  ?? 0,
+        peAsk:     row.put_options?.market_data?.ask_price  ?? 0,
       };
     });
 
@@ -871,6 +879,14 @@ async function recordOptionChain(index: string, chain: FullOptionChain): Promise
   const slice = sorted.slice(from, to);
   if (slice.length === 0) return;
 
+  // Include bid/ask only for the ±5 inner strikes; outer strikes store premium+OI only
+  const atmInSlice = atmIdx < 0 ? Math.floor(slice.length / 2) : (atmIdx - from);
+  const chain_rows = slice.map((r, i) => {
+    if (Math.abs(i - atmInSlice) <= 5) return r;
+    const { ceBid: _ceBid, ceAsk: _ceAsk, peBid: _peBid, peAsk: _peAsk, ...rest } = r;
+    return rest;
+  });
+
   const { error } = await supabase.from("recorded_option_chains").upsert({
     index_name:   index,
     expiry:       chain.expiry,
@@ -880,7 +896,7 @@ async function recordOptionChain(index: string, chain: FullOptionChain): Promise
     pcr:          chain.pcr,
     strikes_from: slice[0].strike,
     strikes_to:   slice[slice.length - 1].strike,
-    chain_rows:   slice,
+    chain_rows,
   }, { onConflict: "index_name,expiry,snapshot_at", ignoreDuplicates: true });
   if (error) console.error(`[Recorder] chain ${index} failed:`, error.message);
 }
@@ -1034,6 +1050,41 @@ function calcEquityCharges(entryPrice: number, exitPrice: number, qty: number, s
   return Math.round((brokerage + stt + exchangeCharges + ipft + gst + sebi + stampDuty) * 100) / 100;
 }
 
+// Per-index fallback half-spread when live bid/ask are unavailable
+const DEFAULT_HALF_SPREAD: Record<string, number> = {
+  NIFTY:     0.10,
+  BANKNIFTY: 0.20,
+  SENSEX:    0.20,
+};
+
+// Returns half the bid-ask spread for the option matched by symbol in the live chain.
+// Falls back to DEFAULT_HALF_SPREAD when the chain is stale or the strike is missing.
+function getHalfSpread(symbol: string): { half: number; source: "live" | "default" } {
+  const parts = symbol.split(" ");
+  if (parts.length < 4) return { half: DEFAULT_HALF_SPREAD["NIFTY"] ?? 0.10, source: "default" };
+  const index   = parts[0];                 // "NIFTY"
+  const tag     = parts[1];                 // "04AUG"
+  const strike  = Number(parts[2]);         // 24600
+  const optType = parts[3] as "CE" | "PE"; // "CE"
+
+  const chain = getLatestChain(index);
+  if (chain) {
+    const chainTag = formatExpiryDDMMM(chain.expiry);
+    if (chainTag === tag) {
+      const row = chain.rows.find(r => r.strike === strike);
+      if (row) {
+        const bid = optType === "CE" ? row.ceBid : row.peBid;
+        const ask = optType === "CE" ? row.ceAsk : row.peAsk;
+        if (bid > 0 && ask > 0 && ask >= bid) {
+          return { half: (ask - bid) / 2, source: "live" };
+        }
+      }
+    }
+  }
+
+  return { half: DEFAULT_HALF_SPREAD[index] ?? 0.10, source: "default" };
+}
+
 async function closeStrategyPosition(
   posId: string,
   exitPrice: number,
@@ -1048,18 +1099,25 @@ async function closeStrategyPosition(
   if (!pos) return;
 
   const p = pos as { entry_price: number; quantity: number; strategy_id: string; symbol: string; type: string; stop_loss: number | null; trail_sl: number | null };
-  const grossPnl  = (exitPrice - p.entry_price) * p.quantity;
-  const charges   = calcEquityCharges(p.entry_price, exitPrice, p.quantity, p.symbol);
-  const netPnl    = grossPnl - charges;
-  const baseDetail = generateExitDetail(reason, p, exitPrice, peakPremiums[posId]);
-  const detail     = appendDetail ? `${baseDetail} ${appendDetail}` : baseDetail;
+  const grossPnl     = (exitPrice - p.entry_price) * p.quantity;
+  const charges      = calcEquityCharges(p.entry_price, exitPrice, p.quantity, p.symbol);
+  const { half, source } = getHalfSpread(p.symbol);
+  const spreadCost   = Math.round(p.quantity * half * 2 * 100) / 100;
+  console.log(`[Spread] ${p.symbol} half=₹${half.toFixed(2)} source=${source}`);
+  const totalCharges = charges + spreadCost;
+  const netPnl       = grossPnl - totalCharges;
+  const baseDetail   = generateExitDetail(reason, p, exitPrice, peakPremiums[posId]);
+  const spreadNote   = `Spread cost ₹${spreadCost.toFixed(2)} (${source}).`;
+  const detail       = appendDetail
+    ? `${baseDetail} ${appendDetail} ${spreadNote}`
+    : `${baseDetail} ${spreadNote}`;
 
   const { error } = await supabase.from("strategy_positions").update({
     status:             "CLOSED",
     exit_price:         exitPrice,
     current_price:      exitPrice,
     pnl:                Number(grossPnl.toFixed(2)),
-    charges:            Number(charges.toFixed(2)),
+    charges:            Number(totalCharges.toFixed(2)),
     closed_at:          new Date().toISOString(),
     exit_reason:        reason,
     exit_reason_detail: detail,
@@ -1068,7 +1126,7 @@ async function closeStrategyPosition(
   if (error) {
     console.error(`[DB] closeStrategyPosition(${posId}) error:`, error.message);
   } else {
-    console.log(`[${p.strategy_id}] CLOSED ${p.symbol} @ ₹${exitPrice} | Gross: ${grossPnl >= 0 ? "+" : ""}₹${grossPnl.toFixed(2)} | Charges: ₹${charges.toFixed(2)} | Net: ${netPnl >= 0 ? "+" : ""}₹${netPnl.toFixed(2)} | ${reason}`);
+    console.log(`[${p.strategy_id}] CLOSED ${p.symbol} @ ₹${exitPrice} | Gross: ${grossPnl >= 0 ? "+" : ""}₹${grossPnl.toFixed(2)} | Charges: ₹${totalCharges.toFixed(2)} | Net: ${netPnl >= 0 ? "+" : ""}₹${netPnl.toFixed(2)} | ${reason}`);
     delete peakPremiums[posId];
     await updateStrategyCapital(p.strategy_id);
   }
@@ -1198,7 +1256,10 @@ async function monitorOpenPositions(): Promise<void> {
         if (slPct > 0) targetPct = slPct * 1.5;
       }
       if (pnlPct >= targetPct) {
-        await closeStrategyPosition(pos.id, currentPrice, "TARGET_HIT", appendDetail);
+        const targetPrice = Math.round(pos.entry_price * (1 + targetPct) * 20) / 20;
+        const targetNote  = `Filled at target ₹${targetPrice} (market was ₹${currentPrice}).`;
+        await closeStrategyPosition(pos.id, targetPrice, "TARGET_HIT",
+          appendDetail ? `${appendDetail} ${targetNote}` : targetNote);
         continue;
       }
     }
@@ -2149,7 +2210,11 @@ async function monitorGapOrbPositions(): Promise<void> {
       const isFade_CE = pos.type === "CE" && dailyGapPct < 0;
       if ((isFade_PE && price <= pdc) || (isFade_CE && price >= pdc)) {
         const cp = getCurrentPrice(pos.symbol);
-        if (cp > 0) await closeStrategyPosition(pos.id, cp, "TARGET");
+        if (cp > 0) {
+          const targetPrice = Math.round(pos.entry_price * (1 + (TARGET_PCT["gap_orb"] ?? 0.40)) * 20) / 20;
+          const targetNote  = `Filled at target ₹${targetPrice} (market was ₹${cp}).`;
+          await closeStrategyPosition(pos.id, targetPrice, "TARGET", targetNote);
+        }
       }
     }
   }
