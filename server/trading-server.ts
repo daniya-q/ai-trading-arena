@@ -958,9 +958,9 @@ function generateExitDetail(
   const ist   = getIST();
   const timeStr = `${String(ist.getUTCHours()).padStart(2,"0")}:${String(ist.getUTCMinutes()).padStart(2,"0")} IST`;
 
-  const SL_PCT: Record<string, number>    = { orion:30, supertrend:20, pcr_reversal:15, gap_orb:20, vwap_scalper:20, ema_crossover_1m:15, ema_crossover_1m_run:15, ema_crossover_1m_runtrail:15, expiry_powerhour_dir:40, expiry_powerhour_straddle:40 };
-  const TRAIL_PCT: Record<string, number> = { orion:15, supertrend:12, pcr_reversal:12, gap_orb:12, vwap_scalper:12, ema_crossover_1m:10, ema_crossover_1m_runtrail:10, expiry_powerhour_dir:20, expiry_powerhour_straddle:20 };
-  const CLOSE_TIME: Record<string, string> = { orion:"3:20 PM", supertrend:"3:20 PM", pcr_reversal:"3:20 PM", gap_orb:"3:20 PM", vwap_scalper:"3:20 PM", ema_crossover_1m:"3:20 PM", ema_crossover_1m_run:"3:20 PM", ema_crossover_1m_runtrail:"3:20 PM", expiry_powerhour_dir:"3:18 PM", expiry_powerhour_straddle:"3:18 PM" };
+  const SL_PCT: Record<string, number>    = { orion:30, supertrend:20, supertrend_late:20, pcr_reversal:15, gap_orb:20, vwap_scalper:20, vwap_scalper_dband_lo:20, vwap_scalper_dband_hi:20, ema_crossover_1m:15, ema_crossover_1m_run:15, ema_crossover_1m_runtrail:15, expiry_powerhour_dir:40, expiry_powerhour_straddle:40 };
+  const TRAIL_PCT: Record<string, number> = { orion:15, supertrend:12, supertrend_late:12, pcr_reversal:12, gap_orb:12, vwap_scalper:12, vwap_scalper_dband_lo:12, vwap_scalper_dband_hi:12, ema_crossover_1m:10, ema_crossover_1m_runtrail:10, expiry_powerhour_dir:20, expiry_powerhour_straddle:20 };
+  const CLOSE_TIME: Record<string, string> = { orion:"3:20 PM", supertrend:"3:20 PM", supertrend_late:"3:20 PM", pcr_reversal:"3:20 PM", gap_orb:"3:20 PM", vwap_scalper:"3:20 PM", vwap_scalper_dband_lo:"3:20 PM", vwap_scalper_dband_hi:"3:20 PM", ema_crossover_1m:"3:20 PM", ema_crossover_1m_run:"3:20 PM", ema_crossover_1m_runtrail:"3:20 PM", expiry_powerhour_dir:"3:18 PM", expiry_powerhour_straddle:"3:18 PM" };
 
   switch (reason) {
     case "SL_HIT": {
@@ -969,7 +969,7 @@ function generateExitDetail(
       return `Stop loss hit at ${timeStr}. Entry: ₹${pos.entry_price.toFixed(2)}. SL was set at ${pct}% below entry = ₹${sl.toFixed(1)}. Price dropped to ₹${exitPrice.toFixed(2)}.`;
     }
     case "CROSSOVER": {
-      if (pos.strategy_id === "supertrend") {
+      if (pos.strategy_id === "supertrend" || pos.strategy_id === "supertrend_late") {
         const flip = pos.type === "CE" ? "red (bearish)" : "green (bullish)";
         return `Supertrend flipped ${flip} at ${timeStr}. Opposite signal triggered — position closed.`;
       }
@@ -1207,7 +1207,7 @@ async function monitorOpenPositions(): Promise<void> {
     } else if (pos.strategy_id === "orion") {
       trailActivationPct = 0.35;
       trailPct           = 0.15;
-    } else if (pos.strategy_id === "vwap_scalper") {
+    } else if (pos.strategy_id === "vwap_scalper" || pos.strategy_id === "vwap_scalper_dband_lo" || pos.strategy_id === "vwap_scalper_dband_hi") {
       // Tier 1: 25% gain → move SL to breakeven
       if (pnlPct >= 0.25 && pos.stop_loss && pos.stop_loss < pos.entry_price) {
         await supabase.from("strategy_positions").update({ stop_loss: roundUpToOneDecimal(pos.entry_price) }).eq("id", pos.id);
@@ -1752,7 +1752,7 @@ const s22DailyTrades: Record<string, number> = {};
 async function runStrategy22(): Promise<void> {
   if (!isMarketOpen()) return;
   const mins = istMins();
-  if (mins < 630 || mins >= 870) return; // 10:30–14:30
+  if (mins < 660 || mins >= 870) return; // 11:00–14:30
 
   const indices: Array<"NIFTY" | "BANKNIFTY"> = ["NIFTY", "BANKNIFTY"];
   for (const index of indices) {
@@ -2308,13 +2308,11 @@ async function runVwapScalperDbandForIndex(
   const bandDist = (curr.close - vwap) / vwap; // positive = above, negative = below
 
   const bullish = prev.close <= vwap && curr.close > vwap
-    && bandDist >= deadband
     && rsi >= 40 && rsi <= 60
     && oiRising
     && prev.low > prev2.low;
 
   const bearish = prev.close >= vwap && curr.close < vwap
-    && -bandDist >= deadband
     && rsi >= 40 && rsi <= 60
     && oiRising
     && prev.high < prev2.high;
@@ -2409,12 +2407,17 @@ async function monitorVwapDbandPositions(): Promise<void> {
       const cp   = getCurrentPrice(pos.symbol);
       if (!cp) continue;
 
-      if (pos.type === "CE" && curr.close < vwap) {
-        await closeStrategyPosition(pos.id, cp, "VWAP_CROSS");
-        continue;
-      }
-      if (pos.type === "PE" && curr.close > vwap) {
-        await closeStrategyPosition(pos.id, cp, "VWAP_CROSS");
+      const DBAND_PCT: Record<string, number> = {
+        vwap_scalper_dband_lo: 0.03,
+        vwap_scalper_dband_hi: 0.08,
+      };
+      const deadband = DBAND_PCT[pos.strategy_id] ?? 0;
+      const wrongSideDist = pos.type === "CE"
+        ? (vwap - curr.close) / curr.close * 100
+        : (curr.close - vwap) / curr.close * 100;
+      if (wrongSideDist > deadband) {
+        await closeStrategyPosition(pos.id, cp, "VWAP_CROSS",
+          `VWAP cross exit: price ${wrongSideDist.toFixed(4)}% past VWAP, beyond ${deadband}% deadband.`);
         continue;
       }
 
