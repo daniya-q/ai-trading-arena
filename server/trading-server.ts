@@ -177,7 +177,7 @@ function isMarketOpen(): boolean {
   const d = getIST();
   if (d.getUTCDay() === 0 || d.getUTCDay() === 6) return false;
   const m = d.getUTCHours() * 60 + d.getUTCMinutes();
-  return m >= 555 && m <= 940; // 9:15–15:40 IST (F&O session; extended from 15:30 on 2026-08-03)
+  return m >= 555 && m <= 930; // 9:15–15:30 IST
 }
 
 // Reset daily counters at start of day
@@ -231,10 +231,8 @@ async function isExpiryDay(index: "NIFTY" | "BANKNIFTY" | "SENSEX"): Promise<boo
   return result;
 }
 
-// Danger windows: 11:30 12:30 13:00 14:00 14:45 15:00 15:15 IST (in minutes from midnight)
-// 915 (15:15) added 2026-08-31: the F&O settlement VWAP window is now 15:10–15:40 and
-// the index freezes at 15:15 while options keep trading — the riskiest stretch of the day.
-const DANGER_WINDOW_MINS = [690, 750, 780, 840, 885, 900, 915];
+// Danger windows: 11:30 12:30 13:00 14:00 14:45 15:00 IST (in minutes from midnight)
+const DANGER_WINDOW_MINS = [690, 750, 780, 840, 885, 900];
 
 function isDangerWindow(): boolean {
   const m = istMins();
@@ -817,7 +815,7 @@ function bufferClosedCandle(symbol: string, timeframe: string, c: Candle): void 
   if (!RECORD_SYMBOLS.has(symbol)) return;          // BTC excluded — Kraken has free history
   const ist  = new Date(c.time + 5.5 * 3600 * 1000);
   const mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
-  if (mins < 555 || mins > 940) return;             // 9:15–15:40 IST — F&O session extended 2026-08-03
+  if (mins < 555 || mins > 930) return;             // 9:15–15:30 IST
   candleBuffer.push({
     symbol,
     timeframe,
@@ -847,17 +845,25 @@ async function flushCandleBuffer(): Promise<void> {
   }
 }
 
+let lastVixRecordedMinute = -1;
+async function recordVix(): Promise<void> {
+  if (!isMarketOpen()) return;
+  if (!lastVix || lastVix <= 0) return;
+  const minuteBucket = Math.floor(Date.now() / 60_000);
+  if (minuteBucket === lastVixRecordedMinute) return;
+  lastVixRecordedMinute = minuteBucket;
+  const { error } = await supabase.from("recorded_vix").upsert(
+    { snapshot_at: new Date(minuteBucket * 60_000).toISOString(), vix: lastVix },
+    { onConflict: "snapshot_at", ignoreDuplicates: true }
+  );
+  if (error) console.error("[Recorder] VIX write failed:", error.message);
+}
+
 // Option-chain snapshots — the real-premium archive. Expired weeklies are
 // purged by Upstox, so this is the only path to real historical premiums.
 async function recordOptionChain(index: string, chain: FullOptionChain): Promise<void> {
-  // Dense sampling through the CAS window (15:20–15:40): the auction print lands
-  // ~15:28–15:30 and 2-minute sampling misses it on roughly half of days.
-  const istNow = new Date(Date.now() + 5.5 * 3600 * 1000);
-  const nowMins = istNow.getUTCHours() * 60 + istNow.getUTCMinutes();
-  const inCasWindow = nowMins >= 920 && nowMins <= 940;   // 15:20–15:40 IST
-
   chainPollCount[index] = (chainPollCount[index] ?? 0) + 1;
-  if (!inCasWindow && chainPollCount[index] % CHAIN_RECORD_EVERY !== 0) return;
+  if (chainPollCount[index] % CHAIN_RECORD_EVERY !== 0) return;
   const sorted = [...chain.rows].sort((a, b) => a.strike - b.strike);
   const atmIdx = sorted.findIndex(r => r.strike === chain.atmStrike);
   const from = atmIdx < 0 ? 0 : Math.max(0, atmIdx - CHAIN_STRIKE_WINDOW);
@@ -1539,7 +1545,11 @@ async function runStrategy2(): Promise<void> {
   if (mins < 570 || mins >= 840) return; // 9:30–14:00
 
   // VIX filter
-  if (lastVix > 0 && lastVix < 13) {
+  if (lastVix === 0) {
+    console.log(`[S2] VIX not yet available — skipping until first LTP poll`);
+    return;
+  }
+  if (lastVix < 13) {
     console.log(`[S2] VIX ${lastVix} < 13 — skipping trades today`);
     return;
   }
@@ -1613,16 +1623,22 @@ async function runOrionForIndex(index: string, mins: number): Promise<void> {
   const ceBreakout  = price > orbH;
   const aboveVwap   = price > vwap;
   const ceOIchange  = getOIChangeForATM(index, "CE", 5);
-  const ceOIrising  = ceOIchange ? ceOIchange.pctChange > 0 : true;
+  const ceOIhasData = !!ceOIchange;
+  const ceOIrising  = ceOIchange ? ceOIchange.pctChange > 0 : false;
 
   const peBreakout  = price < orbL;
   const belowVwap   = price < vwap;
   const peOIchange  = getOIChangeForATM(index, "PE", 5);
-  const peOIrising  = peOIchange ? peOIchange.pctChange > 0 : true;
+  const peOIhasData = !!peOIchange;
+  const peOIrising  = peOIchange ? peOIchange.pctChange > 0 : false;
+
+  if (!ceOIhasData || !peOIhasData) {
+    console.log(`[S2:${index}] OI history unavailable (CE:${ceOIhasData} PE:${peOIhasData}) — OI gate blocks entry`);
+  }
 
   const ceOIStr = ceOIchange ? `${ceOIchange.pctChange >= 0 ? "+" : ""}${ceOIchange.pctChange.toFixed(1)}%` : "no-hist";
   const peOIStr = peOIchange ? `${peOIchange.pctChange >= 0 ? "+" : ""}${peOIchange.pctChange.toFixed(1)}%` : "no-hist";
-  console.log(`[S2:${index}] price=${price.toFixed(0)} ORB H:${orbH} L:${orbL} VWAP=${vwap.toFixed(0)} | CE:brk=${ceBreakout} avwap=${aboveVwap} OI=${ceOIStr} | PE:brk=${peBreakout} bvwap=${belowVwap} OI=${peOIStr}`);
+  console.log(`[S2:${index}] price=${price.toFixed(0)} ORB H:${orbH} L:${orbL} VWAP=${vwap.toFixed(0)} | CE:brk=${ceBreakout} avwap=${aboveVwap} OI=${ceOIStr}(data=${ceOIhasData}) | PE:brk=${peBreakout} bvwap=${belowVwap} OI=${peOIStr}(data=${peOIhasData})`);
 
   let optType: "CE" | "PE" | null = null;
   if (ceBreakout && aboveVwap && ceOIrising)      optType = "CE";
@@ -4652,7 +4668,7 @@ async function closeStalePositions(): Promise<void> {
     const exitPx = cached > 0 ? cached : (pos.current_price ?? pos.entry_price);
     const detail = `STALE_CLOSE — position opened ${openedIst} was still OPEN at boot on ${todayIst}. ` +
       `Force-closed at ${cached > 0 ? "live" : "last-known"} price ₹${exitPx}. ` +
-      `Cause: server was not running during the hard-close window (15:20) or the watchdog window (15:25+, F&O session ends 15:40).`;
+      `Cause: server was not running during the hard-close window (15:20) or the watchdog window (15:25+, F&O session ends 15:30).`;
 
     console.warn(`[StaleScan] ORPHAN: ${pos.strategy_id} ${pos.symbol} opened ${openedIst} — closing at ₹${exitPx}`);
     await closeStrategyPosition(pos.id, exitPx, "STALE_CLOSE", detail);
@@ -4732,6 +4748,7 @@ setInterval(monitorBtcPositions, 5_000);
 
 // Persist recorded 30s candles every 60 seconds
 setInterval(flushCandleBuffer, 60_000);
+setInterval(recordVix,        60_000);
 
 // One-time Sharpe backfill for all BTC strategies on startup
 backfillBtcSharpe().catch(console.error);
