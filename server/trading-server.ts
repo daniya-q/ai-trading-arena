@@ -472,9 +472,8 @@ const OPTION_KEYS: Record<string, string> = {
 };
 
 function upstoxToken(): string {
-  // Prefer daily OAuth token (set via webhook) — use analytics token only as fallback
-  // Analytics token was taking priority but is returning 401; OAuth token is always fresh
-  return process.env.UPSTOX_ACCESS_TOKEN || process.env.UPSTOX_ANALYTICS_TOKEN || "";
+  // Prefer long-lived analytics token (expires Apr 2027); fall back to daily OAuth token
+  return process.env.UPSTOX_ANALYTICS_TOKEN || process.env.UPSTOX_ACCESS_TOKEN || "";
 }
 
 type LTPKey = "NIFTY" | "BANKNIFTY" | "SENSEX" | "VIX";
@@ -3645,17 +3644,18 @@ async function loadTokenFromSupabase(): Promise<void> {
       return;
     }
 
+    const analyticsToken = process.env.UPSTOX_ANALYTICS_TOKEN;
     if (supabaseDate === todayIST()) {
-      // Token was approved today via webhook — always wins over any static Railway var
-      process.env.UPSTOX_ACCESS_TOKEN = supabaseToken;
-      console.log(`[Token] Loaded today's fresh token from Supabase (approved ${supabaseDate})`);
-    } else if (!process.env.UPSTOX_ACCESS_TOKEN) {
-      // No Railway var set — use Supabase as fallback even if from a prior day
+      if (!analyticsToken) {
+        process.env.UPSTOX_ACCESS_TOKEN = supabaseToken;
+      }
+      console.log(`[Token] Supabase OAuth token approved today (${supabaseDate})${analyticsToken ? " — analytics token active, skipping env overwrite" : " — activated"}`);
+    } else if (!process.env.UPSTOX_ACCESS_TOKEN && !analyticsToken) {
+      // No Railway var and no analytics token — use Supabase as fallback
       process.env.UPSTOX_ACCESS_TOKEN = supabaseToken;
       console.log(`[Token] Loaded fallback token from Supabase (last approved ${supabaseDate || "unknown"})`);
     } else {
-      console.log(`[Token] Supabase token is from ${supabaseDate || "unknown"} — keeping Railway env var`);
-      console.log(`[Token] ACTION NEEDED: delete UPSTOX_ACCESS_TOKEN from Railway vars so daily webhook token is used`);
+      console.log(`[Token] Supabase token is from ${supabaseDate || "unknown"} — ${analyticsToken ? "analytics token in use" : "keeping Railway env var"}`);
     }
   } catch (err) {
     console.error("[Token] Load failed:", err);
@@ -3715,6 +3715,7 @@ async function isTokenApprovedToday(): Promise<boolean> {
 
 function scheduleTokenRequest(): void {
   setInterval(async () => {
+    if (process.env.UPSTOX_ANALYTICS_TOKEN) return; // analytics token covers market data; no daily approval needed
     const ist = getIST();
     if (ist.getUTCDay() === 0 || ist.getUTCDay() === 6) return; // weekends
     const timeStr = `${String(ist.getUTCHours()).padStart(2,"0")}:${String(ist.getUTCMinutes()).padStart(2,"0")}`;
@@ -4121,7 +4122,9 @@ app.post("/api/upstox/token-webhook", async (req, res) => {
     res.json({ received: true });
     return;
   }
-  process.env.UPSTOX_ACCESS_TOKEN = access_token;
+  if (!process.env.UPSTOX_ANALYTICS_TOKEN) {
+    process.env.UPSTOX_ACCESS_TOKEN = access_token;
+  }
   const today = todayIST();
   const [e1, e2] = await Promise.all([
     supabase.from("config").upsert({ key: "UPSTOX_ACCESS_TOKEN", value: access_token }, { onConflict: "key" }),
@@ -4342,6 +4345,15 @@ app.listen(PORT, () => {
 
 refreshUsdToInr().catch(console.error);
 scheduleTokenRequest();
+{
+  const at = process.env.UPSTOX_ANALYTICS_TOKEN;
+  if (at) {
+    console.log(`[Token] Using analytics token (first6=${at.substring(0, 6)})`);
+  } else {
+    const ot = process.env.UPSTOX_ACCESS_TOKEN;
+    console.log(`[Token] Using daily OAuth token (first6=${ot ? ot.substring(0, 6) : "NOT SET"})`);
+  }
+}
 
 // Load token first, THEN seed equity candles — seeding needs a valid Upstox token.
 // BTC uses public Kraken API so can start in parallel.
@@ -4428,6 +4440,22 @@ setTimeout(() => { void closeStalePositions(); }, 5_000);
 
 // Hard-close watchdog — every 5 min, outside isMarketOpen() gate
 setInterval(() => { void hardCloseWatchdog(); }, 5 * 60_000);
+
+// Token health check — every 5 min during market hours; logs error if Nifty LTP returns 401
+setInterval(async () => {
+  if (!isMarketOpen()) return;
+  const token = upstoxToken();
+  if (!token) return;
+  try {
+    const r = await fetch(
+      `https://api.upstox.com/v2/market-quote/ltp?instrument_key=${encodeURIComponent("NSE_INDEX|Nifty 50")}`,
+      { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } }
+    );
+    if (r.status === 401) {
+      console.error("[Token] UPSTOX AUTH FAILED - token rejected");
+    }
+  } catch { /* network error — not a token problem */ }
+}, 5 * 60_000);
 
 // Equity strategy loop every 30 seconds
 runEquityStrategies();
